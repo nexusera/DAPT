@@ -4,7 +4,7 @@ import os
 from typing import Any, Dict, Iterable, List, Optional
 
 from datasets import load_from_disk, DatasetDict
-from kv_pretrain.noise_embeddings import NoiseFeatureExtractor
+from DAPT.noise_embeddings import NoiseFeatureExtractor
 
 
 def load_medical_dict(path: Optional[str]) -> List[str]:
