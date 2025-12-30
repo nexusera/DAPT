@@ -31,7 +31,7 @@ from transformers.models.roberta.modeling_roberta import (
     RobertaModel,
 )
 
-from kv_pretrain.noise_embeddings import RobertaNoiseEmbeddings
+from noise_embeddings import RobertaNoiseEmbeddings
 
 # ===========================
 # 1. 配置路径与参数
