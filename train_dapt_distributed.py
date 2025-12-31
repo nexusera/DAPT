@@ -23,7 +23,7 @@ from transformers import (
     TrainerCallback,
 )
 from transformers.modeling_outputs import (
-    BaseModelOutputWithPastAndCrossAttentions,
+    BaseModelOutputWithPoolingAndCrossAttentions,
     MaskedLMOutput,
 )
 from transformers.models.roberta.modeling_roberta import (
@@ -208,7 +208,7 @@ class RobertaModelWithNoise(RobertaModel):
         return_dict: Optional[bool] = None,
         noise_features: Optional[torch.Tensor] = None,
         noise_masks: Optional[torch.Tensor] = None,
-    ) -> BaseModelOutputWithPastAndCrossAttentions:
+    ) -> BaseModelOutputWithPoolingAndCrossAttentions:
         return_dict = return_dict if return_dict is not None else self.config.use_return_dict
 
         if input_ids is not None and inputs_embeds is not None:
@@ -265,7 +265,7 @@ class RobertaModelWithNoise(RobertaModel):
         if not return_dict:
             return (sequence_output, pooled_output) + encoder_outputs[1:]
 
-        return BaseModelOutputWithPastAndCrossAttentions(
+        return BaseModelOutputWithPoolingAndCrossAttentions(
             last_hidden_state=sequence_output,
             pooler_output=pooled_output,
             past_key_values=encoder_outputs.past_key_values,
