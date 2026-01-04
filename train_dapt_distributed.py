@@ -49,7 +49,7 @@ DEFAULT_OUTPUT_DIR = os.path.join(WORKSPACE_DIR, "output_medical_bert_v2_8gpu")
 # Global Batch Size = 16 * 8(GPUs) * 4(Accum) = 512
 PER_DEVICE_BATCH_SIZE = 16
 GRADIENT_ACCUMULATION = 4  # 通过更高累积进一步降低单卡占用
-LEARNING_RATE = 8e-5  # 略提 LR，允许更快拟合（可接受轻微过拟合）
+LEARNING_RATE = 5e-5  # 略提 LR，允许更快拟合（可接受轻微过拟合）8e-5->5e-5
 MAX_SEQ_LEN = 512  # 保持基座模型的512，不扩展位置编码
 
 def is_main_process():
