@@ -86,6 +86,12 @@ def main():
         default=None,
         help="optional path to medical dict (one word per line)",
     )
+    parser.add_argument(
+        "--num_proc",
+        type=int,
+        default=None,
+        help="optional number of processes for Dataset.map (CPU并行)",
+    )
     args = parser.parse_args()
 
     dataset = load_from_disk(args.dataset)
@@ -119,13 +125,17 @@ def main():
         return example
 
     new_splits = {}
+    map_kwargs = {
+        "with_indices": True,
+        "desc": None,
+    }
+    if args.num_proc and args.num_proc > 1:
+        map_kwargs["num_proc"] = args.num_proc
+
     for split in dataset:
         ds = dataset[split]
-        new_splits[split] = ds.map(
-            add_noise,
-            with_indices=True,
-            desc=f"add_noise_features_{split}",
-        )
+        map_kwargs["desc"] = f"add_noise_features_{split}"
+        new_splits[split] = ds.map(add_noise, **map_kwargs)
 
     out = DatasetDict(new_splits)
     out.save_to_disk(args.output)
