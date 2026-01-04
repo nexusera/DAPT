@@ -49,7 +49,8 @@ DEFAULT_OUTPUT_DIR = os.path.join(WORKSPACE_DIR, "output_medical_bert_v2_8gpu")
 # Global Batch Size = 16 * 8(GPUs) * 4(Accum) = 512
 PER_DEVICE_BATCH_SIZE = 16
 GRADIENT_ACCUMULATION = 4  # 通过更高累积进一步降低单卡占用
-LEARNING_RATE = 5e-5  # 略提 LR，允许更快拟合（可接受轻微过拟合）8e-5->5e-5
+LEARNING_RATE = 8e-5  # 默认 LR，可通过 CLI 覆盖
+NUM_TRAIN_EPOCHS = 7  # 默认 epoch，可通过 CLI 覆盖
 MAX_SEQ_LEN = 512  # 保持基座模型的512，不扩展位置编码
 
 def is_main_process():
@@ -354,6 +355,8 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--output_dir", type=str, default=DEFAULT_OUTPUT_DIR, help="训练输出目录，避免覆盖可传入新的路径")
     parser.add_argument("--resume_from_checkpoint", type=str, default=None, help="可选：从已有 checkpoint 继续训练")
+    parser.add_argument("--num_train_epochs", type=int, default=None, help=f"训练 epoch 数，默认 {NUM_TRAIN_EPOCHS}")
+    parser.add_argument("--learning_rate", type=float, default=None, help=f"学习率，默认 {LEARNING_RATE}")
     args = parser.parse_args()
 
     if not os.path.exists(DATASET_PATH):
@@ -376,13 +379,13 @@ def main():
     training_args = TrainingArguments(
         output_dir=args.output_dir,
         overwrite_output_dir=True,
-        num_train_epochs=5,  # 12-epoch -> 5-epoch，防止过于拟合
+        num_train_epochs=args.num_train_epochs or NUM_TRAIN_EPOCHS,
         # 分布式相关
         per_device_train_batch_size=PER_DEVICE_BATCH_SIZE,
         per_device_eval_batch_size=PER_DEVICE_BATCH_SIZE,
         gradient_accumulation_steps=GRADIENT_ACCUMULATION,
         ddp_find_unused_parameters=False,  # 优化速度
-        learning_rate=LEARNING_RATE,
+        learning_rate=args.learning_rate or LEARNING_RATE,
         weight_decay=0.01,
         warmup_ratio=0.05,  # 缩短预热，加快进入主学习率区间
         bf16=True,

@@ -6,6 +6,12 @@ from typing import Any, Dict, Iterable, List, Optional
 from datasets import load_from_disk, DatasetDict
 from noise_embeddings import NoiseFeatureExtractor
 
+# 默认 OCR 源（可覆盖）。按顺序拼接，后面的追加在前面之后。
+DEFAULT_OCR_JSONS = [
+    "/data/ocean/semi_label/ocr_rerun/ocr_noise/data/ocr_with_location_2300_combined.json",
+    "/data/ocean/semi_label/ocr_rerun/char_ocr_9297.json",
+]
+
 
 def load_medical_dict(path: Optional[str]) -> List[str]:
     if not path:
@@ -21,32 +27,33 @@ def load_medical_dict(path: Optional[str]) -> List[str]:
     return words
 
 
-def load_ocr_list(path: str) -> List[Any]:
-    if not os.path.exists(path):
-        raise FileNotFoundError(f"OCR json not found: {path}")
-    # 支持 json / jsonl
-    if path.endswith(".jsonl"):
-        out = []
+def load_ocr_list(paths: List[str]) -> List[Any]:
+    """支持传入多个 json/jsonl 路径，顺序拼接。"""
+    merged: List[Any] = []
+    for path in paths:
+        if not os.path.exists(path):
+            raise FileNotFoundError(f"OCR json not found: {path}")
+        if path.endswith(".jsonl"):
+            with open(path, "r", encoding="utf-8") as f:
+                for line in f:
+                    line = line.strip()
+                    if line:
+                        merged.append(json.loads(line))
+            continue
         with open(path, "r", encoding="utf-8") as f:
-            for line in f:
-                line = line.strip()
-                if not line:
-                    continue
-                out.append(json.loads(line))
-        return out
-
-    with open(path, "r", encoding="utf-8") as f:
-        obj = json.load(f)
-    if isinstance(obj, list):
-        return obj
-    if isinstance(obj, dict):
-        # 若上层是 {"data": [...]} 或 {"ocr_list": [...]}
-        for key in ["data", "ocr_list", "items"]:
-            if key in obj and isinstance(obj[key], list):
-                return obj[key]
-        # 单个对象也包裹成列表，方便按 idx 对齐
-        return [obj]
-    raise ValueError("Unsupported OCR JSON format")
+            obj = json.load(f)
+        if isinstance(obj, list):
+            merged.extend(obj)
+        elif isinstance(obj, dict):
+            for key in ["data", "ocr_list", "items"]:
+                if key in obj and isinstance(obj[key], list):
+                    merged.extend(obj[key])
+                    break
+            else:
+                merged.append(obj)
+        else:
+            raise ValueError(f"Unsupported OCR JSON format: {path}")
+    return merged
 
 
 def build_zero_feats(seq_len: int):
@@ -64,8 +71,9 @@ def main():
     parser.add_argument(
         "--ocr_json",
         type=str,
-        required=True,
-        help="path to OCR json (list/json/jsonl) aligned by index with dataset",
+        nargs="+",
+        default=DEFAULT_OCR_JSONS,
+        help=f"one or more OCR json/jsonl paths, concatenated in order (default={DEFAULT_OCR_JSONS})",
     )
     parser.add_argument(
         "--output",
