@@ -8,7 +8,7 @@ from noise_embeddings import NoiseFeatureExtractor
 
 # 默认 OCR 源（可覆盖）。按顺序拼接，后面的追加在前面之后。
 DEFAULT_OCR_JSONS = [
-    "/data/ocean/semi_label/ocr_rerun/char_ocr_9297.json",
+    "/home/ocean/semi_label/ocr_rerun/char_ocr_9297.json",
 ]
 
 
