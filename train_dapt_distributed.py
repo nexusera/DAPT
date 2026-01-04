@@ -353,6 +353,7 @@ class PerplexityCallback(TrainerCallback):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--output_dir", type=str, default=DEFAULT_OUTPUT_DIR, help="训练输出目录，避免覆盖可传入新的路径")
+    parser.add_argument("--resume_from_checkpoint", type=str, default=None, help="可选：从已有 checkpoint 继续训练")
     args = parser.parse_args()
 
     if not os.path.exists(DATASET_PATH):
@@ -413,7 +414,7 @@ def main():
     if is_main_process():
         print("Starting 8-GPU Distributed Training...")
     
-    trainer.train()
+    trainer.train(resume_from_checkpoint=args.resume_from_checkpoint)
 
     if is_main_process():
         print("Saving final model...")
