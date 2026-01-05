@@ -53,6 +53,22 @@ python train_ocr_clean.py
 - 精简版（去词典，推荐缩短词表）：`python final_merge_v9_regex_split_slim.py`
 - 全量版（含词典）：`python final_merge_v9_regex_split.py` 
 
+（可选）LLM 辅助筛选候选词表：
+- 场景：对 `medical_vocab_ocr_only/vocab.txt` 做质量过滤，生成 kept/dropped 列表，再用于 Merge。
+- 依赖：本地/远端可用的 Qwen3 32B API，环境变量 `LLF_API_BASE`（逗号分隔多个 endpoint）、`OPENAI_API_KEY`（可占位）。
+- 示例：
+```
+export LLF_API_BASE="http://127.0.0.1:8008/v1"
+export OPENAI_API_KEY="EMPTY"
+python filter_vocab_with_llm.py \
+  --vocab medical_vocab_ocr_only/vocab.txt \
+  --kept kept_vocab.txt \
+  --dropped dropped_vocab.txt \
+  --batch_size 64 \
+  --topn 50000
+```
+- 输出：`kept_vocab.txt`（保留词），`dropped_vocab.txt`（含原因），可在 Merge 时替换/追加。
+
 产出：更新 my-medical-tokenizer/ 文件夹。
 可选验证：`python inspect_tokenizer_final.py`
 
