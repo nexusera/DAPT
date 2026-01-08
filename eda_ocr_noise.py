@@ -5,7 +5,7 @@ import os
 from pathlib import Path
 
 # ================= 配置绝对路径 =================
-DATA_PATH = "/home/your_user_name/semi_label/ocr_rerun/char_ocr_9297.json" # 请替换 your_user_name
+DATA_PATH = "/home/ocean/semi_label/ocr_rerun/char_ocr_9297.json" # 请替换 your_user_name
 OUTPUT_DIR = "/data/ocean/DAPT/eda_results"
 Path(OUTPUT_DIR).mkdir(parents=True, exist_ok=True)
 
