@@ -10,7 +10,7 @@ from transformers import AutoTokenizer
 WORKSPACE_DIR = "/data/ocean/bpe_workspace"
 TOKENIZER_PATH = os.path.join(WORKSPACE_DIR, "my-medical-tokenizer")
 # 使用重采样后的语料
-TRAIN_FILE = os.path.join(WORKSPACE_DIR, "train_balanced.txt")
+TRAIN_FILE = os.path.join(WORKSPACE_DIR, "train_chunked.txt")
 OUTPUT_PATH = os.path.join(WORKSPACE_DIR, "processed_dataset")
 
 # 仅保留 OCR 挖掘与业务 Key 两路词典

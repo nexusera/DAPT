@@ -32,6 +32,10 @@ from transformers.models.roberta.modeling_roberta import (
 )
 
 from noise_embeddings import RobertaNoiseEmbeddings
+from noise_feature_processor import NoiseFeatureProcessor, FEATURES
+
+# 完美物理值（非 OCR 样本用），由 processor 映射到桶 ID
+PERFECT_VALUES = [1.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0]
 
 # ===========================
 # 1. 配置路径与参数
@@ -148,44 +152,36 @@ class PrecomputedWWMCollator:
 
 class NoiseAwareCollator(PrecomputedWWMCollator):
     """
-    在原有按词掩码的基础上，补齐噪声特征/掩码（若缺失则零填充）。
-    期望 feature 字段：noise_features=[seq_len,5], noise_masks=[seq_len,5]
+    生成离散噪声桶 ID：noise_ids=[B, L, 7]，anchor=0。
+    - 若样本无 noise_values，则填满 0（完美语料）。
+    - 不修改 input_ids 的 [MASK] 位置对应的 noise_ids。
     """
 
-    def __call__(self, features: List[Dict[str, Any]]) -> Dict[str, Any]:
-        noise_feats = [f.get("noise_features") for f in features]
-        noise_masks = [f.get("noise_masks") for f in features]
+    def __init__(self, *args, noise_processor: NoiseFeatureProcessor = None, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.noise_processor = noise_processor
 
+    def __call__(self, features: List[Dict[str, Any]]) -> Dict[str, Any]:
         batch = super().__call__(features)
         max_len = batch["input_ids"].shape[1]
 
-        def _pad(arr_list, pad_val):
-            padded = []
-            for arr in arr_list:
-                arr = arr or []
-                arr = arr[:max_len]
-                pad_len = max_len - len(arr)
-                padded.append(arr + [pad_val] * pad_len)
-            return padded
+        noise_ids = []
+        for feat in features:
+            nv = feat.get("noise_values") or []
+            if not nv:
+                # 完美语料：使用完美物理值，交给 processor 映射到对应桶
+                nv = [PERFECT_VALUES for _ in range(len(feat["input_ids"]))]
+            nv = (nv + [[0.0] * len(FEATURES)] * max_len)[:max_len]
+            ids = self.noise_processor.map_batch(nv) if self.noise_processor else [[0] * len(FEATURES) for _ in nv]
+            noise_ids.append(ids)
 
-        if any(x is not None for x in noise_feats):
-            nf = torch.tensor(_pad(noise_feats, [0.0] * 5), dtype=torch.float32)
-        else:
-            nf = torch.zeros((len(features), max_len, 5), dtype=torch.float32)
-
-        if any(x is not None for x in noise_masks):
-            nm = torch.tensor(_pad(noise_masks, [False] * 5), dtype=torch.bool)
-        else:
-            nm = torch.zeros((len(features), max_len, 5), dtype=torch.bool)
-
-        batch["noise_features"] = nf
-        batch["noise_masks"] = nm
+        batch["noise_ids"] = torch.tensor(noise_ids, dtype=torch.long)
         return batch
 
 
 class RobertaModelWithNoise(RobertaModel):
     """
-    轻量包装：用 RobertaNoiseEmbeddings，并将 noise_features/noise_masks 传入 embeddings。
+    轻量包装：用 RobertaNoiseEmbeddings，并将 noise_ids 传入 embeddings。
     """
 
     def __init__(self, config, add_pooling_layer: bool = True):
@@ -207,8 +203,7 @@ class RobertaModelWithNoise(RobertaModel):
         output_attentions: Optional[bool] = None,
         output_hidden_states: Optional[bool] = None,
         return_dict: Optional[bool] = None,
-        noise_features: Optional[torch.Tensor] = None,
-        noise_masks: Optional[torch.Tensor] = None,
+        noise_ids: Optional[torch.Tensor] = None,
     ) -> BaseModelOutputWithPoolingAndCrossAttentions:
         return_dict = return_dict if return_dict is not None else self.config.use_return_dict
 
@@ -243,8 +238,7 @@ class RobertaModelWithNoise(RobertaModel):
             token_type_ids=token_type_ids,
             inputs_embeds=inputs_embeds,
             past_key_values_length=past_key_values_length,
-            noise_features=noise_features,
-            noise_masks=noise_masks,
+            noise_ids=noise_ids,
         )
 
         encoder_outputs = self.encoder(
@@ -299,8 +293,7 @@ class RobertaForMaskedLMWithNoise(RobertaForMaskedLM):
         output_attentions: Optional[bool] = None,
         output_hidden_states: Optional[bool] = None,
         return_dict: Optional[bool] = None,
-        noise_features: Optional[torch.Tensor] = None,
-        noise_masks: Optional[torch.Tensor] = None,
+        noise_ids: Optional[torch.Tensor] = None,
     ) -> MaskedLMOutput:
         return_dict = return_dict if return_dict is not None else self.config.use_return_dict
 
@@ -316,8 +309,7 @@ class RobertaForMaskedLMWithNoise(RobertaForMaskedLM):
             output_attentions=output_attentions,
             output_hidden_states=output_hidden_states,
             return_dict=return_dict,
-            noise_features=noise_features,
-            noise_masks=noise_masks,
+            noise_ids=noise_ids,
         )
 
         sequence_output = outputs[0]
@@ -357,6 +349,7 @@ def main():
     parser.add_argument("--resume_from_checkpoint", type=str, default=None, help="可选：从已有 checkpoint 继续训练")
     parser.add_argument("--num_train_epochs", type=int, default=None, help=f"训练 epoch 数，默认 {NUM_TRAIN_EPOCHS}")
     parser.add_argument("--learning_rate", type=float, default=None, help=f"学习率，默认 {LEARNING_RATE}")
+    parser.add_argument("--noise_bins_json", type=str, required=True, help="预计算的噪声分桶边界 json，供 NoiseFeatureProcessor 使用")
     args = parser.parse_args()
 
     if not os.path.exists(DATASET_PATH):
@@ -374,7 +367,8 @@ def main():
     # 注释掉权重克隆功能，不扩展位置编码，保持基座模型的512长度
     # model = resize_position_embeddings(model, new_max_len=MAX_SEQ_LEN)
     model.gradient_checkpointing_enable()  # 启用梯度检查点减少显存
-    data_collator = NoiseAwareCollator(tokenizer=tokenizer)
+    processor = NoiseFeatureProcessor.load(args.noise_bins_json)
+    data_collator = NoiseAwareCollator(tokenizer=tokenizer, noise_processor=processor)
 
     training_args = TrainingArguments(
         output_dir=args.output_dir,
