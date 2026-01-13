@@ -153,7 +153,7 @@ class PrecomputedWWMCollator:
 class NoiseAwareCollator(PrecomputedWWMCollator):
     """
     生成离散噪声桶 ID：noise_ids=[B, L, 7]，anchor=0。
-    - 若样本无 noise_values，则填满 0（完美语料）。
+    - 若样本无 noise_values，则填满完美噪音（完美语料）。
     - 不修改 input_ids 的 [MASK] 位置对应的 noise_ids。
     """
 

@@ -66,11 +66,11 @@ python filter_vocab_with_llm.py \
   --batch_size 64 \
   --topn 50000
 ```
-3) Tokenizer 合并（精简版，使用 OCR 词表 + 业务键名词表 `biaozhu_keys_freq_min5.txt`，输出到 `my-medical-tokenizer/`）
+3) Tokenizer 合并（精简版，使用 LLM 精修 OCR 词表 + 纯键名 `biaozhu_keys_only.txt`，输出到 `my-medical-tokenizer/`）
 ```bash
 python final_merge_v9_regex_split_slim.py
 ```
-4) Jieba 词典（与合并策略保持一致，生成 `vocab_for_jieba.txt`，供 `build_dataset_final_slim.py` / `retokenize_processed_dataset_with_wordids.py` 使用）
+4) Jieba 词典（与合并策略保持一致，使用 kept_vocab.txt + `biaozhu_keys_only_min5.txt`，生成 `vocab_for_jieba.txt`，供 `build_dataset_final_slim.py` / `retokenize_processed_dataset_with_wordids.py` 使用）
 ```bash
 python generate_jieba_vocab.py
 ```
@@ -108,8 +108,14 @@ python export_ocr_texts.py \
   --ocr_json /home/ocean/semi_label/ocr_rerun/char_ocr_9297.json \
   --output /data/ocean/DAPT/workspace/train_ocr_9297.txt
 ```
-2) 构建带 word_ids 的 dataset  
-   - 设置 `TRAIN_FILE=train_ocr_9297.txt` 运行 `build_dataset_final_slim.py`（如开启滑窗流程，则 TRAIN_FILE 指向 `train_chunked.txt`）  
+2) 构建带 word_ids 的 dataset（命令行指定 train_file/output_path）
+```bash
+python build_dataset_final_slim.py \
+  --train_file /data/ocean/DAPT/workspace/train_ocr_9297.txt \
+  --output_path /data/ocean/DAPT/workspace/processed_dataset_ocr9297 \
+  --tokenizer_path /data/ocean/DAPT/workspace/my-medical-tokenizer
+# 如先做滑窗，则将 train_file 改为 /data/ocean/DAPT/workspace/train_chunked.txt
+```
    - 产出：`processed_dataset_ocr9297`
 3) 加噪声特征（连续值 -> 分桶 ID 在训练时处理，此处只写连续值）
 ```bash
@@ -133,11 +139,33 @@ python verify_noise_alignment.py \
    目标：高匹配率、噪声覆盖率 ~100%。
 
 ### 2.3 非 OCR 路（无噪声特征）
-- 书籍/指南/百科/20w 病历等：运行 `build_dataset_final_slim.py`，如果使用滑窗，确保 `TRAIN_FILE` 指向 `train_chunked.txt`；不含 `noise_values` 字段即可（训练时 collator 会自动填完美物理值并分桶）。
+- 书籍/指南/百科/20w 病历等：命令行指定 train_file/output_path（无 noise_values，训练时自动填完美噪声）
+```bash
+python build_dataset_final_slim.py \
+  --train_file /data/ocean/DAPT/workspace/train_chunked.txt \
+  --output_path /data/ocean/DAPT/workspace/processed_dataset_nonocr \
+  --tokenizer_path /data/ocean/DAPT/workspace/my-medical-tokenizer
+# 如未滑窗，可将 train_file 指向 train.txt 或其它源文件
+```
 
 ### 2.4 合并（可选）
-- 使用 `datasets.concatenate_datasets` 将 OCR 数据集与非 OCR 数据集合并，可按权重重采样。  
-- 禁止按索引把 OCR 特征硬塞给无 OCR 元信息的样本。
+已分别按 2.2/2.3 得到：
+- OCR: `/data/ocean/DAPT/workspace/processed_dataset_ocr9297_with_noise`
+- 非 OCR: `/data/ocean/DAPT/workspace/processed_dataset_nonocr`
+
+合并示例（保持分割一致，防止按索引错配噪声）：
+```bash
+python merge_datasets.py \
+  --ocr_dataset /data/ocean/DAPT/workspace/processed_dataset_ocr9297_with_noise \
+  --non_ocr_dataset /data/ocean/DAPT/workspace/processed_dataset_nonocr \
+  --output_path /data/ocean/DAPT/workspace/processed_dataset_merged \
+  --ocr_repeat 1 \
+  --non_ocr_repeat 1 \
+  --shuffle \
+  --seed 42
+```
+  - `ocr_repeat/non_ocr_repeat` 仅作用于 train 分割，用于配比；其余分割保持 1:1。  
+  - 禁止按索引把 OCR 特征硬塞给无 OCR 元信息的样本。
 
 ## 3. 训练（KV-aware MLM + 噪声）
 1) 指向对齐后的数据集（单独 OCR 或合并后）：
