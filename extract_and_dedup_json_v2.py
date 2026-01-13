@@ -176,6 +176,7 @@ def main():
         "wiki_med": {"lines": 0, "chars": 0, "files": 0, "parse_errors": 0},
         "wiki_general": {"lines": 0, "chars": 0, "files": 0, "parse_errors": 0},
         "med_book": {"lines": 0, "chars": 0, "files": 0, "parse_errors": 0},
+        "general2": {"lines": 0, "chars": 0, "files": 0, "parse_errors": 0},
     }
     source_chars = {"ocr": 0, "book": 0}  # 保留旧字段用于 token 估算
     
@@ -195,7 +196,7 @@ def main():
 
     with open(OUTPUT_FILE, 'w', encoding='utf-8') as f_out:
         split_handlers = {k: open(path, "w", encoding="utf-8") for k, path in OUTPUT_SPLIT_FILES.items()}
-        # 遍历目录（临床原始数据）
+        # 遍历目录（临床原始数据 + 本地新增 wiki/med_data 等）
         for RAW_DATA_ROOT in RAW_DATA_ROOTS:
             for root, dirs, files in os.walk(RAW_DATA_ROOT):
                 # 扫描 .txt/.json/.csv/.jsonl/.jsonl.gz 文件
@@ -215,7 +216,18 @@ def main():
                     file_path = os.path.join(root, file)
                     total_files += 1
                     
-                    source_stats["clinical_raw"]["files"] += 1
+                    # 根据路径决定分类：med_data -> med_book；wiki_data -> wiki_med/wiki_general；否则默认为 clinical_raw
+                    category = "clinical_raw"
+                    if "/med_data" in root:
+                        category = "med_book"
+                    elif "/wiki_data" in root:
+                        if "wiki_med" in file:
+                            category = "wiki_med"
+                        else:
+                            category = "wiki_general"
+
+                    source_stats.setdefault(category, {"lines": 0, "chars": 0, "files": 0, "parse_errors": 0})
+                    source_stats[category]["files"] += 1
                     try:
                         # 全量读取文件（根据后缀分别处理）
                         if file.endswith('.csv'):
@@ -240,11 +252,12 @@ def main():
                                         continue
                                     unique_hashes.add(file_hash)
                                     clean_line = full_text.replace("\n", " ")
-                                    write_record(clean_line, "clinical_raw", f_out, split_handlers)
+                                    write_record(clean_line, category, f_out, split_handlers)
                                     valid_count += 1
-                                    source_stats["clinical_raw"]["lines"] += 1
-                                    source_stats["clinical_raw"]["chars"] += len(clean_line)
-                                    source_chars["ocr"] += len(clean_line)
+                                    source_stats[category]["lines"] += 1
+                                    source_stats[category]["chars"] += len(clean_line)
+                                    if category == "clinical_raw":
+                                        source_chars["ocr"] += len(clean_line)
                                     if len(sample_outputs) < 5:
                                         sample_outputs.append(f"[{file}] {clean_line[:100]}...")
                             continue
@@ -302,10 +315,10 @@ def main():
                                         continue
                                     unique_hashes.add(file_hash)
                                     clean_line = text.replace("\n", " ").strip()
-                                    write_record(clean_line, "clinical_raw", f_out, split_handlers)
+                                    write_record(clean_line, category, f_out, split_handlers)
                                     valid_count += 1
-                                    source_stats["clinical_raw"]["lines"] += 1
-                                    source_stats["clinical_raw"]["chars"] += len(clean_line)
+                                    source_stats[category]["lines"] += 1
+                                    source_stats[category]["chars"] += len(clean_line)
                                     if len(sample_outputs) < 5:
                                         sample_outputs.append(f"[{file}] {clean_line[:100]}...")
                             continue
@@ -327,11 +340,12 @@ def main():
                                 continue
                             unique_hashes.add(file_hash)
                             clean_line = full_text.replace("\n", " ")
-                            write_record(clean_line, "clinical_raw", f_out, split_handlers)
+                            write_record(clean_line, category, f_out, split_handlers)
                             valid_count += 1
-                            source_stats["clinical_raw"]["lines"] += 1
-                            source_stats["clinical_raw"]["chars"] += len(clean_line)
-                            source_chars["ocr"] += len(clean_line)
+                            source_stats[category]["lines"] += 1
+                            source_stats[category]["chars"] += len(clean_line)
+                            if category == "clinical_raw":
+                                source_chars["ocr"] += len(clean_line)
                             if len(sample_outputs) < 5:
                                 sample_outputs.append(f"[{file}] {clean_line[:100]}...")
                             continue
@@ -348,10 +362,10 @@ def main():
                                         duplicate_count += 1
                                         continue
                                     unique_hashes.add(file_hash)
-                                    write_record(clean_line, "clinical_raw", f_out, split_handlers)
+                                    write_record(clean_line, category, f_out, split_handlers)
                                     valid_count += 1
-                                    source_stats["clinical_raw"]["lines"] += 1
-                                    source_stats["clinical_raw"]["chars"] += len(clean_line)
+                                    source_stats[category]["lines"] += 1
+                                    source_stats[category]["chars"] += len(clean_line)
                                     if len(sample_outputs) < 5:
                                         sample_outputs.append(f"[{file}] {clean_line[:100]}...")
                             continue

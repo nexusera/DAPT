@@ -17,8 +17,8 @@ python resample_mix.py \
   --paper /data/ocean/DAPT/workspace/train_paper.txt \
   --general /data/ocean/DAPT/workspace/train_general.txt \
   --supplement /data/ocean/DAPT/workspace/train_supplement.txt \
-  --wiki_med /data/ocean/DAPT/workspace/wiki_data/wiki_med_zh_local.txt \
-  --wiki_general /data/ocean/DAPT/workspace/wiki_data/wiki_general_med_zh_local.txt \
+  --wiki_med /data/ocean/DAPT/wiki_data/wiki_med_zh_local.txt \
+  --wiki_general /data/ocean/DAPT/wiki_data/wiki_general_med_zh_local.txt \
   --med_book /data/ocean/DAPT/workspace/train_med_book.txt \
   --general2 /data/ocean/DAPT/general_data/fineweb_edu_sample.jsonl.gz \
   --weights  \
