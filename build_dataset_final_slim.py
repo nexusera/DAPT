@@ -15,7 +15,7 @@ TRAIN_FILE = os.path.join(WORKSPACE_DIR, "train_chunked.txt")
 OUTPUT_PATH = os.path.join(WORKSPACE_DIR, "processed_dataset")
 
 # 仅保留 OCR 挖掘与业务 Key 两路词典
-KEYS_FILE = str(Path(__file__).resolve().parent / "biaozhu_keys_freq_min5.txt")  # 业务实体 Key（频次>5）
+KEYS_FILE = str(Path(__file__).resolve().parent / "biaozhu_keys_only_min5.txt")  # 业务实体 Key（纯键名，频次>5）
 VOCAB_FOR_JIEBA = os.path.join(WORKSPACE_DIR, "vocab_for_jieba.txt") # WordPiece 挖掘的高频词
 
 # 最大长度 (通常预训练设为 512，和 BERT 基座对齐)

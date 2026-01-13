@@ -5,14 +5,7 @@
 - 作用：扫描多源 JSON/TXT，提取文本，MD5 去重。
 - 产出：`/data/ocean/DAPT/workspace/train.txt`（干净文本）；可按源拆分辅助重采样。
 
-（新增）合入 Wiki 医学/通用医学语料  
-```bash
-mkdir -p /data/ocean/DAPT/workspace/wiki_data
-cp ./wiki_data/wiki_med_zh_local.txt ./wiki_data/wiki_general_med_zh_local.txt /data/ocean/DAPT/workspace/wiki_data/
-# 直接追加到总语料（若不想重采样）
-cat /data/ocean/DAPT/workspace/wiki_data/wiki_med_zh_local.txt \
-    /data/ocean/DAPT/workspace/wiki_data/wiki_general_med_zh_local.txt \
-    >> /data/ocean/DAPT/workspace/train.txt
+
 ```
 
 （可选）分源重采样，调整占比
@@ -28,17 +21,19 @@ python resample_mix.py \
   --wiki_general /data/ocean/DAPT/workspace/wiki_data/wiki_general_med_zh_local.txt \
   --med_book /data/ocean/DAPT/workspace/train_med_book.txt \
   --general2 /data/ocean/DAPT/general_data/fineweb_edu_sample.jsonl.gz \
-  --weights \
-    0.35 \   # clinical_raw 本地病例
-    0.25 0.00 \   # book_core, book_old (如有旧书可调，否则设0)
-    0.10 \   # paper（如不计入医疗 50%，可调低；计入则并入医疗总量）
-    0.07 \   # general (train_general.txt)
-    0.03 \   # supplement
-    0.03 \   # wiki_med
-    0.02 \   # wiki_general
-    0.15 \   # general2 (FineWeb 抽样)
-    # 目标：医疗（book_core+book_old+paper+med_book+wiki_med）≈50%，本地病例 ≈35%，通用（general+general2+supplement+wiki_general）≈15%
+  --weights  \
+    0.35 \  # clinical 本地病例
+    0.15 \  # book_core
+    0.00 \  # book_old
+    0.08 \  # paper
+    0.05 \  # general
+    0.02 \  # supplement
+    0.07 \  # wiki_med
+    0.02 \  # wiki_general
+    0.13 \  # med_book
+    0.13 \  # general2 (fineweb 抽样)
   --output /data/ocean/DAPT/workspace/train_resampled.txt
+# 当前示例权重合计为 1.0，可按需求微调；若精确要求“医疗≈50%，病例≈35%，通用≈15%”，可适当提高 med_book/wiki_med/（或 paper）并下调 general/general2。
 ```
 
 （新增）合入医疗百科 / 医疗教材（JSON：包含 text / question+answer 等字段）  

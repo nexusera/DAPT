@@ -21,7 +21,7 @@ VIP_TERMS = {
 # 去掉 medical_dict.txt，仅保留 OCR 挖掘和业务 Keys
 SOURCES = [
     {"path": "./medical_vocab_ocr_only/vocab.txt", "type": "dict"},
-    {"path": str(Path(__file__).resolve().parent / "biaozhu_keys_freq_min5.txt"), "type": "key"}
+    {"path": str(Path(__file__).resolve().parent / "biaozhu_keys_only_min5.txt"), "type": "key"}
 ]
 
 def smart_extract_key_core(token):

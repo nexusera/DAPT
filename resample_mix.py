@@ -37,7 +37,18 @@ def main():
     ap.add_argument("--paper", type=str, required=True)
     ap.add_argument("--general", type=str, required=True)
     ap.add_argument("--supplement", type=str, required=True)
-    ap.add_argument("--weights", type=float, nargs=6, required=True, help="六路权重，按 clinical/book_core/book_old/paper/general/supplement 顺序")
+    ap.add_argument("--wiki_med", type=str, required=False)
+    ap.add_argument("--wiki_general", type=str, required=False)
+    ap.add_argument("--med_book", type=str, required=False)
+    ap.add_argument("--general2", type=str, required=False, help="额外通用语料，如 fineweb 抽样")
+    ap.add_argument(
+        "--weights",
+        type=float,
+        nargs="+",
+        required=True,
+        help="按提供的来源顺序给出权重："
+             "clinical/book_core/book_old/paper/general/supplement/[wiki_med]/[wiki_general]/[med_book]/[general2]",
+    )
     ap.add_argument("--total_lines", type=int, default=None, help="目标总行数；默认为各源行数加权和的整数")
     ap.add_argument("--output", type=str, required=True)
     args = ap.parse_args()
@@ -50,8 +61,17 @@ def main():
         ("general", args.general),
         ("supplement", args.supplement),
     ]
-    if len(args.weights) != 6:
-        raise ValueError("weights 必须提供 6 个值，对应六路来源")
+    if args.wiki_med:
+        sources.append(("wiki_med", args.wiki_med))
+    if args.wiki_general:
+        sources.append(("wiki_general", args.wiki_general))
+    if args.med_book:
+        sources.append(("med_book", args.med_book))
+    if args.general2:
+        sources.append(("general2", args.general2))
+
+    if len(args.weights) != len(sources):
+        raise ValueError(f"weights 数量({len(args.weights)})需与来源数量({len(sources)})一致")
 
     data = []
     counts = []
