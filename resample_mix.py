@@ -92,8 +92,8 @@ def main():
     os.makedirs(os.path.dirname(args.output), exist_ok=True)
     with open(args.output, "w", encoding="utf-8") as fout:
         for _ in range(total):
-            # 按权重选择来源
-            src_idx = random.choices(range(6), weights=args.weights, k=1)[0]
+            # 按权重选择来源（使用动态来源数量）
+            src_idx = random.choices(range(len(data)), weights=args.weights, k=1)[0]
             pool = data[src_idx]
             if not pool:
                 continue
