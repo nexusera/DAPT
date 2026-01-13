@@ -1,5 +1,6 @@
 import os
 import re
+from pathlib import Path
 import jieba
 from datasets import load_dataset
 from transformers import AutoTokenizer
@@ -7,14 +8,14 @@ from transformers import AutoTokenizer
 # ===========================
 # 1. 配置路径（精简版：不加载 medical_dict.txt）
 # ===========================
-WORKSPACE_DIR = "/data/ocean/bpe_workspace"
+WORKSPACE_DIR = "/data/ocean/DAPT/workspace"
 TOKENIZER_PATH = os.path.join(WORKSPACE_DIR, "my-medical-tokenizer")
-# 使用重采样后的语料
+# 使用重采样+滑窗后的语料
 TRAIN_FILE = os.path.join(WORKSPACE_DIR, "train_chunked.txt")
 OUTPUT_PATH = os.path.join(WORKSPACE_DIR, "processed_dataset")
 
 # 仅保留 OCR 挖掘与业务 Key 两路词典
-KEYS_FILE = os.path.join(WORKSPACE_DIR, "keys.txt")              # 业务实体 Key
+KEYS_FILE = str(Path(__file__).resolve().parent / "biaozhu_keys_freq_min5.txt")  # 业务实体 Key（频次>5）
 VOCAB_FOR_JIEBA = os.path.join(WORKSPACE_DIR, "vocab_for_jieba.txt") # WordPiece 挖掘的高频词
 
 # 最大长度 (通常预训练设为 512，和 BERT 基座对齐)

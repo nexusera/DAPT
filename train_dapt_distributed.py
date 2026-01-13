@@ -40,7 +40,7 @@ PERFECT_VALUES = [1.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0]
 # ===========================
 # 1. 配置路径与参数
 # ===========================
-WORKSPACE_DIR = "/data/ocean/bpe_workspace"
+WORKSPACE_DIR = "/data/ocean/DAPT/workspace"
 TOKENIZER_PATH = os.path.join(WORKSPACE_DIR, "my-medical-tokenizer")
 DATASET_PATH = os.path.join(WORKSPACE_DIR, "processed_dataset")
 MODEL_CHECKPOINT = "hfl/chinese-roberta-wwm-ext"

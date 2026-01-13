@@ -40,8 +40,8 @@ from transformers import (
 # ===========================
 # 1. 配置路径与参数
 # ===========================
-WORKSPACE_DIR = "/data/ocean/bpe_workspace"
-TOKENIZER_PATH = "hfl/chinese-roberta-wwm-ext"
+WORKSPACE_DIR = "/data/ocean/DAPT/workspace"
+TOKENIZER_PATH = os.path.join(WORKSPACE_DIR, "my-medical-tokenizer")
 DATASET_PATH = os.path.join(WORKSPACE_DIR, "processed_dataset")
 MODEL_CHECKPOINT = "hfl/chinese-roberta-wwm-ext"
 OUTPUT_DIR = os.path.join(WORKSPACE_DIR, "output_medical_bert_kvmlm")

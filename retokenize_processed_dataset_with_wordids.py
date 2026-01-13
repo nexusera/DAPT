@@ -9,15 +9,16 @@
 """
 import os
 import re
+from pathlib import Path
 import jieba
 from datasets import load_dataset, DatasetDict
 from transformers import AutoTokenizer
 
-WORKSPACE_DIR = "/data/ocean/bpe_workspace"
+WORKSPACE_DIR = "/data/ocean/DAPT/workspace"
 TOKENIZER_PATH = "hfl/chinese-roberta-wwm-ext"
 TRAIN_FILE = os.path.join(WORKSPACE_DIR, "train.txt")
 OUTPUT_PATH = os.path.join(WORKSPACE_DIR, "processed_dataset")
-KEYS_FILE = os.path.join(WORKSPACE_DIR, "keys.txt")
+KEYS_FILE = str(Path(__file__).resolve().parent / "biaozhu_keys_freq_min5.txt")
 VOCAB_FOR_JIEBA = os.path.join(WORKSPACE_DIR, "vocab_for_jieba.txt")
 MAX_LEN = 512
 RE_LONG_ALNUM = re.compile(r'^[A-Za-z0-9]{6,}$')
