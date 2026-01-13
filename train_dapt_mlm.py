@@ -26,7 +26,8 @@ from transformers import (
 # 1. 配置路径与参数
 # ===========================
 WORKSPACE_DIR = "/data/ocean/bpe_workspace"
-TOKENIZER_PATH = os.path.join(WORKSPACE_DIR, "my-medical-tokenizer")
+# Tokenizer 统一指向 /data/ocean/DAPT/my-medical-tokenizer
+TOKENIZER_PATH = "/data/ocean/DAPT/my-medical-tokenizer"
 DATASET_PATH = os.path.join(WORKSPACE_DIR, "processed_dataset")
 MODEL_CHECKPOINT = "hfl/chinese-roberta-wwm-ext"
 OUTPUT_DIR = os.path.join(WORKSPACE_DIR, "output_medical_bert_add_vocab_mlm")  # 新输出目录

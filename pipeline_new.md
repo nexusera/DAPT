@@ -70,7 +70,7 @@ python filter_vocab_with_llm.py \
 ```bash
 python final_merge_v9_regex_split_slim.py
 ```
-4) Jieba 词典（与合并策略保持一致，使用 kept_vocab.txt + `biaozhu_keys_only_min5.txt`，生成 `vocab_for_jieba.txt`，供 `build_dataset_final_slim.py` / `retokenize_processed_dataset_with_wordids.py` 使用）
+4) Jieba 词典（与合并策略保持一致，使用 kept_vocab.txt + `biaozhu_keys_only_min5.txt`，生成 `/data/ocean/DAPT/vocab_for_jieba.txt`，供 `build_dataset_final_slim.py` / `retokenize_processed_dataset_with_wordids.py` 使用）
 ```bash
 python generate_jieba_vocab.py
 ```
@@ -113,7 +113,7 @@ python export_ocr_texts.py \
 python build_dataset_final_slim.py \
   --train_file /data/ocean/DAPT/workspace/train_ocr_9297.txt \
   --output_path /data/ocean/DAPT/workspace/processed_dataset_ocr9297 \
-  --tokenizer_path /data/ocean/DAPT/workspace/my-medical-tokenizer
+  --tokenizer_path /data/ocean/DAPT/my-medical-tokenizer
 # 如先做滑窗，则将 train_file 改为 /data/ocean/DAPT/workspace/train_chunked.txt
 ```
    - 产出：`processed_dataset_ocr9297`
@@ -134,7 +134,7 @@ python verify_noise_alignment.py \
   --dataset /data/ocean/DAPT/workspace/processed_dataset_ocr9297_with_noise \
   --ocr_json /home/ocean/semi_label/ocr_rerun/char_ocr_9297.json \
   --check_samples 50 \
-  --tokenizer /data/ocean/DAPT/workspace/my-medical-tokenizer
+  --tokenizer /data/ocean/DAPT/my-medical-tokenizer
 ```
    目标：高匹配率、噪声覆盖率 ~100%。
 
@@ -144,8 +144,7 @@ python verify_noise_alignment.py \
 python build_dataset_final_slim.py \
   --train_file /data/ocean/DAPT/workspace/train_chunked.txt \
   --output_path /data/ocean/DAPT/workspace/processed_dataset_nonocr \
-  --tokenizer_path /data/ocean/DAPT/workspace/my-medical-tokenizer
-# 如未滑窗，可将 train_file 指向 train.txt 或其它源文件
+  --tokenizer_path /data/ocean/DAPT/my-medical-tokenizer
 ```
 
 ### 2.4 合并（可选）

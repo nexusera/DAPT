@@ -10,7 +10,7 @@ OCR_VOCAB_FALLBACK = WORKSPACE_DIR / "medical_vocab_ocr_only" / "vocab.txt"
 KEYS_FILE = PROJECT_ROOT / "biaozhu_keys_only_min5.txt"  # 纯键名，频次>5
 
 # 2. 输出: 给 Jieba 用的外挂词典
-OUTPUT_FILE = "vocab_for_jieba.txt"
+OUTPUT_FILE = "/data/ocean/DAPT/vocab_for_jieba.txt"
 
 # 3. 过滤逻辑 (必须与 Tokenizer 合并时的逻辑保持一致)
 MAX_LEN = 6  # 超过6字的不要 (太长的可能是垃圾句子)

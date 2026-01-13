@@ -7,14 +7,16 @@ from datasets import load_dataset
 from transformers import AutoTokenizer
 
 DEFAULT_WORKSPACE_DIR = "/data/ocean/DAPT/workspace"
-DEFAULT_TOKENIZER_PATH = os.path.join(DEFAULT_WORKSPACE_DIR, "my-medical-tokenizer")
+# Tokenizer 现存放在 /data/ocean/DAPT/my-medical-tokenizer
+DEFAULT_TOKENIZER_PATH = "/data/ocean/DAPT/my-medical-tokenizer"
 # 使用重采样+滑窗后的语料
 DEFAULT_TRAIN_FILE = os.path.join(DEFAULT_WORKSPACE_DIR, "train_chunked.txt")
 DEFAULT_OUTPUT_PATH = os.path.join(DEFAULT_WORKSPACE_DIR, "processed_dataset")
 
 # 仅保留 OCR 挖掘与业务 Key 两路词典
 DEFAULT_KEYS_FILE = str(Path(__file__).resolve().parent / "biaozhu_keys_only_min5.txt")  # 业务实体 Key（纯键名，频次>5）
-DEFAULT_VOCAB_FOR_JIEBA = os.path.join(DEFAULT_WORKSPACE_DIR, "vocab_for_jieba.txt") # WordPiece 挖掘的高频词
+# Jieba 词表位置（注意：词表实际存放在 /data/ocean/DAPT/vocab_for_jieba.txt）
+DEFAULT_VOCAB_FOR_JIEBA = "/data/ocean/DAPT/vocab_for_jieba.txt"  # WordPiece 挖掘的高频词
 
 # 最大长度 (通常预训练设为 512，和 BERT 基座对齐)
 DEFAULT_MAX_LEN = 512

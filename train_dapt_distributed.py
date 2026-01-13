@@ -41,7 +41,8 @@ PERFECT_VALUES = [1.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0]
 # 1. 配置路径与参数
 # ===========================
 WORKSPACE_DIR = "/data/ocean/DAPT/workspace"
-TOKENIZER_PATH = os.path.join(WORKSPACE_DIR, "my-medical-tokenizer")
+# Tokenizer 存放在 /data/ocean/DAPT/my-medical-tokenizer
+TOKENIZER_PATH = "/data/ocean/DAPT/my-medical-tokenizer"
 DATASET_PATH = os.path.join(WORKSPACE_DIR, "processed_dataset")
 MODEL_CHECKPOINT = "hfl/chinese-roberta-wwm-ext"
 # 可通过命令行 --output_dir 覆盖，避免多实验互相覆盖

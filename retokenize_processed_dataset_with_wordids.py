@@ -19,7 +19,8 @@ TOKENIZER_PATH = "hfl/chinese-roberta-wwm-ext"
 TRAIN_FILE = os.path.join(WORKSPACE_DIR, "train.txt")
 OUTPUT_PATH = os.path.join(WORKSPACE_DIR, "processed_dataset")
 KEYS_FILE = str(Path(__file__).resolve().parent / "biaozhu_keys_only_min5.txt")
-VOCAB_FOR_JIEBA = os.path.join(WORKSPACE_DIR, "vocab_for_jieba.txt")
+# Jieba 词表位置（已移动到 /data/ocean/DAPT/vocab_for_jieba.txt）
+VOCAB_FOR_JIEBA = "/data/ocean/DAPT/vocab_for_jieba.txt"
 MAX_LEN = 512
 RE_LONG_ALNUM = re.compile(r'^[A-Za-z0-9]{6,}$')
 RE_LONG_DIGITS = re.compile(r'\d{6,}')

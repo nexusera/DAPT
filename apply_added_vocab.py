@@ -3,7 +3,8 @@ from transformers import AutoModelForMaskedLM, AutoTokenizer
 
 WORKSPACE_DIR = "/data/ocean/bpe_workspace"
 BASE_MODEL = "hfl/chinese-roberta-wwm-ext"
-ADDED_TOKENIZER_DIR = os.path.join(WORKSPACE_DIR, "my-medical-tokenizer")
+# Tokenizer 统一指向 /data/ocean/DAPT/my-medical-tokenizer
+ADDED_TOKENIZER_DIR = "/data/ocean/DAPT/my-medical-tokenizer"
 OUTPUT_DIR = os.path.join(WORKSPACE_DIR, "output_medical_bert_add_vocab")
 
 
