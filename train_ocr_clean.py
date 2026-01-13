@@ -4,8 +4,8 @@ from tokenizers import BertWordPieceTokenizer
 
 # ================= 配置区域 =================
 # 使用重采样后的语料
-CORPUS_FILE = "train_balanced.txt"
-OUTPUT_DIR = "./medical_vocab_ocr_only"
+CORPUS_FILE = "/data/ocean/DAPT/workspace/train_chunked.txt"
+OUTPUT_DIR = "/data/ocean/DAPT/workspace/medical_vocab_ocr_only"
 
 # 1. 训练参数
 # 策略：先抓 80000 个，清洗掉垃圾后，可能剩 30000 个好词，这正好是我们想要的

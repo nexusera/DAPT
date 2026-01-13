@@ -9,7 +9,6 @@
 ```
 
 （可选）分源重采样，调整占比
-```bash
 python resample_mix.py \
   --clinical /data/ocean/DAPT/workspace/train_clinical.txt \
   --book_core /data/ocean/DAPT/workspace/train_book_core.txt \
@@ -17,51 +16,40 @@ python resample_mix.py \
   --paper /data/ocean/DAPT/workspace/train_paper.txt \
   --general /data/ocean/DAPT/workspace/train_general.txt \
   --supplement /data/ocean/DAPT/workspace/train_supplement.txt \
-  --wiki_med /data/ocean/DAPT/wiki_data/wiki_med_zh_local.txt \
-  --wiki_general /data/ocean/DAPT/wiki_data/wiki_general_med_zh_local.txt \
+  --wiki_med /data/ocean/DAPT/workspace/wiki_data/wiki_med_zh_local.txt \
+  --wiki_general /data/ocean/DAPT/workspace/wiki_data/wiki_general_med_zh_local.txt \
   --med_book /data/ocean/DAPT/workspace/train_med_book.txt \
   --general2 /data/ocean/DAPT/general_data/fineweb_edu_sample.jsonl.gz \
   --weights  \
-    0.35 \  # clinical 本地病例
-    0.15 \  # book_core
-    0.00 \  # book_old
-    0.08 \  # paper
-    0.05 \  # general
-    0.02 \  # supplement
-    0.07 \  # wiki_med
-    0.02 \  # wiki_general
-    0.13 \  # med_book
-    0.13 \  # general2 (fineweb 抽样)
+    0.35 \
+    0.15 \
+    0.00 \
+    0.08 \
+    0.05 \
+    0.02 \
+    0.07 \
+    0.02 \
+    0.13 \
+    0.13 \
   --output /data/ocean/DAPT/workspace/train_resampled.txt
+
 # 当前示例权重合计为 1.0，可按需求微调；若精确要求“医疗≈50%，病例≈35%，通用≈15%”，可适当提高 med_book/wiki_med/（或 paper）并下调 general/general2。
 ```
 
-（新增）合入医疗百科 / 医疗教材（JSON：包含 text / question+answer 等字段）  
-```bash
-mkdir -p /data/ocean/DAPT/med_data
-cp ./med_data/medical_book_zh.json ./med_data/train_encyclopedia.json /data/ocean/DAPT/med_data/
-# 可直接追加到 train.txt（若不重采样）
-# json 行格式已在 extract_and_dedup_json_v2.py 适配：字段 text / content / question+answer / instruction+output
-```
 （可选，降低 512 截断）字符级滑窗切分长行
 ```bash
 python chunk_long_lines.py \
-  --input /data/ocean/DAPT/workspace/train_resampled.txt \  # 若未重采样则用 train.txt
+  --input /data/ocean/DAPT/workspace/train_resampled.txt \
   --output /data/ocean/DAPT/workspace/train_chunked.txt \
-  --window 1000 --stride 500
+  --window 1000 \
+  --stride 500
 ```
-后续构建数据集时，将 `TRAIN_FILE` 指向 `train_chunked.txt`，减少长文本被 512 截断。
-（可选，降低 512 截断）字符级滑窗切分长行
-```bash
-python chunk_long_lines.py \
-  --input /data/ocean/bpe_workspace/train.txt \
-  --output /data/ocean/bpe_workspace/train_chunked.txt \
-  --window 1000 --stride 500
-```
+# 若未重采样input则用 train.txt
 后续构建数据集时，将 `TRAIN_FILE` 指向 `train_chunked.txt`，减少长文本被 512 截断。
 
+
 ## 1. 词表与 Tokenizer
-1) OCR 词表挖掘（先在脚本里把 `CORPUS_FILE` 改为 `/data/ocean/DAPT/workspace/train_chunked.txt` 或 `train.txt`，`OUTPUT_DIR` 改为 `/data/ocean/DAPT/workspace/medical_vocab_ocr_only`）
+1) OCR 词表挖掘（脚本已预设：`CORPUS_FILE=/data/ocean/DAPT/workspace/train_chunked.txt`，`OUTPUT_DIR=/data/ocean/DAPT/workspace/medical_vocab_ocr_only`）
 ```bash
 python train_ocr_clean.py
 ```
