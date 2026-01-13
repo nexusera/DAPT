@@ -14,15 +14,27 @@ MAX_TOKEN_LENGTH = 7
 
 # 👑 VIP 白名单 (绝对保留)
 VIP_TERMS = {
-    "brca1基因", "brca2基因", "her2基因", "ki67", "fish检测",
+    "brca1基因", "brca2基因", "her2基因",  "fish检测",
     "er阳性", "pr阳性", "p53蛋白", "ptnm分期"
 }
 
-# 去掉 medical_dict.txt，仅保留 OCR 挖掘和业务 Keys
-SOURCES = [
-    {"path": "./medical_vocab_ocr_only/vocab.txt", "type": "dict"},
-    {"path": str(Path(__file__).resolve().parent / "biaozhu_keys_only_min5.txt"), "type": "key"}
-]
+# 去掉 medical_dict.txt，仅保留：
+# 1) LLM 精修后的 OCR 词表 kept_vocab.txt（若不存在则回退原始 OCR vocab）
+# 2) 纯键名业务词表 biaozhu_keys_only.txt
+WORKSPACE_DIR = Path("/data/ocean/DAPT/workspace")
+PROJECT_ROOT = Path("/data/ocean/DAPT")
+OCR_VOCAB_MAIN = WORKSPACE_DIR / "kept_vocab.txt"  # LLM 过滤后的词表
+OCR_VOCAB_FALLBACK = WORKSPACE_DIR / "medical_vocab_ocr_only" / "vocab.txt"  # 原始 OCR 词表
+KEYS_VOCAB = PROJECT_ROOT / "biaozhu_keys_only.txt"  # 纯键名（绝对路径）
+
+SOURCES = []
+if OCR_VOCAB_MAIN.exists():
+    SOURCES.append({"path": str(OCR_VOCAB_MAIN), "type": "dict"})
+else:
+    print(f"⚠️ 未找到 {OCR_VOCAB_MAIN}，回退使用 {OCR_VOCAB_FALLBACK}")
+    SOURCES.append({"path": str(OCR_VOCAB_FALLBACK), "type": "dict"})
+
+SOURCES.append({"path": str(KEYS_VOCAB), "type": "key"})
 
 def smart_extract_key_core(token):
     """

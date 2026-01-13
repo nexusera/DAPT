@@ -55,12 +55,14 @@ python train_ocr_clean.py
 ```
 2) （可选）LLM 过滤（需本地 LLM 服务，保留医学相关词）
 ```bash
-export LLF_API_BASE="http://127.0.0.1:8008/v1"   # 如有多端口可逗号分隔
+cd /data/ocean/DAPT
+export LLF_API_BASE="http://127.0.0.1:8008/v1"
 export OPENAI_API_KEY="EMPTY"
+
 python filter_vocab_with_llm.py \
-  --vocab medical_vocab_ocr_only/vocab.txt \
-  --kept kept_vocab.txt \
-  --dropped dropped_vocab.txt \
+  --vocab /data/ocean/DAPT/workspace/medical_vocab_ocr_only/vocab.txt \
+  --kept /data/ocean/DAPT/workspace/kept_vocab.txt \
+  --dropped /data/ocean/DAPT/workspace/dropped_vocab.txt \
   --batch_size 64 \
   --topn 50000
 ```
