@@ -148,16 +148,19 @@ def main():
     # 确保 datasets 的 tqdm 进度条开启（部分环境可能关闭）
     enable_progress_bar()
 
-    # 从磁盘加载已处理的数据集
+    print(f"[add_noise_features] loading dataset: {args.dataset}")
     dataset = load_from_disk(args.dataset)
+    print(f"[add_noise_features] dataset loaded. splits: {list(dataset.keys())}")
     # 检查数据集格式是否正确（必须包含train/test等分割）
     if not isinstance(dataset, DatasetDict):
         raise ValueError("Expected a DatasetDict with train/test splits")
 
-    # 加载OCR识别结果数据（可能来自多个文件）
+    print(f"[add_noise_features] loading ocr json(s): {args.ocr_json}")
     ocr_list = load_ocr_list(args.ocr_json)
-    # 加载分桶边界
+    print(f"[add_noise_features] ocr loaded. total items: {len(ocr_list)}")
+    # 加载分桶边界（仅用于构造 processor 映射）
     processor = NoiseFeatureProcessor.load(args.bins_json)
+    print(f"[add_noise_features] bins loaded: {args.bins_json}")
 
     def add_noise(example: Dict[str, Any], idx: int):
         # word_ids 是对齐的必要条件
@@ -246,12 +249,14 @@ def main():
         # 对当前分割的所有样本应用add_noise函数
         # map会并行处理所有样本（如果设置了num_proc）
         new_splits[split] = ds.map(add_noise, **map_kwargs)
+        print(f"[add_noise_features] split {split} done. new size: {len(new_splits[split])}")
 
     # 将所有分割重新组合成DatasetDict
     out = DatasetDict(new_splits)
     # 保存到磁盘
+    print(f"[add_noise_features] saving to {args.output}")
     out.save_to_disk(args.output)
-    print(f"Saved dataset with noise features to {args.output}")
+    print(f"[add_noise_features] saved: {args.output}")
 
 
 # 程序入口：当直接运行这个脚本时，执行main函数
