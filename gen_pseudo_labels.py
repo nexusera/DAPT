@@ -68,7 +68,7 @@ def resolve_model_and_lora(model_path, base_model_path=None):
     )
 
 def load_all_texts(data_dirs):
-    """遍历目录，支持 CSV 第一列、以及 .txt JSON（含 words_result 或 text 字段）"""
+    """递归遍历目录，支持 CSV 第一列、以及 .txt JSON（含 words_result 或 text 字段）"""
     all_texts = []
 
     def _load_txt_json(txt_path):
@@ -94,20 +94,22 @@ def load_all_texts(data_dirs):
         if not os.path.exists(directory):
             print(f"警告：目录不存在 {directory}")
             continue
-        for file in os.listdir(directory):
-            file_path = os.path.join(directory, file)
-            if file.endswith(".csv"):
-                try:
-                    df = pd.read_csv(file_path)
-                    # ！！！注意：这里假设医疗文本在 CSV 的第一列，如果列名是 'text'，请改为 df['text']
-                    texts = df.iloc[:, 0].dropna().astype(str).tolist()
-                    all_texts.extend(texts)
-                except Exception as e:
-                    print(f"读取文件 {file_path} 出错: {e}")
-            elif file.endswith(".txt"):
-                text = _load_txt_json(file_path)
-                if text:
-                    all_texts.append(text)
+
+        for root, _, files in os.walk(directory):
+            for file in files:
+                file_path = os.path.join(root, file)
+                if file.endswith(".csv"):
+                    try:
+                        df = pd.read_csv(file_path)
+                        # ！！！注意：这里假设医疗文本在 CSV 的第一列，如果列名是 'text'，请改为 df['text']
+                        texts = df.iloc[:, 0].dropna().astype(str).tolist()
+                        all_texts.extend(texts)
+                    except Exception as e:
+                        print(f"读取文件 {file_path} 出错: {e}")
+                elif file.endswith(".txt"):
+                    text = _load_txt_json(file_path)
+                    if text:
+                        all_texts.append(text)
     return all_texts
 
 def format_as_label_studio(idx, kv_dict):
