@@ -62,6 +62,20 @@ def extract_text_from_dataset_sample(sample, tokenizer):
     text = tokenizer.decode(input_ids, skip_special_tokens=True)
     return text.strip()
 
+
+def has_noise(sample: dict) -> bool:
+    """
+    检查样本是否存在非零噪声特征。
+    兼容字段：
+    - noise_values: 连续特征（add_noise_features.py 写入）
+    - noise_features: 旧字段，若存在也检查
+    """
+    for key in ["noise_values", "noise_features"]:
+        nv = sample.get(key) or []
+        if nv and any(any(v != 0.0 for v in feat) for feat in nv):
+            return True
+    return False
+
 def main():
     parser = argparse.ArgumentParser(description="校验 OCR 特征与 dataset 对齐")
     parser.add_argument("--dataset", type=str, required=True, help="processed_dataset 路径")
@@ -89,8 +103,8 @@ def main():
     
     matches = 0
     mismatches = 0
-    has_noise = 0
-    no_noise = 0
+    has_noise_cnt = 0
+    no_noise_cnt = 0
     
     train_data = dataset["train"]
     check_count = min(args.check_samples, len(train_data), len(ocr_list))
@@ -104,15 +118,11 @@ def main():
         ocr_text = extract_text_from_ocr(ocr_obj) if ocr_obj else ""
         
         # 检查噪声特征
-        noise_features = sample.get("noise_features", [])
-        has_noise_feat = bool(noise_features and any(
-            any(v != 0.0 for v in feat) for feat in noise_features
-        ))
-        
+        has_noise_feat = has_noise(sample)
         if has_noise_feat:
-            has_noise += 1
+            has_noise_cnt += 1
         else:
-            no_noise += 1
+            no_noise_cnt += 1
         
         # 简单匹配检查（取前50字符比较）
         dataset_preview = dataset_text[:50].replace(" ", "")
@@ -144,8 +154,8 @@ def main():
     print(f"检查结果统计（前 {check_count} 条）:")
     print(f"  文本匹配: {matches} / {check_count}")
     print(f"  文本不匹配: {mismatches} / {check_count}")
-    print(f"  有噪声特征: {has_noise} / {check_count}")
-    print(f"  无噪声特征: {no_noise} / {check_count}")
+    print(f"  有噪声特征: {has_noise_cnt} / {check_count}")
+    print(f"  无噪声特征: {no_noise_cnt} / {check_count}")
     
     if matches / check_count < 0.5:
         print(f"\n⚠️  警告: 匹配率低于 50%，可能存在对齐问题！")
@@ -162,8 +172,7 @@ def main():
     sample_indices = list(range(0, total_train, max(1, total_train // 1000)))
     for idx in sample_indices:
         sample = dataset["train"][idx]
-        noise_features = sample.get("noise_features", [])
-        if noise_features and any(any(v != 0.0 for v in feat) for feat in noise_features):
+        if has_noise(sample):
             samples_with_noise += 1
     
     estimated_coverage = (samples_with_noise / len(sample_indices)) * 100

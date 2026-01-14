@@ -113,7 +113,8 @@ python export_ocr_texts.py \
 python build_dataset_final_slim.py \
   --train_file /data/ocean/DAPT/workspace/train_ocr_9297.txt \
   --output_path /data/ocean/DAPT/workspace/processed_dataset_ocr9297 \
-  --tokenizer_path /data/ocean/DAPT/my-medical-tokenizer
+  --tokenizer_path /data/ocean/DAPT/my-medical-tokenizer \
+  --no_shuffle_split   # OCR 路保持顺序，避免对齐错位
 # 如先做滑窗，则将 train_file 改为 /data/ocean/DAPT/workspace/train_chunked.txt
 ```
    - 产出：`processed_dataset_ocr9297`
@@ -124,7 +125,7 @@ python add_noise_features.py \
   --output /data/ocean/DAPT/workspace/processed_dataset_ocr9297_with_noise \
   --ocr_json /home/ocean/semi_label/ocr_rerun/char_ocr_9297.json \
   --bins_json /data/ocean/DAPT/workspace/noise_bins.json \
-  --num_proc 32
+  --num_proc 16
 ```
    - OCR 样本：存储真实 7 维连续值到 `noise_values`（对齐 word_ids→token）。
    - 非 OCR 样本：存储完美物理值 `[1.0,1.0,0,0,0,0,0]`，分桶映射在 collator。
@@ -144,7 +145,8 @@ python verify_noise_alignment.py \
 python build_dataset_final_slim.py \
   --train_file /data/ocean/DAPT/workspace/train_chunked.txt \
   --output_path /data/ocean/DAPT/workspace/processed_dataset_nonocr \
-  --tokenizer_path /data/ocean/DAPT/my-medical-tokenizer
+  --tokenizer_path /data/ocean/DAPT/my-medical-tokenizer \
+  --shuffle_split      # 非 OCR 路可打乱
 ```
 
 ### 2.4 合并（可选）
