@@ -164,9 +164,10 @@ def main():
     )
 
     if lora_path:
+        # 兼容当前环境的 vLLM 版本（不支持 lora_adapters，使用 lora_path）
         llm = LLM(
             enable_lora=True,
-            lora_adapters={"default": lora_path},
+            lora_path=lora_path,
             **llm_kwargs,
         )
         print(f"已启用 LoRA 适配器: {lora_path}")
