@@ -67,16 +67,36 @@ def resolve_model_and_lora(model_path, base_model_path=None):
         "请传入包含 config.json 的模型目录，或配合 --base_model_path 使用 LoRA。"
     )
 
-def load_all_csv_texts(data_dirs):
-    """遍历所有目录，加载所有 CSV 第一列的文本"""
+def load_all_texts(data_dirs):
+    """遍历目录，支持 CSV 第一列、以及 .txt JSON（含 words_result 或 text 字段）"""
     all_texts = []
+
+    def _load_txt_json(txt_path):
+        try:
+            with open(txt_path, "r", encoding="utf-8") as f:
+                raw = f.read().strip()
+                if not raw:
+                    return None
+                data = json.loads(raw)
+        except Exception as e:
+            print(f"读取 TXT JSON 失败 {txt_path}: {e}")
+            return None
+
+        # 兼容 words_result: [{"words": "..."}]
+        if isinstance(data, dict):
+            if "words_result" in data and isinstance(data["words_result"], list):
+                return "".join([item.get("words", "") for item in data["words_result"] if isinstance(item, dict)])
+            if "text" in data:
+                return str(data["text"])
+        return None
+
     for directory in data_dirs:
         if not os.path.exists(directory):
             print(f"警告：目录不存在 {directory}")
             continue
         for file in os.listdir(directory):
+            file_path = os.path.join(directory, file)
             if file.endswith(".csv"):
-                file_path = os.path.join(directory, file)
                 try:
                     df = pd.read_csv(file_path)
                     # ！！！注意：这里假设医疗文本在 CSV 的第一列，如果列名是 'text'，请改为 df['text']
@@ -84,6 +104,10 @@ def load_all_csv_texts(data_dirs):
                     all_texts.extend(texts)
                 except Exception as e:
                     print(f"读取文件 {file_path} 出错: {e}")
+            elif file.endswith(".txt"):
+                text = _load_txt_json(file_path)
+                if text:
+                    all_texts.append(text)
     return all_texts
 
 def format_as_label_studio(idx, kv_dict):
@@ -121,7 +145,7 @@ def main():
     
     # 1. 加载数据
     print("正在扫描并读取 20w 条 CSV 数据...")
-    raw_texts = load_all_csv_texts(args.data_dirs)
+    raw_texts = load_all_texts(args.data_dirs)
     print(f"成功加载文本总数: {len(raw_texts)}")
     if not raw_texts:
         print("未读取到任何文本，请检查 data_dirs 或 CSV 内容后重试。")
