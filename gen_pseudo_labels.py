@@ -1,16 +1,18 @@
 import os
 import json
+import argparse
 import pandas as pd
 from vllm import LLM, SamplingParams
-import argparse
 
 # ---------------------------------------------------------------------- #
 # 配置区
 # ---------------------------------------------------------------------- #
 def parse_args():
     parser = argparse.ArgumentParser()
-    # 指向你的 LoRA 微调后权重目录
+    # 指向你的 LoRA 微调后权重目录（如果已经 merge，可直接填合并后的模型目录）
     parser.add_argument("--model_path", type=str, default="/data/ocean/medstruct_s_llm/results/lora/Qwen3-0.6B_task2")
+    # 如果 model_path 是 LoRA 适配器目录，需指定原始底模（HF Repo ID 或本地路径）
+    parser.add_argument("--base_model_path", type=str, default=None)
     # 输出 JSON 路径，确保 /data/ocean/DAPT/data 目录存在
     parser.add_argument("--output_file", type=str, default="/data/ocean/DAPT/data/pseudo_kv_labels.json")
     # CSV 所在目录列表
@@ -21,6 +23,49 @@ def parse_args():
         "/data/oss/hxzh-mr/all_type_pic_oss_csv/20251210_5w"
     ])
     return parser.parse_args()
+
+
+def resolve_model_and_lora(model_path, base_model_path=None):
+    """
+    根据传入路径判断是完整模型还是 LoRA 适配器。
+    返回 (base_model, lora_path 或 None)。
+    """
+    # HuggingFace 远程仓库直接返回
+    if not os.path.exists(model_path):
+        return model_path, None
+
+    config_path = os.path.join(model_path, "config.json")
+    adapter_config_path = os.path.join(model_path, "adapter_config.json")
+
+    if os.path.isfile(config_path):
+        # 已经是合并后的模型
+        return model_path, None
+
+    if os.path.isfile(adapter_config_path):
+        base_from_adapter = None
+        try:
+            with open(adapter_config_path, "r", encoding="utf-8") as f:
+                adapter_cfg = json.load(f)
+                base_from_adapter = adapter_cfg.get("base_model_name_or_path")
+        except Exception:
+            base_from_adapter = None
+
+        base_model = base_model_path or base_from_adapter
+        if not base_model:
+            raise ValueError(
+                "检测到 LoRA 目录但未找到 base_model_name_or_path，"
+                "请通过 --base_model_path 指定原始底模（HF Repo 或本地路径）。"
+            )
+        return base_model, model_path
+
+    # 兜底：目录存在但没有 config.json；如果指定了 base_model_path，则按 LoRA 处理
+    if base_model_path:
+        return base_model_path, model_path
+
+    raise ValueError(
+        f"路径 {model_path} 未发现 config.json 或 adapter_config.json，"
+        "请传入包含 config.json 的模型目录，或配合 --base_model_path 使用 LoRA。"
+    )
 
 def load_all_csv_texts(data_dirs):
     """遍历所有目录，加载所有 CSV 第一列的文本"""
@@ -78,15 +123,30 @@ def main():
     print("正在扫描并读取 20w 条 CSV 数据...")
     raw_texts = load_all_csv_texts(args.data_dirs)
     print(f"成功加载文本总数: {len(raw_texts)}")
+    if not raw_texts:
+        print("未读取到任何文本，请检查 data_dirs 或 CSV 内容后重试。")
+        return
 
-    # 2. 初始化 vLLM (Qwen-0.6B 非常小，H200 可以轻松跑起)
-    # 如果你的 lora 目录已经是合并后的，正常加载；如果是未合并的，vLLM 需指定 --enable-lora
-    llm = LLM(
-        model=args.model_path,
-        gpu_memory_utilization=0.7, # 留一点余量给系统
+    # 2. 解析模型/LoRA 路径并初始化 vLLM
+    base_model, lora_path = resolve_model_and_lora(args.model_path, args.base_model_path)
+
+    llm_kwargs = dict(
+        model=base_model,
+        gpu_memory_utilization=0.7,  # 留一点余量给系统
         trust_remote_code=True,
-        max_model_len=1024 # 医疗文本通常不需要太长
+        max_model_len=1024  # 医疗文本通常不需要太长
     )
+
+    if lora_path:
+        llm = LLM(
+            enable_lora=True,
+            lora_adapters={"default": lora_path},
+            **llm_kwargs,
+        )
+        print(f"已启用 LoRA 适配器: {lora_path}")
+    else:
+        llm = LLM(**llm_kwargs)
+        print(f"直接加载基座模型: {base_model}")
 
     sampling_params = SamplingParams(
         temperature=0.0, # 医疗提取需要极高的确定性
