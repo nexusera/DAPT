@@ -3,6 +3,7 @@ import json
 import argparse
 import tempfile
 import pandas as pd
+from transformers import AutoTokenizer
 from vllm import LLM, SamplingParams
 
 # ---------------------------------------------------------------------- #
@@ -14,6 +15,12 @@ def parse_args():
     parser.add_argument("--model_path", type=str, default="/data/ocean/medstruct_s_llm/results/lora/Qwen3-0.6B_task2")
     # 如果 model_path 是 LoRA 适配器目录，需指定原始底模（HF Repo ID 或本地路径）
     parser.add_argument("--base_model_path", type=str, default=None)
+    # 最大上下文长度（tokens），需满足输入+输出总长
+    parser.add_argument("--max_model_len", type=int, default=4096)
+    # 生成的最大输出 tokens
+    parser.add_argument("--max_output_tokens", type=int, default=512)
+    # 输入截断上限（tokens），None 则按 max_model_len - max_output_tokens - 32 计算
+    parser.add_argument("--max_input_tokens", type=int, default=None)
     # 输出 JSON 路径，确保 /data/ocean/DAPT/data 目录存在
     parser.add_argument("--output_file", type=str, default="/data/ocean/DAPT/data/pseudo_kv_labels.json")
     # CSV 所在目录列表
@@ -100,6 +107,17 @@ def merge_lora_to_disk(base_model, lora_path):
 
     print("LoRA 合并完成，改用合并后的模型进行推理。")
     return tmp_dir
+
+
+def truncate_by_tokens(text, tokenizer, max_tokens):
+    """使用 tokenizer 按 token 长度截断输入文本"""
+    if max_tokens is None:
+        return text
+    ids = tokenizer.encode(text, add_special_tokens=False)
+    if len(ids) <= max_tokens:
+        return text
+    truncated = tokenizer.decode(ids[:max_tokens], skip_special_tokens=True)
+    return truncated
 
 def load_all_texts(data_dirs):
     """递归遍历目录，支持 CSV 第一列、以及 .txt JSON（含 words_result 或 text 字段）"""
@@ -196,11 +214,19 @@ def main():
         base_model = merged_path
         lora_path = None
 
+    # 3. 准备 tokenizer，用于截断输入
+    tokenizer = AutoTokenizer.from_pretrained(base_model)
+
+    # 4. 采样与长度控制
+    max_input_tokens = args.max_input_tokens
+    if max_input_tokens is None:
+        max_input_tokens = max(args.max_model_len - args.max_output_tokens - 32, 1)
+
     llm_kwargs = dict(
         model=base_model,
         gpu_memory_utilization=0.7,  # 留一点余量给系统
         trust_remote_code=True,
-        max_model_len=1024  # 医疗文本通常不需要太长
+        max_model_len=args.max_model_len
     )
 
     llm = LLM(**llm_kwargs)
@@ -208,14 +234,14 @@ def main():
 
     sampling_params = SamplingParams(
         temperature=0.0, # 医疗提取需要极高的确定性
-        max_tokens=512,
+        max_tokens=args.max_output_tokens,
         stop=["<|im_end|>", "<|endoftext|>"]
     )
 
     # 3. 构造推理 Prompts (请确保这和你 Task2 训练时的模板一致)
     # 假设模板为: <|im_start|>user\n{text}<|im_end|>\n<|im_start|>assistant\n
     prompts = [
-        f"<|im_start|>system\n你是一个医疗结构化专家，请将文本提取为JSON格式的键值对。<|im_end|>\n<|im_start|>user\n{t}<|im_end|>\n<|im_start|>assistant\n"
+        f"<|im_start|>system\n你是一个医疗结构化专家，请将文本提取为JSON格式的键值对。<|im_end|>\n<|im_start|>user\n{truncate_by_tokens(t, tokenizer, max_input_tokens)}<|im_end|>\n<|im_start|>assistant\n"
         for t in raw_texts
     ]
 
