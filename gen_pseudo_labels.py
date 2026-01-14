@@ -1,6 +1,7 @@
 import os
 import json
 import argparse
+import tempfile
 import pandas as pd
 from vllm import LLM, SamplingParams
 
@@ -66,6 +67,39 @@ def resolve_model_and_lora(model_path, base_model_path=None):
         f"路径 {model_path} 未发现 config.json 或 adapter_config.json，"
         "请传入包含 config.json 的模型目录，或配合 --base_model_path 使用 LoRA。"
     )
+
+
+def merge_lora_to_disk(base_model, lora_path):
+    """
+    将 LoRA 权重合并到基座模型，保存到临时目录，返回合并后的路径。
+    适配不支持 lora_path/lora_adapters 的 vLLM 版本。
+    """
+    try:
+        import torch
+        from transformers import AutoModelForCausalLM, AutoTokenizer
+        from peft import PeftModel
+    except ImportError as e:
+        raise RuntimeError(
+            f"合并 LoRA 需要 transformers/peft/torch，请安装后重试: {e}"
+        )
+
+    tmp_dir = tempfile.mkdtemp(prefix="merged_lora_")
+    print(f"正在将 LoRA 合并到基座模型，输出到临时目录: {tmp_dir}")
+    base = AutoModelForCausalLM.from_pretrained(
+        base_model,
+        torch_dtype=torch.float16,
+        device_map="cpu",
+    )
+    model = PeftModel.from_pretrained(base, lora_path)
+    merged = model.merge_and_unload()
+    merged.save_pretrained(tmp_dir)
+
+    # 复制 tokenizer
+    tokenizer = AutoTokenizer.from_pretrained(base_model)
+    tokenizer.save_pretrained(tmp_dir)
+
+    print("LoRA 合并完成，改用合并后的模型进行推理。")
+    return tmp_dir
 
 def load_all_texts(data_dirs):
     """递归遍历目录，支持 CSV 第一列、以及 .txt JSON（含 words_result 或 text 字段）"""
@@ -156,6 +190,12 @@ def main():
     # 2. 解析模型/LoRA 路径并初始化 vLLM
     base_model, lora_path = resolve_model_and_lora(args.model_path, args.base_model_path)
 
+    # 若是 LoRA，则先合并再交给 vLLM，避免 vLLM 版本兼容问题
+    if lora_path:
+        merged_path = merge_lora_to_disk(base_model, lora_path)
+        base_model = merged_path
+        lora_path = None
+
     llm_kwargs = dict(
         model=base_model,
         gpu_memory_utilization=0.7,  # 留一点余量给系统
@@ -163,17 +203,8 @@ def main():
         max_model_len=1024  # 医疗文本通常不需要太长
     )
 
-    if lora_path:
-        # 兼容当前环境的 vLLM 版本（不支持 lora_adapters，使用 lora_path）
-        llm = LLM(
-            enable_lora=True,
-            lora_path=lora_path,
-            **llm_kwargs,
-        )
-        print(f"已启用 LoRA 适配器: {lora_path}")
-    else:
-        llm = LLM(**llm_kwargs)
-        print(f"直接加载基座模型: {base_model}")
+    llm = LLM(**llm_kwargs)
+    print(f"直接加载模型: {base_model}")
 
     sampling_params = SamplingParams(
         temperature=0.0, # 医疗提取需要极高的确定性
