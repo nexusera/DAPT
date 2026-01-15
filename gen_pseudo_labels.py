@@ -256,21 +256,63 @@ def main():
     outputs = llm.generate(prompts, sampling_params)
 
     # 5. 解析结果并保存
+    print("开始解析模型输出...")
     final_data = []
+    parse_errors = {"total": 0, "json_error": 0, "empty": 0, "wrong_type": 0}
+    total_outputs = len(outputs)
     for i, output in enumerate(outputs):
         generated_text = output.outputs[0].text.strip()
         try:
             # 尝试解析输出为字典
             # 如果模型输出带 ```json ... ```，需要清理
             clean_text = generated_text.replace("```json", "").replace("```", "").strip()
-            kv_dict = json.loads(clean_text)
+            parsed = json.loads(clean_text)
             
-            if isinstance(kv_dict, dict) and kv_dict:
+            # 支持 list 格式（取第一个元素）或 dict 格式
+            if isinstance(parsed, list):
+                if len(parsed) > 0 and isinstance(parsed[0], dict):
+                    kv_dict = parsed[0]
+                elif len(parsed) > 0:
+                    # 如果 list 里不是 dict，尝试合并所有元素
+                    kv_dict = parsed[0] if isinstance(parsed[0], dict) else {}
+                else:
+                    parse_errors["empty"] += 1
+                    continue
+            elif isinstance(parsed, dict):
+                kv_dict = parsed
+            else:
+                parse_errors["wrong_type"] += 1
+                continue
+            
+            if kv_dict:
                 formatted_item = format_as_label_studio(i, kv_dict)
                 final_data.append(formatted_item)
-        except:
-            # 记录失败或跳过
+            else:
+                parse_errors["empty"] += 1
+        except json.JSONDecodeError as e:
+            parse_errors["json_error"] += 1
+            parse_errors["total"] += 1
+            # 每 10000 条打印一次错误样例，便于调试
+            if parse_errors["json_error"] <= 3 or parse_errors["json_error"] % 10000 == 0:
+                print(f"JSON 解析失败 (样本 {i}): {str(e)[:100]}")
+                print(f"  输出前 200 字符: {generated_text[:200]}")
             continue
+        except Exception as e:
+            parse_errors["total"] += 1
+            continue
+        
+        # 每 1000 条打印一次进度
+        if (i + 1) % 1000 == 0:
+            progress = (i + 1) / total_outputs * 100
+            print(f"[进度 {i+1}/{total_outputs} ({progress:.1f}%)] 当前有效样本数: {len(final_data)}")
+    
+    # 打印解析统计
+    print(f"\n解析统计:")
+    print(f"  成功解析: {len(final_data)}")
+    print(f"  JSON 格式错误: {parse_errors['json_error']}")
+    print(f"  空结果: {parse_errors['empty']}")
+    print(f"  类型错误: {parse_errors['wrong_type']}")
+    print(f"  总失败数: {parse_errors['total']}")
 
     # 6. 写入文件
     os.makedirs(os.path.dirname(args.output_file), exist_ok=True)
