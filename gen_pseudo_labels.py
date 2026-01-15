@@ -17,10 +17,11 @@ def parse_args():
     parser.add_argument("--base_model_path", type=str, default=None)
     # 最大上下文长度（tokens），需满足输入+输出总长
     parser.add_argument("--max_model_len", type=int, default=4096)
-    # 生成的最大输出 tokens
-    parser.add_argument("--max_output_tokens", type=int, default=512)
+    # 生成的最大输出 tokens（已测试 1024 可完整闭合 JSON）
+    parser.add_argument("--max_output_tokens", type=int, default=2048)
     # 输入截断上限（tokens），None 则按 max_model_len - max_output_tokens - 32 计算
-    parser.add_argument("--max_input_tokens", type=int, default=None)
+    # 默认 1024 与 quick_sample.py 保持一致，确保输出有足够空间
+    parser.add_argument("--max_input_tokens", type=int, default=1536)
     # 输出 JSON 路径，确保 /data/ocean/DAPT/data 目录存在
     parser.add_argument("--output_file", type=str, default="/data/ocean/DAPT/data/pseudo_kv_labels.json")
     # CSV 所在目录列表
@@ -110,12 +111,17 @@ def merge_lora_to_disk(base_model, lora_path):
 
 
 def truncate_by_tokens(text, tokenizer, max_tokens):
-    """使用 tokenizer 按 token 长度截断输入文本"""
+    """
+    使用 tokenizer 按 token 长度截断输入文本。
+    策略：优先保留开头（通常包含关键信息如姓名、性别、年龄、诊断等），
+    如果文本过长，从开头截断到 max_tokens。
+    """
     if max_tokens is None:
         return text
     ids = tokenizer.encode(text, add_special_tokens=False)
     if len(ids) <= max_tokens:
         return text
+    # 从开头截断，保留最重要的前 max_tokens 个 tokens
     truncated = tokenizer.decode(ids[:max_tokens], skip_special_tokens=True)
     return truncated
 
