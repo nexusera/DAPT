@@ -162,16 +162,21 @@ python merge_datasets.py \
   --output_path /data/ocean/DAPT/workspace/processed_dataset_merged \
   --ocr_repeat 1 \
   --non_ocr_repeat 1 \
-  --shuffle \
-  --seed 42
 ```
   - `ocr_repeat/non_ocr_repeat` 仅作用于 train 分割，用于配比；其余分割保持 1:1。  
 - 禁止按索引把 OCR 特征硬塞给无 OCR 元信息的样本。
-
+```
+#（可选）校验对齐
+python verify_noise_alignment.py \
+  --dataset /data/ocean/DAPT/workspace/processed_dataset_merged \
+  --ocr_json /home/ocean/semi_label/ocr_rerun/char_ocr_9297.json \
+  --check_samples 50 \
+  
+```
 ## 3. 训练（KV-aware MLM + 噪声）
 1) 指向对齐后的数据集（单独 OCR 或合并后）：
 ```bash
-ln -sfn /data/ocean/DAPT/workspace/processed_dataset_ocr9297_with_noise \
+ln -sfn /data/ocean/DAPT/workspace/processed_dataset_merged \
        /data/ocean/DAPT/workspace/processed_dataset
 ```
 2) 启动训练（避免端口冲突）：

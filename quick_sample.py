@@ -16,8 +16,8 @@ DATA_DIRS = [
     "/data/oss/hxzh-mr/all_type_pic_oss_csv/20251204_5w",
 ]
 MAX_MODEL_LEN = 4096
-MAX_OUTPUT_TOKENS = 256
-MAX_INPUT_TOKENS = None  # 不填则自动用 max_model_len - max_output_tokens - 32
+MAX_OUTPUT_TOKENS = 2048
+MAX_INPUT_TOKENS = 1024  # 不填则自动用 max_model_len - max_output_tokens - 32
 SAMPLE_N = 5
 
 def main():
