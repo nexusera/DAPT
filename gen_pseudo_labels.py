@@ -254,13 +254,19 @@ def main():
     # 4. 批量推理
     print("开始 vLLM 批量推理标注...")
     outputs = llm.generate(prompts, sampling_params)
+    print(f"推理完成，共生成 {len(outputs)} 条输出，开始解析...")
 
     # 5. 解析结果并保存
     print("开始解析模型输出...")
     final_data = []
     parse_errors = {"total": 0, "json_error": 0, "empty": 0, "wrong_type": 0}
     total_outputs = len(outputs)
+    print(f"准备解析 {total_outputs} 条输出，每 1000 条打印一次进度...")
+    
     for i, output in enumerate(outputs):
+        # 第一条就打印，确认解析已开始
+        if i == 0:
+            print(f"开始解析第 1 条输出...")
         generated_text = output.outputs[0].text.strip()
         try:
             # 尝试解析输出为字典
@@ -296,15 +302,13 @@ def main():
             if parse_errors["json_error"] <= 3 or parse_errors["json_error"] % 10000 == 0:
                 print(f"JSON 解析失败 (样本 {i}): {str(e)[:100]}")
                 print(f"  输出前 200 字符: {generated_text[:200]}")
-            continue
         except Exception as e:
             parse_errors["total"] += 1
-            continue
         
-        # 每 1000 条打印一次进度
+        # 每 1000 条打印一次进度（无论成功还是失败都要打印）
         if (i + 1) % 1000 == 0:
             progress = (i + 1) / total_outputs * 100
-            print(f"[进度 {i+1}/{total_outputs} ({progress:.1f}%)] 当前有效样本数: {len(final_data)}")
+            print(f"[进度 {i+1}/{total_outputs} ({progress:.1f}%)] 当前有效样本数: {len(final_data)}, 失败数: {parse_errors['total']}")
     
     # 打印解析统计
     print(f"\n解析统计:")
