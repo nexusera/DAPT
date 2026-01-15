@@ -305,6 +305,71 @@ def check_compatibility(data):
         for idx, reason in incompatible_reasons[:5]:
             print(f"  样本 {idx}: {reason}")
 
+def check_useful_samples(data):
+    """检查真正有用的样本（过滤掉包含无效键名的样本）"""
+    print("\n" + "=" * 60)
+    print("6. 有用样本统计（过滤无效键名）")
+    print("=" * 60)
+    
+    # 定义无效键名（这些是 JSON 结构字段或示例字段，不是真实提取的键名）
+    invalid_keys = {"id", "value", "name", "text", "key", "type", "label", "labels"}
+    
+    useful_samples = []
+    useless_samples = []
+    
+    for i, item in enumerate(data):
+        try:
+            results = item.get("annotations", [{}])[0].get("result", [])
+            
+            # 提取所有键名
+            keys = []
+            has_invalid_key = False
+            
+            for result in results:
+                if result.get("type") == "labels":
+                    labels = result.get("value", {}).get("labels", [])
+                    if "键名" in labels:
+                        key_text = result.get("value", {}).get("text", "").strip()
+                        if key_text:
+                            keys.append(key_text)
+                            # 检查是否是无效键名
+                            if key_text.lower() in invalid_keys:
+                                has_invalid_key = True
+            
+            if has_invalid_key or not keys:
+                useless_samples.append((i, keys))
+            else:
+                useful_samples.append((i, keys))
+        except Exception:
+            useless_samples.append((i, []))
+    
+    print(f"有用样本数: {len(useful_samples)} / {len(data)}")
+    print(f"有用样本比例: {len(useful_samples) / len(data) * 100:.2f}%")
+    print(f"无用样本数: {len(useless_samples)}")
+    
+    # 分析无用样本的原因
+    invalid_key_count = 0
+    empty_key_count = 0
+    
+    for idx, keys in useless_samples:
+        if not keys:
+            empty_key_count += 1
+        else:
+            # 检查是否包含无效键名
+            has_invalid = any(k.lower() in invalid_keys for k in keys)
+            if has_invalid:
+                invalid_key_count += 1
+    
+    print(f"\n无用样本原因:")
+    print(f"  包含无效键名（id/value/name/text/key等）: {invalid_key_count}")
+    print(f"  无键名: {empty_key_count}")
+    
+    # 显示一些有用样本的键名示例
+    if useful_samples:
+        print(f"\n有用样本的键名示例（前 10 个）:")
+        for idx, keys in useful_samples[:10]:
+            print(f"  样本 {idx}: {', '.join(keys[:5])}")  # 只显示前5个键名
+
 def main():
     args = parse_args()
     
@@ -332,6 +397,9 @@ def main():
     
     # 兼容性检查
     check_compatibility(data)
+    
+    # 检查真正有用的样本
+    check_useful_samples(data)
     
     # 随机抽样
     show_samples(data, args.sample_size)
