@@ -166,7 +166,7 @@ python merge_datasets.py \
   --seed 42
 ```
   - `ocr_repeat/non_ocr_repeat` 仅作用于 train 分割，用于配比；其余分割保持 1:1。  
-  - 禁止按索引把 OCR 特征硬塞给无 OCR 元信息的样本。
+- 禁止按索引把 OCR 特征硬塞给无 OCR 元信息的样本。
 
 ## 3. 训练（KV-aware MLM + 噪声）
 1) 指向对齐后的数据集（单独 OCR 或合并后）：

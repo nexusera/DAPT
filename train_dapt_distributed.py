@@ -351,6 +351,19 @@ def main():
     parser.add_argument("--num_train_epochs", type=int, default=None, help=f"训练 epoch 数，默认 {NUM_TRAIN_EPOCHS}")
     parser.add_argument("--learning_rate", type=float, default=None, help=f"学习率，默认 {LEARNING_RATE}")
     parser.add_argument("--noise_bins_json", type=str, required=True, help="预计算的噪声分桶边界 json，供 NoiseFeatureProcessor 使用")
+    parser.add_argument(
+        "--bf16",
+        dest="bf16",
+        action="store_true",
+        help="启用 bf16（默认开启）",
+    )
+    parser.add_argument(
+        "--no_bf16",
+        dest="bf16",
+        action="store_false",
+        help="关闭 bf16 做短程 sanity check",
+    )
+    parser.set_defaults(bf16=True)
     args = parser.parse_args()
 
     if not os.path.exists(DATASET_PATH):
@@ -383,7 +396,7 @@ def main():
         learning_rate=args.learning_rate or LEARNING_RATE,
         weight_decay=0.01,
         warmup_ratio=0.05,  # 缩短预热，加快进入主学习率区间
-        bf16=True,
+        bf16=args.bf16,
         tf32=True,
         dataloader_num_workers=8,  # 8卡 x 8 workers = 64线程，再多CPU受不了
         torch_compile=False,
