@@ -246,8 +246,16 @@ def main():
 
     # 3. 构造推理 Prompts (请确保这和你 Task2 训练时的模板一致)
     # 假设模板为: <|im_start|>user\n{text}<|im_end|>\n<|im_start|>assistant\n
+    system_prompt = """你是一个医疗结构化专家。请从以下医疗文本中提取键值对，输出为JSON格式。
+要求：
+1. 只提取文本中真实出现的字段名（如：姓名、性别、年龄、科室、临床诊断、医院等医疗术语）
+2. 禁止生成示例字段名（如：id、name、value、text、key、type、label等）
+3. 键名必须是文本中实际存在的医疗术语或字段名
+4. 值必须是对应的实际内容
+5. 输出格式：JSON对象或JSON数组，每个元素包含键值对"""
+    
     prompts = [
-        f"<|im_start|>system\n你是一个医疗结构化专家，请将文本提取为JSON格式的键值对。<|im_end|>\n<|im_start|>user\n{truncate_by_tokens(t, tokenizer, max_input_tokens)}<|im_end|>\n<|im_start|>assistant\n"
+        f"<|im_start|>system\n{system_prompt}<|im_end|>\n<|im_start|>user\n{truncate_by_tokens(t, tokenizer, max_input_tokens)}<|im_end|>\n<|im_start|>assistant\n"
         for t in raw_texts
     ]
 
