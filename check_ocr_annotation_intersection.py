@@ -27,7 +27,12 @@ def load_json(path: Path):
 
 def extract_candidates(obj: dict) -> Tuple[Union[str, None], Union[str, None]]:
     """Extract (record_id, relative_image_path) candidates from a single object."""
-    record_id = obj.get("record_id") or obj.get("id") or obj.get("doc_id")
+    record_id = (
+        obj.get("record_id")
+        or obj.get("id")
+        or obj.get("doc_id")
+        or obj.get("name")  # upstream note: filename is the ID
+    )
     rip = (
         obj.get("relative_image_path")
         or obj.get("image_path")
@@ -39,15 +44,23 @@ def extract_candidates(obj: dict) -> Tuple[Union[str, None], Union[str, None]]:
     return record_id, rip
 
 
-def normalize_path(p: str) -> str:
-    """Normalize a path string to compare basenames."""
-    p = p.strip()
-    # remove leading ./ or / if present
-    p = p.lstrip("./")
-    return os.path.basename(p)
+def normalize_candidates(value: str) -> Set[str]:
+    """Return possible normalized variants for ID/path matching (raw, basename, stem)."""
+    value = str(value).strip()
+    out: Set[str] = set()
+    if not value:
+        return out
+    out.add(value)
+    base = os.path.basename(value.lstrip("./"))
+    if base:
+        out.add(base)
+        stem, _ = os.path.splitext(base)
+        if stem:
+            out.add(stem)
+    return out
 
 
-def load_ocr_items(ocr_json: Path) -> Tuple[Set[str], Set[str]]:
+def load_ocr_items(ocr_json: Path) -> Tuple[int, Set[str], Set[str]]:
     data = load_json(ocr_json)
     # If wrapped in dict, pick first list-like value
     if isinstance(data, dict):
@@ -65,10 +78,10 @@ def load_ocr_items(ocr_json: Path) -> Tuple[Set[str], Set[str]]:
             continue
         rid, rip = extract_candidates(obj)
         if rid is not None:
-            record_ids.add(str(rid))
+            record_ids.update(normalize_candidates(rid))
         if rip:
-            relpaths.add(normalize_path(str(rip)))
-    return record_ids, relpaths
+            relpaths.update(normalize_candidates(rip))
+    return len(data), record_ids, relpaths
 
 
 def load_annotation_items(anno_dir: Path) -> Tuple[int, Set[str], Set[str]]:
@@ -85,9 +98,9 @@ def load_annotation_items(anno_dir: Path) -> Tuple[int, Set[str], Set[str]]:
             total += 1
             rid, rip = extract_candidates(obj)
             if rid is not None:
-                record_ids.add(str(rid))
+                record_ids.update(normalize_candidates(rid))
             if rip:
-                relpaths.add(normalize_path(str(rip)))
+                relpaths.update(normalize_candidates(rip))
     return total, record_ids, relpaths
 
 
@@ -98,7 +111,7 @@ def main():
     args = ap.parse_args()
 
     # OCR
-    ocr_record_ids, ocr_relpaths = load_ocr_items(args.ocr)
+    ocr_total, ocr_record_ids, ocr_relpaths = load_ocr_items(args.ocr)
     # Annotations
     anno_total, anno_record_ids, anno_relpaths = load_annotation_items(args.anno_dir)
 
@@ -107,7 +120,7 @@ def main():
     path_inter = ocr_relpaths & anno_relpaths if ocr_relpaths and anno_relpaths else set()
 
     print("==== Summary ====")
-    print(f"OCR total items (counted by list length): {len(ocr_record_ids) or len(ocr_relpaths)}")
+    print(f"OCR total items (list length): {ocr_total}")
     print(f"OCR record_ids collected: {len(ocr_record_ids)}")
     print(f"OCR relpaths collected:   {len(ocr_relpaths)}")
     print(f"Annotation total objects: {anno_total}")
