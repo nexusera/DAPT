@@ -64,14 +64,15 @@ def safe_var(vals: List[float]) -> Optional[float]:
 
 
 def is_bad_punct(ch: str) -> bool:
-    """非中英数字则视为标点/噪声。"""
+    """非中英数字则视为标点/噪声，支持多字符字符串。"""
     if not ch:
         return False
+    if len(ch) > 1:
+        return any(is_bad_punct(c) for c in ch)
     if ch.isalnum():
         return False
-    # 基本中日韩统一表意文字范围
     code = ord(ch)
-    if 0x4E00 <= code <= 0x9FFF:
+    if 0x4E00 <= code <= 0x9FFF:  # 中日韩表意文字
         return False
     return True
 
@@ -105,18 +106,19 @@ def compute_word_features(word_obj: Dict, para_mean_top: Optional[float], page_h
     conf_gap = conf_avg - conf_min
 
     # punct_err_ratio: 非中英数字的占比（优先用 chars，否则用 words 文本）
-    text_chars = [c.get("char", "") for c in chars if isinstance(c, dict) and c.get("char")]
-    if not text_chars and isinstance(word_obj.get("words"), str):
-        text_chars = list(word_obj["words"])
-    bad = sum(1 for ch in text_chars if is_bad_punct(ch))
-    punct_err_ratio = bad / max(len(text_chars), 1)
+    text_fields = [c.get("char", "") for c in chars if isinstance(c, dict) and c.get("char")]
+    if not text_fields and isinstance(word_obj.get("words"), str):
+        text_fields = [word_obj["words"]]
+    flat_chars = list("".join(text_fields))
+    bad = sum(1 for ch in flat_chars if is_bad_punct(ch))
+    punct_err_ratio = bad / max(len(flat_chars), 1)
 
     # char_break_ratio: 行字符数 / 行宽
     width = None
     loc = word_obj.get("location") or {}
     if isinstance(loc, dict) and isinstance(loc.get("width"), (int, float)):
         width = float(loc["width"])
-    char_cnt = len(text_chars)
+    char_cnt = len(flat_chars)
     char_break_ratio = char_cnt / max(width if width else char_cnt, 1.0)
 
     # align_score: 行 top 与所在段落平均 top 的偏差（归一到页高）
