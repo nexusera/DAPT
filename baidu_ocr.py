@@ -1,9 +1,12 @@
 # encoding:utf-8
 
+import argparse
 import requests
 import base64
 import json
 import urllib
+import sys
+from pathlib import Path
 from typing import Literal
 
 def ocr(base64_img,mode:Literal["accurate","general_v6"]="accurate"):
@@ -154,9 +157,21 @@ def extract_all_paragraph_objects(words_result):
 
 
 if __name__ == "__main__":
-    img_path = ""
-    res = ocr(img_path)
-    # print("---------------------------")
+    parser = argparse.ArgumentParser(description="Call Baidu OCR and print JSON result")
+    parser.add_argument("image", help="Path to image file")
+    parser.add_argument("--mode", choices=["accurate", "general_v6"], default="accurate")
+    parser.add_argument("--truncate", type=int, default=800, help="Print first N chars (0=full)")
+    args = parser.parse_args()
 
-    # paragraph = extract_all_paragraph_objects(res)
-    # print(paragraph)
+    try:
+        img_bytes = Path(args.image).read_bytes()
+    except Exception as e:  # noqa: BLE001
+        print(f"Fail to read image: {e}", file=sys.stderr)
+        sys.exit(1)
+
+    b64 = base64.b64encode(img_bytes).decode("utf-8")
+    res = ocr(b64, mode=args.mode)
+    out = json.dumps(res, ensure_ascii=False)
+    if args.truncate and args.truncate > 0:
+        out = out[: args.truncate]
+    print(out)
