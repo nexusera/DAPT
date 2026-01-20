@@ -17,6 +17,8 @@
   会自动截取 ?d= 之后的相对路径，并与 --image_root 拼成实际文件路径。
 - 输出会把每条标注对象附加字段 "ocr_raw"，内容为百度返回的完整 JSON。
 - 为避免压测接口，提供 --limit / --offset / --sleep 控制调用数量与间隔。
+- 默认走官方 openapi（需 api_key/secret_key）；如需改用本地 baidu_ocr.py 封装的 .com 域名接口，
+    可加 --use_local_baidu，并可通过 --local_mode 传入 baidu_ocr.ocr 的 mode。
 - 需要 requests 库；如未安装： pip install requests
 """
 
@@ -30,6 +32,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 import requests
+from baidu_ocr import ocr as local_baidu_ocr
 
 TOKEN_URL = "https://aip.baidubce.com/oauth/2.0/token"
 # 默认使用通用高精度接口，可根据需求替换为其他 OCR 端点
@@ -89,13 +92,12 @@ def call_baidu_ocr(ocr_url: str, token: str, image_path: Path) -> Dict[str, Any]
 def process_items(
     items: List[Dict[str, Any]],
     image_root: Path,
-    token: str,
-    ocr_url: str,
+    ocr_caller,
     limit: Optional[int],
     offset: int,
     sleep_seconds: float,
 ) -> None:
-    """就地为每条标注附加 ocr_raw。"""
+    """就地为每条标注附加 ocr_raw。ocr_caller 接收 Path 返回 OCR JSON。"""
     total = len(items)
     start = offset
     end = total if limit is None else min(total, offset + limit)
@@ -108,7 +110,7 @@ def process_items(
             print(f"[WARN] 图像不存在，跳过 idx={idx} path={img_path}", file=sys.stderr)
             continue
         try:
-            ocr_result = call_baidu_ocr(ocr_url, token, img_path)
+            ocr_result = ocr_caller(img_path)
             item["ocr_raw"] = ocr_result
             print(f"[{idx+1}/{end}] ok -> {rel}")
         except Exception as exc:  # noqa: BLE001
@@ -122,23 +124,35 @@ def main():
     ap.add_argument("--anno_json", required=True, type=Path, help="标注 JSON 路径")
     ap.add_argument("--image_root", required=True, type=Path, help="图片根目录，如 /data/ocean")
     ap.add_argument("--output", required=True, type=Path, help="输出合并后的 JSON 路径")
-    ap.add_argument("--api_key", required=True, help="百度 OCR API Key")
-    ap.add_argument("--secret_key", required=True, help="百度 OCR Secret Key")
-    ap.add_argument("--ocr_url", default=DEFAULT_OCR_URL, help="OCR 接口 URL，可换其他模型")
+    ap.add_argument("--api_key", help="百度 OCR API Key（官方 openapi 模式需要）")
+    ap.add_argument("--secret_key", help="百度 OCR Secret Key（官方 openapi 模式需要）")
+    ap.add_argument("--ocr_url", default=DEFAULT_OCR_URL, help="OCR 接口 URL，可换其他模型（官方模式）")
+    ap.add_argument("--use_local_baidu", action="store_true", help="使用本地 baidu_ocr.py 封装的 .com 域名接口，不需要 token")
+    ap.add_argument("--local_mode", default="accurate", help="传给 baidu_ocr.ocr 的 mode")
     ap.add_argument("--limit", type=int, default=0, help="最多处理条数，0 表示全量")
     ap.add_argument("--offset", type=int, default=0, help="起始索引（0-based）")
     ap.add_argument("--sleep", type=float, default=0.5, help="每次调用后的休眠秒数")
     args = ap.parse_args()
 
     items = load_annotations(args.anno_json)
-    token = get_access_token(args.api_key, args.secret_key)
+    if args.use_local_baidu:
+        def _caller_local(path: Path):
+            b64 = base64.b64encode(path.read_bytes()).decode("utf-8")
+            return local_baidu_ocr(b64, mode=args.local_mode)
+        ocr_caller = _caller_local
+    else:
+        if not args.api_key or not args.secret_key:
+            raise SystemExit("必须提供 --api_key 与 --secret_key，或加 --use_local_baidu")
+        token = get_access_token(args.api_key, args.secret_key)
+        def _caller_openapi(path: Path):
+            return call_baidu_ocr(args.ocr_url, token, path)
+        ocr_caller = _caller_openapi
     limit = None if args.limit <= 0 else args.limit
 
     process_items(
         items,
         image_root=args.image_root,
-        token=token,
-        ocr_url=args.ocr_url,
+        ocr_caller=ocr_caller,
         limit=limit,
         offset=args.offset,
         sleep_seconds=args.sleep,
