@@ -136,10 +136,18 @@ def main() -> None:
 
     # 1) 加载分词器与模型
     tokenizer = AutoTokenizer.from_pretrained(args.model_name_or_path, use_fast=True)
+    
+    # 从 MLM 模型（可能包含噪声嵌入）加载权重到 SequenceClassification 模型
+    # 使用 ignore_mismatched_sizes=True 自动处理 MLM head 和 Classification head 的不匹配
+    print(f"正在从预训练模型加载: {args.model_name_or_path}")
+    print("注意：如果原模型是 MLM 类型，将自动提取 backbone 权重，忽略噪声嵌入层和 MLM head")
+    
     model = AutoModelForSequenceClassification.from_pretrained(
         args.model_name_or_path,
         num_labels=2,
+        ignore_mismatched_sizes=True,  # 自动处理 MLM head vs Classification head 的大小不匹配
     )
+    print("✅ 模型加载完成（已自动处理不匹配的层）")
 
     # 2) 构建 Dataset（动态负采样在 __getitem__ 中完成）
     full_dataset = KVDataset(

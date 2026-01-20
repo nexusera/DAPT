@@ -14,7 +14,8 @@ def ocr(base64_img,mode:Literal["accurate","general_v6"]="accurate"):
     # 无论传入什么 mode，都强制使用 V6 逻辑，因为 URL 只支持 V6
     # 且为了兼容性，需要将 V6 的返回结果转换为旧版通用 OCR 的格式
 
-    request_url = "https://prod-t4-baidu.aistarfish.net/GeneralClassifyService/classify"
+    # 改用 .com 域名（同事反馈 .net 无法访问）
+    request_url = "https://prod-t4-baidu.aistarfish.com/GeneralClassifyService/classify"
 
     # V6 接口参数构造
     request_str_params = {
@@ -52,7 +53,7 @@ def ocr(base64_img,mode:Literal["accurate","general_v6"]="accurate"):
         headers = {'Content-Type': 'application/json'}
 
         # 2. 发送请求
-        response = requests.post(request_url, data=json.dumps(req_payload), headers=headers)
+        response = requests.post(request_url, data=json.dumps(req_payload), headers=headers, timeout=15)
         
         # 3. 解析响应
         if response.ok:
