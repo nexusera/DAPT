@@ -1,0 +1,152 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+从标注 JSON 中找到图片路径，调用百度 OCR 接口获取原始结果，并与标注数据合并保存。
+
+示例：
+    python fetch_and_merge_baidu_ocr.py \
+        --anno_json biaozhu_data/huizhenbingli1119.json \
+        --image_root /data/ocean \
+        --output merged_huizhenbingli_with_ocr.json \
+        --api_key <your_baidu_api_key> \
+        --secret_key <your_baidu_secret_key> \
+        --limit 10 --offset 0 --sleep 0.5
+
+说明：
+- 标注条目的 data.image 形如 "/data/local-files/?d=semi_pic/huizhenbingli/U.../file.jpeg"，
+  会自动截取 ?d= 之后的相对路径，并与 --image_root 拼成实际文件路径。
+- 输出会把每条标注对象附加字段 "ocr_raw"，内容为百度返回的完整 JSON。
+- 为避免压测接口，提供 --limit / --offset / --sleep 控制调用数量与间隔。
+- 需要 requests 库；如未安装： pip install requests
+"""
+
+import argparse
+import base64
+import json
+import os
+import sys
+import time
+from pathlib import Path
+from typing import Any, Dict, List, Optional
+
+import requests
+
+TOKEN_URL = "https://aip.baidubce.com/oauth/2.0/token"
+# 默认使用通用高精度接口，可根据需求替换为其他 OCR 端点
+DEFAULT_OCR_URL = "https://aip.baidubce.com/rest/2.0/ocr/v1/accurate"
+
+
+def load_annotations(path: Path) -> List[Dict[str, Any]]:
+    with path.open("r", encoding="utf-8") as f:
+        return json.load(f)
+
+
+def save_annotations(path: Path, items: List[Dict[str, Any]]):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w", encoding="utf-8") as f:
+        json.dump(items, f, ensure_ascii=False)
+
+
+def extract_rel_path(image_field: str) -> str:
+    """从 data.image 字符串中提取相对路径。
+
+    规则：若包含 '?d='，取其后子串；否则返回去掉开头 '/' 的路径。
+    """
+    if not image_field:
+        return ""
+    if "?d=" in image_field:
+        return image_field.split("?d=", 1)[1].lstrip("/")
+    return image_field.lstrip("/")
+
+
+def get_access_token(api_key: str, secret_key: str) -> str:
+    """获取百度 OCR 的 access_token。"""
+    params = {
+        "grant_type": "client_credentials",
+        "client_id": api_key,
+        "client_secret": secret_key,
+    }
+    resp = requests.post(TOKEN_URL, params=params, timeout=10)
+    resp.raise_for_status()
+    data = resp.json()
+    if "access_token" not in data:
+        raise RuntimeError(f"Failed to get access_token: {data}")
+    return data["access_token"]
+
+
+def call_baidu_ocr(ocr_url: str, token: str, image_path: Path) -> Dict[str, Any]:
+    """调用百度 OCR，返回 JSON。"""
+    with image_path.open("rb") as f:
+        img_b64 = base64.b64encode(f.read()).decode("utf-8")
+    params = {"image": img_b64}
+    url = f"{ocr_url}?access_token={token}"
+    headers = {"Content-Type": "application/x-www-form-urlencoded"}
+    resp = requests.post(url, data=params, headers=headers, timeout=20)
+    resp.raise_for_status()
+    return resp.json()
+
+
+def process_items(
+    items: List[Dict[str, Any]],
+    image_root: Path,
+    token: str,
+    ocr_url: str,
+    limit: Optional[int],
+    offset: int,
+    sleep_seconds: float,
+) -> None:
+    """就地为每条标注附加 ocr_raw。"""
+    total = len(items)
+    start = offset
+    end = total if limit is None else min(total, offset + limit)
+    for idx in range(start, end):
+        item = items[idx]
+        image_field = item.get("data", {}).get("image")
+        rel = extract_rel_path(str(image_field) if image_field else "")
+        img_path = image_root.joinpath(rel)
+        if not img_path.exists():
+            print(f"[WARN] 图像不存在，跳过 idx={idx} path={img_path}", file=sys.stderr)
+            continue
+        try:
+            ocr_result = call_baidu_ocr(ocr_url, token, img_path)
+            item["ocr_raw"] = ocr_result
+            print(f"[{idx+1}/{end}] ok -> {rel}")
+        except Exception as exc:  # noqa: BLE001
+            print(f"[ERROR] 调用 OCR 失败 idx={idx} path={img_path} err={exc}", file=sys.stderr)
+        if sleep_seconds > 0:
+            time.sleep(sleep_seconds)
+
+
+def main():
+    ap = argparse.ArgumentParser(description="从标注数据调用百度 OCR 并合并原始结果")
+    ap.add_argument("--anno_json", required=True, type=Path, help="标注 JSON 路径")
+    ap.add_argument("--image_root", required=True, type=Path, help="图片根目录，如 /data/ocean")
+    ap.add_argument("--output", required=True, type=Path, help="输出合并后的 JSON 路径")
+    ap.add_argument("--api_key", required=True, help="百度 OCR API Key")
+    ap.add_argument("--secret_key", required=True, help="百度 OCR Secret Key")
+    ap.add_argument("--ocr_url", default=DEFAULT_OCR_URL, help="OCR 接口 URL，可换其他模型")
+    ap.add_argument("--limit", type=int, default=0, help="最多处理条数，0 表示全量")
+    ap.add_argument("--offset", type=int, default=0, help="起始索引（0-based）")
+    ap.add_argument("--sleep", type=float, default=0.5, help="每次调用后的休眠秒数")
+    args = ap.parse_args()
+
+    items = load_annotations(args.anno_json)
+    token = get_access_token(args.api_key, args.secret_key)
+    limit = None if args.limit <= 0 else args.limit
+
+    process_items(
+        items,
+        image_root=args.image_root,
+        token=token,
+        ocr_url=args.ocr_url,
+        limit=limit,
+        offset=args.offset,
+        sleep_seconds=args.sleep,
+    )
+
+    save_annotations(args.output, items)
+    print(f"Done. Saved: {args.output}")
+
+
+if __name__ == "__main__":
+    main()
