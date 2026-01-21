@@ -42,6 +42,7 @@ if __package__ in (None, ""):
         load_labelstudio_export,
         split_samples,
         Entity,
+        Relation,
         Sample,
     )
     from pre_struct.kv_ner.dataset import TokenClassificationDataset, collate_batch
@@ -60,6 +61,7 @@ else:
         load_labelstudio_export,
         split_samples,
         Entity,
+        Relation,
         Sample,
     )
     from .dataset import TokenClassificationDataset, collate_batch
@@ -85,24 +87,76 @@ def set_seed(seed: int) -> None:
         torch.cuda.manual_seed_all(seed)
 
 
-def load_jsonl_with_noise(path: str | Path, label_map: Dict[str, str]) -> List[Sample]:
+def load_jsonl_with_noise(path: str | Path, label_map: Dict[str, str], include_unlabeled: bool = False) -> List[Sample]:
     """
-    从 JSONL 文件加载样本，支持 noise_values 字段
-    
-    预期的 JSONL 格式：
-    {
-        "id": "task_id",
-        "text": "...",
-        "title": "category",
-        "key_value_pairs": [...],
-        "noise_values": [[7-dim noise], ...] (可选)
-    }
+    从 JSONL 文件加载样本，支持两类格式：
+
+    1) 逐行普通 JSONL，包含 text/title/key_value_pairs/noise_values 字段。
+    2) Label Studio 按行导出的任务 JSON（包含 annotations/data 等字段）。
     """
     p = Path(path)
     if not p.is_file():
         raise FileNotFoundError(f"File not found: {p}")
     
     samples: List[Sample] = []
+
+    def _parse_labelstudio_task(task: dict) -> Optional[Sample]:
+        data = task.get("data", {}) if isinstance(task, dict) else {}
+        text = str(data.get("ocr_text") or data.get("text") or "").strip()
+        if not text:
+            return None
+
+        results = _select_latest_annotation(task)
+        entities: List[Entity] = []
+        relations: List[Relation] = []
+
+        for res in results:
+            r_type = res.get("type")
+            if r_type == "labels":
+                value = res.get("value") or {}
+                raw_labels = value.get("labels") or []
+                if not raw_labels:
+                    continue
+                normalized = _normalize_label(raw_labels[0], label_map)
+                if not normalized:
+                    continue
+                start = int(value.get("start") or 0)
+                end = int(value.get("end") or 0)
+                if end <= start or start < 0:
+                    continue
+                entities.append(
+                    Entity(
+                        start=start,
+                        end=end,
+                        label=normalized,
+                        result_id=res.get("id"),
+                        text=value.get("text"),
+                    )
+                )
+            elif r_type == "relation":
+                from_id = res.get("from_id")
+                to_id = res.get("to_id")
+                if isinstance(from_id, str) and isinstance(to_id, str):
+                    relations.append(
+                        Relation(
+                            from_id=from_id,
+                            to_id=to_id,
+                            direction=str(res.get("direction") or "right"),
+                        )
+                    )
+
+        if not entities and not include_unlabeled:
+            return None
+
+        noise_values = data.get("noise_values") or task.get("noise_values")
+        return Sample(
+            task_id=str(task.get("id")),
+            text=text,
+            title=str(data.get("category") or data.get("title") or ""),
+            entities=sorted(entities, key=lambda e: (e.start, e.end)),
+            relations=relations,
+            noise_values=noise_values,
+        )
     
     with p.open("r", encoding="utf-8") as f:
         for line_no, line in enumerate(f, 1):
@@ -114,6 +168,13 @@ def load_jsonl_with_noise(path: str | Path, label_map: Dict[str, str]) -> List[S
             except json.JSONDecodeError as e:
                 logger.warning(f"Line {line_no}: JSON parse error - {e}")
                 continue
+
+            # Label Studio JSONL（单行一个任务）
+            if isinstance(obj, dict) and "annotations" in obj and "data" in obj:
+                sample = _parse_labelstudio_task(obj)
+                if sample:
+                    samples.append(sample)
+                continue
             
             task_id = str(obj.get("id", line_no))
             text = str(obj.get("text", "")).strip()
@@ -121,6 +182,8 @@ def load_jsonl_with_noise(path: str | Path, label_map: Dict[str, str]) -> List[S
             
             if not text:
                 continue
+
+            noise_values = obj.get("noise_values") or obj.get("data", {}).get("noise_values")
             
             # 解析 key_value_pairs 为 Entity
             entities: List[Entity] = []
@@ -160,7 +223,7 @@ def load_jsonl_with_noise(path: str | Path, label_map: Dict[str, str]) -> List[S
                 title=title,
                 entities=entities,
                 relations=[],
-                noise_values=obj.get("noise_values"),
+                noise_values=noise_values,
             )
             samples.append(sample)
     
