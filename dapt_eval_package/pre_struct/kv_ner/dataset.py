@@ -10,6 +10,7 @@ from transformers import PreTrainedTokenizerBase
 
 from .data_utils import Entity, Relation, Sample, generate_char_labels
 from .chunking import chunk_text_by_tokens
+from .noise_utils import NoiseFeatureProcessor, PERFECT_VALUES
 
 
 @dataclass
@@ -27,6 +28,7 @@ class Batch:
     original_task_ids: List[str]
     chunk_indices: List[int]
     chunk_spans: List[Tuple[int, int]]
+    noise_ids: Optional[torch.Tensor] = None
 
 
 class TokenClassificationDataset(Dataset):
@@ -42,6 +44,7 @@ class TokenClassificationDataset(Dataset):
         chunk_size: Optional[int] = None,
         chunk_overlap: Optional[int] = None,
         enable_chunking: bool = False,
+        noise_processor: Optional[NoiseFeatureProcessor] = None,
     ) -> None:
         self.samples = list(samples)
         self.tokenizer = tokenizer
@@ -50,6 +53,7 @@ class TokenClassificationDataset(Dataset):
         self.label_all_tokens = bool(label_all_tokens)
         self.include_labels = bool(include_labels)
         self.enable_chunking = bool(enable_chunking)
+        self.noise_processor = noise_processor
         if self.enable_chunking:
             self.chunk_size = int(chunk_size or self.max_seq_length)
             self.chunk_overlap = int(chunk_overlap or 0)
@@ -114,6 +118,29 @@ class TokenClassificationDataset(Dataset):
                     "chunk_index": chunk_idx,
                     "chunk_span": (char_start, char_end),
                 }
+                # 生成每个token的noise_ids（如果提供了noise_processor且样本含有noise_values）
+                if self.noise_processor is not None and getattr(sample, "noise_values", None):
+                    nv = sample.noise_values or []
+                    noise_ids_per_token: List[List[int]] = []
+                    for (s, e) in offset_mapping:
+                        s = int(s); e = int(e)
+                        if e <= s:
+                            noise_ids_per_token.append(self.noise_processor.values_to_bin_ids(PERFECT_VALUES))
+                            continue
+                        vecs = []
+                        abs_s = char_start + s
+                        abs_e = char_start + e
+                        for ci in range(abs_s, abs_e):
+                            if 0 <= ci < len(nv):
+                                v = nv[ci]
+                                if isinstance(v, (list, tuple)) and len(v) == 7:
+                                    vecs.append(v)
+                        if vecs:
+                            avg = [sum(col) / len(col) for col in zip(*vecs)]
+                            noise_ids_per_token.append(self.noise_processor.values_to_bin_ids(avg))
+                        else:
+                            noise_ids_per_token.append(self.noise_processor.values_to_bin_ids(PERFECT_VALUES))
+                    feature["noise_ids"] = torch.tensor(noise_ids_per_token, dtype=torch.long)
                 self._features.append(feature)
 
     def _chunk_sample(self, text: str) -> List[Tuple[str, int, int]]:
@@ -238,6 +265,9 @@ def collate_batch(batch: Sequence[dict]) -> Batch:
     original_task_ids = [item.get("original_task_id", item["task_id"]) for item in batch]
     chunk_indices = [item.get("chunk_index", 0) for item in batch]
     chunk_spans = [tuple(item.get("chunk_span", (0, len(item["text"])))) for item in batch]
+    noise_ids = None
+    if "noise_ids" in batch[0]:
+        noise_ids = torch.stack([item["noise_ids"] for item in batch], dim=0)
     return Batch(
         input_ids=input_ids,
         attention_mask=attention_mask,
@@ -252,4 +282,5 @@ def collate_batch(batch: Sequence[dict]) -> Batch:
         original_task_ids=original_task_ids,
         chunk_indices=chunk_indices,
         chunk_spans=chunk_spans,
+        noise_ids=noise_ids,
     )

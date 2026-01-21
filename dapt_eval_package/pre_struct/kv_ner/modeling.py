@@ -16,6 +16,7 @@ from torch import nn
 import torch.nn.functional as F
 from torchcrf import CRF
 from transformers import AutoConfig, AutoModel
+from .noise_utils import NUM_BINS, FEATURES
 
 try:
     from model_path_conf import DEFAULT_MODEL_PATH  # type: ignore
@@ -40,6 +41,9 @@ class BertCrfTokenClassifier(nn.Module):
         lstm_hidden_size: Optional[int] = None,
         lstm_num_layers: int = 1,
         lstm_dropout: float = 0.0,
+        # noise embedding fusion
+        use_noise: bool = False,
+        noise_embed_dim: int = 16,
         # boundary-aware loss controls
         boundary_loss_weight: float = 0.0,
         boundary_positive_weight: float = 1.0,
@@ -73,6 +77,18 @@ class BertCrfTokenClassifier(nn.Module):
         self.bert = AutoModel.from_pretrained(self.model_name_or_path, config=self.config)
         hidden_size = self.config.hidden_size
         self.dropout = nn.Dropout(dropout)
+        # Noise fusion
+        self.use_noise = bool(use_noise)
+        self.noise_embed_dim = int(noise_embed_dim)
+        if self.use_noise:
+            emb_layers = []
+            for feat in FEATURES:
+                nbin = int(NUM_BINS[feat])
+                # +1 for anchor bin id 0
+                emb_layers.append(nn.Embedding(num_embeddings=nbin + 1, embedding_dim=self.noise_embed_dim))
+            self.noise_embeddings = nn.ModuleList(emb_layers)
+            self.noise_proj = nn.Linear(len(FEATURES) * self.noise_embed_dim, hidden_size)
+            self.noise_dropout = nn.Dropout(dropout)
         
         # BiLSTM layer (optional)
         self.use_bilstm = bool(use_bilstm)
@@ -171,6 +187,7 @@ class BertCrfTokenClassifier(nn.Module):
         attention_mask: Optional[torch.Tensor] = None,
         token_type_ids: Optional[torch.Tensor] = None,
         labels: Optional[torch.Tensor] = None,
+        noise_ids: Optional[torch.Tensor] = None,
     ):
         outputs = self.bert(
             input_ids=input_ids,
@@ -178,6 +195,17 @@ class BertCrfTokenClassifier(nn.Module):
             token_type_ids=token_type_ids,
         )
         sequence_output = self.dropout(outputs[0])
+        # Fuse noise embeddings if provided
+        if self.use_noise and (noise_ids is not None):
+            # noise_ids: [B, L, 7]
+            noise_vecs = []
+            for i, emb in enumerate(self.noise_embeddings):
+                ids_i = noise_ids[:, :, i]
+                noise_vecs.append(emb(ids_i))  # [B, L, D]
+            noise_cat = torch.cat(noise_vecs, dim=-1)  # [B, L, 7*D]
+            noise_h = self.noise_proj(noise_cat)
+            noise_h = self.noise_dropout(noise_h)
+            sequence_output = sequence_output + noise_h
         
         # Optional BiLSTM layer
         if self.use_bilstm and self.lstm is not None:
@@ -265,12 +293,14 @@ class BertCrfTokenClassifier(nn.Module):
         input_ids: torch.Tensor,
         attention_mask: Optional[torch.Tensor] = None,
         token_type_ids: Optional[torch.Tensor] = None,
+        noise_ids: Optional[torch.Tensor] = None,
     ):
         return self.forward(
             input_ids=input_ids,
             attention_mask=attention_mask,
             token_type_ids=token_type_ids,
             labels=None,
+            noise_ids=noise_ids,
         )
 
     def save_pretrained(self, output_dir: str, use_safetensors: bool = True) -> None:
@@ -300,6 +330,8 @@ class BertCrfTokenClassifier(nn.Module):
             "lstm_hidden_size": self.lstm_hidden_size,
             "lstm_num_layers": self.lstm_num_layers,
             "lstm_dropout": self.lstm_dropout,
+            "use_noise": self.use_noise,
+            "noise_embed_dim": self.noise_embed_dim,
             "boundary_loss_weight": self.boundary_loss_weight,
             "boundary_positive_weight": self.boundary_positive_weight,
             "include_hospital_boundary": self.include_hospital_boundary,
@@ -336,6 +368,8 @@ class BertCrfTokenClassifier(nn.Module):
             lstm_hidden_size=model_cfg.get("lstm_hidden_size"),
             lstm_num_layers=model_cfg.get("lstm_num_layers", 1),
             lstm_dropout=model_cfg.get("lstm_dropout", 0.0),
+            use_noise=model_cfg.get("use_noise", False),
+            noise_embed_dim=model_cfg.get("noise_embed_dim", 16),
             boundary_loss_weight=model_cfg.get("boundary_loss_weight", 0.0),
             boundary_positive_weight=model_cfg.get("boundary_positive_weight", 1.0),
             include_hospital_boundary=model_cfg.get("include_hospital_boundary", True),

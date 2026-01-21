@@ -32,6 +32,9 @@ class Sample:
     title: str
     entities: List[Entity]
     relations: List[Relation]
+    # 可选：与全文字符对齐的OCR噪声特征，长度通常等于 text 的字符数。
+    # 每个元素为7维连续值 [conf_avg, conf_min, conf_var_log, conf_gap, punct_err_ratio, char_break_ratio, align_score]
+    noise_values: Optional[List[List[float]]] = None
 
     @property
     def has_labels(self) -> bool:
