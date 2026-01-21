@@ -68,7 +68,12 @@ class TokenClassificationDataset(Dataset):
         self._prepare()
 
     def _prepare(self) -> None:
-        for sample in self.samples:
+        import sys
+        logger = __import__('logging').getLogger(__name__)
+        logger.info(f"[_prepare] Starting to prepare {len(self.samples)} samples (noise_processor={self.noise_processor is not None})")
+        for sample_idx, sample in enumerate(self.samples):
+            if sample_idx % max(1, len(self.samples) // 10) == 0:
+                logger.info(f"[_prepare] Processing sample {sample_idx}/{len(self.samples)}")
             text = sample.text or ""
             spans = self._chunk_sample(text)
 
@@ -120,27 +125,34 @@ class TokenClassificationDataset(Dataset):
                 }
                 # 生成每个token的noise_ids（如果提供了noise_processor且样本含有noise_values）
                 if self.noise_processor is not None and getattr(sample, "noise_values", None):
-                    nv = sample.noise_values or []
-                    noise_ids_per_token: List[List[int]] = []
-                    for (s, e) in offset_mapping:
-                        s = int(s); e = int(e)
-                        if e <= s:
-                            noise_ids_per_token.append(self.noise_processor.values_to_bin_ids(PERFECT_VALUES))
-                            continue
-                        vecs = []
-                        abs_s = char_start + s
-                        abs_e = char_start + e
-                        for ci in range(abs_s, abs_e):
-                            if 0 <= ci < len(nv):
-                                v = nv[ci]
-                                if isinstance(v, (list, tuple)) and len(v) == 7:
-                                    vecs.append(v)
-                        if vecs:
-                            avg = [sum(col) / len(col) for col in zip(*vecs)]
-                            noise_ids_per_token.append(self.noise_processor.values_to_bin_ids(avg))
-                        else:
-                            noise_ids_per_token.append(self.noise_processor.values_to_bin_ids(PERFECT_VALUES))
-                    feature["noise_ids"] = torch.tensor(noise_ids_per_token, dtype=torch.long)
+                    try:
+                        nv = sample.noise_values or []
+                        if not isinstance(nv, list):
+                            nv = []
+                        noise_ids_per_token: List[List[int]] = []
+                        for token_idx, (s, e) in enumerate(offset_mapping):
+                            s = int(s); e = int(e)
+                            if e <= s:
+                                noise_ids_per_token.append(self.noise_processor.values_to_bin_ids(PERFECT_VALUES))
+                                continue
+                            vecs = []
+                            abs_s = char_start + s
+                            abs_e = char_start + e
+                            for ci in range(abs_s, abs_e):
+                                if 0 <= ci < len(nv):
+                                    v = nv[ci]
+                                    if isinstance(v, (list, tuple)) and len(v) == 7:
+                                        vecs.append(v)
+                            if vecs:
+                                avg = [sum(col) / len(col) for col in zip(*vecs)]
+                                noise_ids_per_token.append(self.noise_processor.values_to_bin_ids(avg))
+                            else:
+                                noise_ids_per_token.append(self.noise_processor.values_to_bin_ids(PERFECT_VALUES))
+                        feature["noise_ids"] = torch.tensor(noise_ids_per_token, dtype=torch.long)
+                    except Exception as e:
+                        import logging
+                        logging.getLogger(__name__).warning(f"Failed to generate noise_ids for sample {sample.task_id}: {e}; skipping noise")
+                        pass
                 self._features.append(feature)
 
     def _chunk_sample(self, text: str) -> List[Tuple[str, int, int]]:

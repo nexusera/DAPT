@@ -247,6 +247,8 @@ def _prepare_dataloaders_with_noise(
     """
     准备数据加载器，支持 noise_ids
     """
+    logger.info(f"[_prepare_dataloaders] Starting with {len(train_samples)} train, {len(val_samples)} val, {len(test_samples)} test samples")
+    
     max_len = config_io.max_seq_length(cfg)
     label_all_tokens = config_io.label_all_tokens(cfg)
     chunk_size = int(cfg.get("chunk_size", max_len))
@@ -254,6 +256,7 @@ def _prepare_dataloaders_with_noise(
         chunk_size = max_len
     chunk_overlap = int(cfg.get("chunk_overlap", 0))
 
+    logger.info(f"[_prepare_dataloaders] Creating train dataset (noise_processor={noise_processor is not None})")
     train_dataset = TokenClassificationDataset(
         train_samples,
         tokenizer,
@@ -266,6 +269,9 @@ def _prepare_dataloaders_with_noise(
         enable_chunking=True,
         noise_processor=noise_processor,
     )
+    logger.info(f"[_prepare_dataloaders] Train dataset created with {len(train_dataset)} features")
+    
+    logger.info(f"[_prepare_dataloaders] Creating val dataset")
     val_dataset = TokenClassificationDataset(
         val_samples,
         tokenizer,
@@ -278,6 +284,9 @@ def _prepare_dataloaders_with_noise(
         enable_chunking=True,
         noise_processor=noise_processor,
     )
+    logger.info(f"[_prepare_dataloaders] Val dataset created with {len(val_dataset)} features")
+    
+    logger.info(f"[_prepare_dataloaders] Creating test dataset")
     test_dataset = TokenClassificationDataset(
         test_samples,
         tokenizer,
@@ -290,6 +299,7 @@ def _prepare_dataloaders_with_noise(
         enable_chunking=True,
         noise_processor=noise_processor,
     )
+    logger.info(f"[_prepare_dataloaders] Test dataset created with {len(test_dataset)} features")
     
     train_block = config_io.ensure_block(cfg, "train")
     batch_size = int(train_block.get("train_batch_size", 16))
