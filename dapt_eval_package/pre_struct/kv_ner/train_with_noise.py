@@ -351,6 +351,9 @@ def _evaluate_model(
             input_ids = batch["input_ids"].to(device) if isinstance(batch, dict) else batch.input_ids.to(device)
             attention_mask = batch["attention_mask"].to(device) if isinstance(batch, dict) else batch.attention_mask.to(device)
             token_type_ids = batch.get("token_type_ids", torch.zeros_like(input_ids)).to(device) if isinstance(batch, dict) else batch.token_type_ids.to(device)
+            # ensure expected dtypes
+            attention_mask = attention_mask.long()
+            token_type_ids = token_type_ids.long()
             labels = batch["labels"].to(device) if isinstance(batch, dict) else batch.labels.to(device)
 
             kwargs = {
@@ -362,6 +365,14 @@ def _evaluate_model(
             # 如果有noise_ids且模型支持，传入
             if use_noise and "noise_ids" in (batch if isinstance(batch, dict) else batch.__dict__):
                 noise_ids = batch["noise_ids"].to(device) if isinstance(batch, dict) else batch.noise_ids.to(device)
+                if model.use_noise and model.noise_embeddings:
+                    with torch.no_grad():
+                        for fi, emb in enumerate(model.noise_embeddings):
+                            max_id = int(torch.max(noise_ids[:, :, fi]).item())
+                            if max_id >= emb.num_embeddings:
+                                raise ValueError(
+                                    f"noise_ids feature {fi} has max id {max_id} >= num_embeddings {emb.num_embeddings}"
+                                )
                 kwargs["noise_ids"] = noise_ids
 
             decoded = model.predict(**kwargs)
@@ -588,6 +599,10 @@ def train(args: argparse.Namespace) -> None:
             token_type_ids = batch.get("token_type_ids", torch.zeros_like(input_ids)).to(device) if isinstance(batch, dict) else batch.token_type_ids.to(device)
             labels = batch["labels"].to(device) if isinstance(batch, dict) else batch.labels.to(device)
 
+            # ensure dtypes to avoid CUDA asserts (roberta expects long masks)
+            attention_mask = attention_mask.long()
+            token_type_ids = token_type_ids.long()
+
             kwargs = {
                 "input_ids": input_ids,
                 "attention_mask": attention_mask,
@@ -596,7 +611,26 @@ def train(args: argparse.Namespace) -> None:
             }
             # 如果有noise_ids，传入模型
             if hasattr(batch, "noise_ids") and batch.noise_ids is not None:
-                kwargs["noise_ids"] = batch.noise_ids.to(device)
+                noise_ids = batch.noise_ids.to(device)
+                # sanity check: embedding index range
+                if model.use_noise and model.noise_embeddings:
+                    with torch.no_grad():
+                        for fi, emb in enumerate(model.noise_embeddings):
+                            max_id = int(torch.max(noise_ids[:, :, fi]).item())
+                            if max_id >= emb.num_embeddings:
+                                raise ValueError(
+                                    f"noise_ids feature {fi} has max id {max_id} >= num_embeddings {emb.num_embeddings}"
+                                )
+                kwargs["noise_ids"] = noise_ids
+
+            # labels range check for CRF
+            with torch.no_grad():
+                lbl_min = int(labels.min().item())
+                lbl_max = int(labels.max().item())
+                if lbl_min < 0 or lbl_max >= model.num_labels:
+                    raise ValueError(
+                        f"Label id out of range: min={lbl_min}, max={lbl_max}, num_labels={model.num_labels}"
+                    )
 
             loss = model(**kwargs)
             loss = loss / grad_accum
