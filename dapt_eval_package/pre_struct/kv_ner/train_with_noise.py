@@ -482,6 +482,7 @@ def train(args: argparse.Namespace) -> None:
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     logger.info(f"Using device: {device}")
 
+    logger.info("Creating dataloaders...")
     train_loader, eval_loader, test_loader = _prepare_dataloaders_with_noise(
         cfg,
         tokenizer,
@@ -491,6 +492,7 @@ def train(args: argparse.Namespace) -> None:
         test_samples,
         noise_processor=noise_processor,
     )
+    logger.info(f"DataLoaders created: train_loader has {len(train_loader)} batches")
 
     # 初始化模型（从原模型或新模型）
     model_name = config_io.model_name_from(cfg)
@@ -581,9 +583,11 @@ def train(args: argparse.Namespace) -> None:
     global_step = 0
     history: List[Dict[str, float]] = []
 
+    logger.info("Starting training loop...")
     epoch_pbar = tqdm(range(1, num_epochs + 1), desc="Training", unit="epoch")
     
     for epoch in epoch_pbar:
+        logger.info(f"Starting epoch {epoch}/{num_epochs}")
         model.train()
         running_loss = 0.0
         optimizer.zero_grad(set_to_none=True)
@@ -591,24 +595,38 @@ def train(args: argparse.Namespace) -> None:
         batch_pbar = tqdm(train_loader, desc=f"Epoch {epoch}/{num_epochs}", leave=False)
         
         for step, batch in enumerate(batch_pbar, start=1):
+            # Debug on first batch
+            if step == 1 and epoch == 1:
+                logger.info("First batch received from DataLoader")
+                logger.info(f"Batch type: {type(batch)}")
+                if isinstance(batch, dict):
+                    logger.info(f"Batch keys: {list(batch.keys())}")
+                    for k, v in batch.items():
+                        if isinstance(v, torch.Tensor):
+                            logger.info(f"  {k}: shape={v.shape}, dtype={v.dtype}, device={v.device}")
+                else:
+                    logger.info(f"Batch attributes: {[attr for attr in dir(batch) if not attr.startswith('_')]}")
+                    for attr in ['input_ids', 'attention_mask', 'token_type_ids', 'labels', 'noise_ids']:
+                        if hasattr(batch, attr):
+                            v = getattr(batch, attr)
+                            if isinstance(v, torch.Tensor):
+                                logger.info(f"  {attr}: shape={v.shape}, dtype={v.dtype}, device={v.device}")
+            
             input_ids = batch["input_ids"].to(device) if isinstance(batch, dict) else batch.input_ids.to(device)
             attention_mask = batch["attention_mask"].to(device) if isinstance(batch, dict) else batch.attention_mask.to(device)
             token_type_ids = batch.get("token_type_ids", torch.zeros_like(input_ids)).to(device) if isinstance(batch, dict) else batch.token_type_ids.to(device)
             labels = batch["labels"].to(device) if isinstance(batch, dict) else batch.labels.to(device)
 
             # Debug: log batch shapes and dtypes on first batch
-            if step == 1:
+            if step == 1 and epoch == 1:
                 logger.info(
-                    "Batch 1 debug: input_ids shape=%s dtype=%s, attention_mask shape=%s dtype=%s, "
-                    "token_type_ids shape=%s dtype=%s, labels shape=%s dtype=%s",
+                    "Batch 1 debug: input_ids shape=%s dtype=%s, attention_mask shape=%s dtype=%s min=%s max=%s, "
+                    "token_type_ids shape=%s dtype=%s min=%s max=%s, labels shape=%s dtype=%s min=%s max=%s",
                     input_ids.shape, input_ids.dtype,
-                    attention_mask.shape, attention_mask.dtype,
-                    token_type_ids.shape, token_type_ids.dtype,
-                    labels.shape, labels.dtype,
+                    attention_mask.shape, attention_mask.dtype, attention_mask.min().item(), attention_mask.max().item(),
+                    token_type_ids.shape, token_type_ids.dtype, token_type_ids.min().item(), token_type_ids.max().item(),
+                    labels.shape, labels.dtype, labels.min().item(), labels.max().item(),
                 )
-                logger.info("attention_mask min/max: %s / %s", attention_mask.min().item(), attention_mask.max().item())
-                logger.info("token_type_ids min/max: %s / %s", token_type_ids.min().item(), token_type_ids.max().item())
-                logger.info("labels min/max: %s / %s", labels.min().item(), labels.max().item())
                 if hasattr(batch, "noise_ids") and batch.noise_ids is not None:
                     logger.info("noise_ids shape=%s dtype=%s", batch.noise_ids.shape, batch.noise_ids.dtype)
 
