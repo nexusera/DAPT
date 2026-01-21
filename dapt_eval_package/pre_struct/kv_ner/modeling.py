@@ -189,10 +189,16 @@ class BertCrfTokenClassifier(nn.Module):
         labels: Optional[torch.Tensor] = None,
         noise_ids: Optional[torch.Tensor] = None,
     ):
+        # 显式生成 position_ids 以避免 RoBERTa 内部计算错误
+        seq_length = input_ids.shape[1]
+        device = input_ids.device
+        position_ids = torch.arange(seq_length, dtype=torch.long, device=device).unsqueeze(0).expand(input_ids.shape[0], -1)
+        
         outputs = self.bert(
             input_ids=input_ids,
             attention_mask=attention_mask,
             token_type_ids=token_type_ids,
+            position_ids=position_ids,  # 显式传入正确的 position_ids
         )
         sequence_output = self.dropout(outputs[0])
         # Fuse noise embeddings if provided
