@@ -44,6 +44,8 @@ if __package__ in (None, ""):
         Entity,
         Relation,
         Sample,
+        _select_latest_annotation,
+        _normalize_label,
     )
     from pre_struct.kv_ner.dataset import TokenClassificationDataset, collate_batch
     from pre_struct.kv_ner.metrics import compute_ner_metrics
@@ -63,6 +65,8 @@ else:
         Entity,
         Relation,
         Sample,
+        _select_latest_annotation,
+        _normalize_label,
     )
     from .dataset import TokenClassificationDataset, collate_batch
     from .metrics import compute_ner_metrics
