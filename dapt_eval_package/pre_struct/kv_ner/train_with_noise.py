@@ -359,8 +359,8 @@ def _evaluate_model(
     with torch.no_grad():
         for batch in tqdm(dataloader, desc="Evaluating", leave=False):
             input_ids = batch["input_ids"].to(device) if isinstance(batch, dict) else batch.input_ids.to(device)
-            attention_mask = batch["attention_mask"].to(device) if isinstance(batch, dict) else batch.attention_mask.to(device)
-            token_type_ids = batch.get("token_type_ids", torch.zeros_like(input_ids)).to(device) if isinstance(batch, dict) else batch.token_type_ids.to(device)
+            attention_mask = batch["attention_mask"].to(device, dtype=torch.long) if isinstance(batch, dict) else batch.attention_mask.to(device, dtype=torch.long)
+            token_type_ids = batch.get("token_type_ids", torch.zeros_like(input_ids)).to(device, dtype=torch.long) if isinstance(batch, dict) else batch.token_type_ids.to(device, dtype=torch.long)
             labels = batch["labels"].to(device) if isinstance(batch, dict) else batch.labels.to(device)
 
             kwargs = {
@@ -632,8 +632,8 @@ def train(args: argparse.Namespace) -> None:
                                 logger.info(f"  {attr}: shape={v.shape}, dtype={v.dtype}, device={v.device}")
             
             input_ids = batch["input_ids"].to(device) if isinstance(batch, dict) else batch.input_ids.to(device)
-            attention_mask = batch["attention_mask"].to(device) if isinstance(batch, dict) else batch.attention_mask.to(device)
-            token_type_ids = batch.get("token_type_ids", torch.zeros_like(input_ids)).to(device) if isinstance(batch, dict) else batch.token_type_ids.to(device)
+            attention_mask = batch["attention_mask"].to(device, dtype=torch.long) if isinstance(batch, dict) else batch.attention_mask.to(device, dtype=torch.long)
+            token_type_ids = batch.get("token_type_ids", torch.zeros_like(input_ids)).to(device, dtype=torch.long) if isinstance(batch, dict) else batch.token_type_ids.to(device, dtype=torch.long)
             labels = batch["labels"].to(device) if isinstance(batch, dict) else batch.labels.to(device)
 
             # Debug: log batch shapes and dtypes on first batch
