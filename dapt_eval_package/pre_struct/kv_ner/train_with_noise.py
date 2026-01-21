@@ -416,8 +416,16 @@ def train(args: argparse.Namespace) -> None:
 
     set_seed(int(train_block.get("seed", 42)))
 
-    tokenizer_name = config_io.tokenizer_name_from(cfg)
+    # 优先从 pretrained_model 加载 tokenizer（如果是 DAPT 模型，词表已扩展）
+    if args.pretrained_model:
+        tokenizer_name = args.pretrained_model
+        logger.info(f"Loading tokenizer from pretrained model: {tokenizer_name}")
+    else:
+        tokenizer_name = config_io.tokenizer_name_from(cfg)
+        logger.info(f"Loading tokenizer from config: {tokenizer_name}")
+    
     tokenizer = AutoTokenizer.from_pretrained(tokenizer_name, use_fast=True)
+    logger.info(f"Tokenizer vocab size: {len(tokenizer)}")
 
     # 加载数据
     data_path = Path(train_block.get("data_path"))
@@ -638,6 +646,16 @@ def train(args: argparse.Namespace) -> None:
                     token_type_ids.shape, token_type_ids.dtype, token_type_ids.min().item(), token_type_ids.max().item(),
                     labels.shape, labels.dtype, labels.min().item(), labels.max().item(),
                 )
+                # Check input_ids validity
+                with torch.no_grad():
+                    vocab_size = model.config.vocab_size
+                    input_id_min = int(input_ids.min().item())
+                    input_id_max = int(input_ids.max().item())
+                    logger.info(f"Input IDs range: min={input_id_min}, max={input_id_max}, vocab_size={vocab_size}")
+                    if input_id_max >= vocab_size:
+                        raise ValueError(f"input_ids max {input_id_max} >= vocab_size {vocab_size}")
+                    if input_id_min < 0:
+                        raise ValueError(f"input_ids min {input_id_min} < 0")
                 if hasattr(batch, "noise_ids") and batch.noise_ids is not None:
                     logger.info("noise_ids shape=%s dtype=%s", batch.noise_ids.shape, batch.noise_ids.dtype)
 
