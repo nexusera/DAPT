@@ -351,9 +351,6 @@ def _evaluate_model(
             input_ids = batch["input_ids"].to(device) if isinstance(batch, dict) else batch.input_ids.to(device)
             attention_mask = batch["attention_mask"].to(device) if isinstance(batch, dict) else batch.attention_mask.to(device)
             token_type_ids = batch.get("token_type_ids", torch.zeros_like(input_ids)).to(device) if isinstance(batch, dict) else batch.token_type_ids.to(device)
-            # ensure expected dtypes
-            attention_mask = attention_mask.long()
-            token_type_ids = token_type_ids.long()
             labels = batch["labels"].to(device) if isinstance(batch, dict) else batch.labels.to(device)
 
             kwargs = {
@@ -599,9 +596,21 @@ def train(args: argparse.Namespace) -> None:
             token_type_ids = batch.get("token_type_ids", torch.zeros_like(input_ids)).to(device) if isinstance(batch, dict) else batch.token_type_ids.to(device)
             labels = batch["labels"].to(device) if isinstance(batch, dict) else batch.labels.to(device)
 
-            # ensure dtypes to avoid CUDA asserts (roberta expects long masks)
-            attention_mask = attention_mask.long()
-            token_type_ids = token_type_ids.long()
+            # Debug: log batch shapes and dtypes on first batch
+            if step == 1:
+                logger.info(
+                    "Batch 1 debug: input_ids shape=%s dtype=%s, attention_mask shape=%s dtype=%s, "
+                    "token_type_ids shape=%s dtype=%s, labels shape=%s dtype=%s",
+                    input_ids.shape, input_ids.dtype,
+                    attention_mask.shape, attention_mask.dtype,
+                    token_type_ids.shape, token_type_ids.dtype,
+                    labels.shape, labels.dtype,
+                )
+                logger.info("attention_mask min/max: %s / %s", attention_mask.min().item(), attention_mask.max().item())
+                logger.info("token_type_ids min/max: %s / %s", token_type_ids.min().item(), token_type_ids.max().item())
+                logger.info("labels min/max: %s / %s", labels.min().item(), labels.max().item())
+                if hasattr(batch, "noise_ids") and batch.noise_ids is not None:
+                    logger.info("noise_ids shape=%s dtype=%s", batch.noise_ids.shape, batch.noise_ids.dtype)
 
             kwargs = {
                 "input_ids": input_ids,
