@@ -110,7 +110,7 @@ class TokenClassificationDataset(Dataset):
 
                 feature = {
                     "input_ids": torch.tensor(input_ids, dtype=torch.long),
-                    "attention_mask": torch.tensor(attention_mask, dtype=torch.bool),
+                    "attention_mask": torch.tensor(attention_mask, dtype=torch.long),
                     "token_type_ids": torch.tensor(token_type_ids, dtype=torch.long),
                     "labels": torch.tensor(labels, dtype=torch.long),
                     "offset_mapping": torch.tensor(offset_mapping, dtype=torch.long),
