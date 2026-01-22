@@ -3,11 +3,14 @@ import sys
 import json
 import logging
 import collections
+from pathlib import Path
 from tqdm import tqdm
 from collections import defaultdict
 
-# Add project root to path
-sys.path.insert(0, os.getcwd())
+# Add repo root (dapt_eval_package parent) to path
+_ROOT = Path(__file__).resolve().parents[2]
+if str(_ROOT) not in sys.path:
+    sys.path.insert(0, str(_ROOT))
 
 from pre_struct.kv_ner.modeling import BertCrfTokenClassifier
 from pre_struct.kv_ner.config_io import load_config
