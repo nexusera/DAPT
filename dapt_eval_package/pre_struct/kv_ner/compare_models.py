@@ -84,6 +84,7 @@ def get_ground_truth(item):
     """
     gt_keys = set()
     gt_pairs = set()
+    gt_qa_map = {}
     
     # Check if 'spans' exists (preferred for QA schema source)
     schema_keys = list(item.get('spans', {}).keys())
@@ -103,7 +104,6 @@ def get_ground_truth(item):
     # ALWAYS build GT from 'spans' because val_eval.jsonl relies on it
     # This ensures Task 1 and 2 have data
     if 'spans' in item:
-        gt_qa_map = {}
         for k, v in item['spans'].items():
             if v and 'text' in v:
                 v_text = v['text']
