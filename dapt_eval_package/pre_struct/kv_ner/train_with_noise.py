@@ -83,6 +83,37 @@ logging.basicConfig(level=logging.INFO, format=LOG_FORMAT)
 logger = logging.getLogger(__name__)
 
 
+def _expand_word_noise_to_chars(ocr_raw, noise_values_per_word):
+    """Expand per-word 7-d noise to per-character list using ocr_raw.words_result."""
+    if not (isinstance(ocr_raw, dict) and isinstance(noise_values_per_word, list)):
+        return None
+    words_result = ocr_raw.get("words_result")
+    if not isinstance(words_result, list):
+        return None
+    char_noise = []
+    for wr, nv in zip(words_result, noise_values_per_word):
+        if not (isinstance(wr, dict) and isinstance(nv, (list, tuple)) and len(nv) == 7):
+            continue
+        w = wr.get("words", "")
+        if not isinstance(w, str):
+            continue
+        repeat = max(1, len(w))
+        char_noise.extend([list(nv)] * repeat)
+    return char_noise if char_noise else None
+
+
+def _broadcast_global_noise(noise_values, text_len: int):
+    """If noise is a single 7-d vector, broadcast to text length."""
+    if (
+        isinstance(noise_values, list)
+        and len(noise_values) == 7
+        and all(not isinstance(v, (list, tuple)) for v in noise_values)
+        and text_len > 0
+    ):
+        return [list(noise_values) for _ in range(text_len)]
+    return noise_values
+
+
 def set_seed(seed: int) -> None:
     random.seed(seed)
     np.random.seed(seed)
@@ -106,6 +137,8 @@ def load_jsonl_with_noise(path: str | Path, label_map: Dict[str, str], include_u
 
     def _parse_labelstudio_task(task: dict) -> Optional[Sample]:
         data = task.get("data", {}) if isinstance(task, dict) else {}
+        ocr_raw = task.get("ocr_raw") or data.get("ocr_raw")
+        per_word_noise = data.get("noise_values_per_word") or task.get("noise_values_per_word")
         text = str(data.get("ocr_text") or data.get("text") or "").strip()
         if not text:
             return None
@@ -152,7 +185,9 @@ def load_jsonl_with_noise(path: str | Path, label_map: Dict[str, str], include_u
         if not entities and not include_unlabeled:
             return None
 
-        noise_values = data.get("noise_values") or task.get("noise_values")
+        expanded_noise = _expand_word_noise_to_chars(ocr_raw, per_word_noise)
+        noise_values = expanded_noise or data.get("noise_values") or task.get("noise_values")
+        noise_values = _broadcast_global_noise(noise_values, len(text))
         return Sample(
             task_id=str(task.get("id")),
             text=text,
@@ -183,11 +218,16 @@ def load_jsonl_with_noise(path: str | Path, label_map: Dict[str, str], include_u
             task_id = str(obj.get("id", line_no))
             text = str(obj.get("text", "")).strip()
             title = str(obj.get("title", ""))
+
+            ocr_raw = obj.get("ocr_raw") or obj.get("data", {}).get("ocr_raw")
+            per_word_noise = obj.get("noise_values_per_word") or obj.get("data", {}).get("noise_values_per_word")
             
             if not text:
                 continue
 
-            noise_values = obj.get("noise_values") or obj.get("data", {}).get("noise_values")
+            expanded_noise = _expand_word_noise_to_chars(ocr_raw, per_word_noise)
+            noise_values = expanded_noise or obj.get("noise_values") or obj.get("data", {}).get("noise_values")
+            noise_values = _broadcast_global_noise(noise_values, len(text))
             
             # 解析 key_value_pairs 为 Entity
             entities: List[Entity] = []

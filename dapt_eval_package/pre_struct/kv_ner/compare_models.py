@@ -34,6 +34,46 @@ def load_data(filepath):
             data.append(json.loads(line))
     return data
 
+
+def _extract_ocr_text(ocr_raw):
+    """Best-effort OCR text extraction from ocr_raw payload."""
+    if not ocr_raw:
+        return ""
+    # If already a string, use directly
+    if isinstance(ocr_raw, str):
+        return ocr_raw
+    # Common Baidu OCR format: {'words_result': [{'words': '...'}, ...]}
+    if isinstance(ocr_raw, dict):
+        words_result = ocr_raw.get("words_result")
+        if isinstance(words_result, list):
+            words = []
+            for w in words_result:
+                if isinstance(w, dict) and "words" in w:
+                    words.append(str(w["words"]))
+            if words:
+                return "".join(words)
+    # Fallback to string representation
+    return str(ocr_raw)
+
+
+def _expand_word_noise_to_chars(ocr_raw, noise_values_per_word):
+    """Expand per-word 7-d noise to per-char list using ocr_raw.words_result."""
+    if not (isinstance(ocr_raw, dict) and isinstance(noise_values_per_word, list)):
+        return None
+    words_result = ocr_raw.get("words_result")
+    if not isinstance(words_result, list):
+        return None
+    char_noise = []
+    for wr, nv in zip(words_result, noise_values_per_word):
+        if not (isinstance(wr, dict) and isinstance(nv, (list, tuple)) and len(nv) == 7):
+            continue
+        w = wr.get("words", "")
+        if not isinstance(w, str):
+            continue
+        repeat = max(1, len(w))
+        char_noise.extend([list(nv)] * repeat)
+    return char_noise if char_noise else None
+
 def get_ground_truth(item):
     """
     Extract GT Keys and Pairs from item.
@@ -180,6 +220,14 @@ def _build_noise_ids(offset_mapping, noise_values, processor):
     """根据offset_mapping与noise_values生成每个token的noise_ids（长度7）。"""
     if noise_values is None:
         noise_values = []
+    # 如果仅有全局7维向量，则为所有token复用同一桶ID
+    if (
+        isinstance(noise_values, list)
+        and len(noise_values) == 7
+        and all(not isinstance(v, (list, tuple)) for v in noise_values)
+    ):
+        global_ids = processor.values_to_bin_ids(noise_values)
+        return torch.tensor([global_ids for _ in offset_mapping], dtype=torch.long)
     ids = []
     for s, e in offset_mapping:
         s = int(s); e = int(e)
@@ -530,10 +578,33 @@ def main():
     # Iterate
     logger.info("Running comparison (Unified Task 1/2/3) with Strict/Loose Metrics...")
     for idx, item in enumerate(tqdm(dataset)):
-        report_text = item['report']
-        # Fix: handle empty string title
-        title = item.get('report_title')
-        if not title: title = '通用病历'
+        # 兼容不同字段名，优先 report/text/ocr_text，再尝试 data 字段与 ocr_raw
+        ocr_raw = item.get('ocr_raw')
+        report_text = (
+            item.get('report')
+            or item.get('text')
+            or item.get('ocr_text')
+            or item.get('data', {}).get('ocr_text')
+            or _extract_ocr_text(ocr_raw)
+        )
+        if not report_text:
+            logger.warning(f"Skip sample without text/report: {item.get('id', '')}")
+            continue
+
+        # 兼容标题字段
+        title = (
+            item.get('report_title')
+            or item.get('title')
+            or item.get('category')
+            or item.get('data', {}).get('category')
+            or '通用病历'
+        )
+
+        # 优先使用 per-word 噪声，退化到全局或逐字符
+        char_noise = None
+        per_word_noise = item.get('noise_values_per_word') or item.get('data', {}).get('noise_values_per_word')
+        if per_word_noise:
+            char_noise = _expand_word_noise_to_chars(ocr_raw, per_word_noise)
         
         gt_keys, gt_pairs, _, gt_qa_map = get_ground_truth(item) 
         
@@ -546,7 +617,7 @@ def main():
             device,
             id2label,
             o_id,
-            noise_values=item.get('noise_values'),
+            noise_values=char_noise or item.get('noise_values') or item.get('data', {}).get('noise_values'),
             noise_processor=noise_processor,
         )
         
