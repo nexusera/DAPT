@@ -10,12 +10,26 @@ from collections import defaultdict
 # Add project root to path
 sys.path.insert(0, os.getcwd())
 
-from core.metrics import (
-    calculate_task1_stats,
-    calculate_task2_stats,
-    calculate_task3_stats,
-    calc_micro_f1
-)
+try:
+    from core.metrics import (
+        calculate_task1_stats,
+        calculate_task2_stats,
+        calculate_task3_stats,
+        calc_micro_f1
+    )
+except ImportError:
+    # Fallback: locate core.metrics relative to script if packaged differently
+    here = Path(__file__).resolve()
+    alt = here.parents[1] / "core"
+    if str(alt) not in sys.path:
+        sys.path.insert(0, str(alt))
+    from core.metrics import (
+        calculate_task1_stats,
+        calculate_task2_stats,
+        calculate_task3_stats,
+        calc_micro_f1
+    )
+
 from pre_struct.kv_ner.schema_utils import load_schema
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
