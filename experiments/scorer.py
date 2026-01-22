@@ -5,6 +5,7 @@ import sys
 import os
 import logging
 import datetime
+from pathlib import Path
 from collections import defaultdict
 
 # Add project root to path
@@ -18,7 +19,7 @@ try:
         calc_micro_f1
     )
 except ImportError:
-    # Fallback: locate core.metrics relative to script if packaged differently
+    # Fallback: locate core.metrics relative to repo root
     here = Path(__file__).resolve()
     alt = here.parents[1] / "core"
     if str(alt) not in sys.path:
