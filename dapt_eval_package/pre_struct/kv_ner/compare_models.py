@@ -498,7 +498,11 @@ def main():
     
     # 2. Load Keys Definition
     logger.info(f"Loading Keys Definition from {args.keys_file}")
-    keys_dict = load_schema(args.keys_file)
+    try:
+        keys_dict = load_schema(args.keys_file)
+    except Exception as e:
+        logger.error(f"Failed to load schema from {args.keys_file}: {e}; continue without QA schema")
+        keys_dict = {}
 
     # 3. Setup NER Model
     logger.info("Subjecting NER Model...")
@@ -749,21 +753,17 @@ def main():
             
     logger.info(f"Standardized predictions saved to {output_file} (Ready for Unified Scorer)")
     
-    # Still calculate metrics for backward compatibility / quick check? 
-    # Yes, using the new core/metrics.py if possible, or keep existing logic temporarily but warn
-    # User said "BERT code don't throw away", "Modify to save jsonl"
-    # User also said "Action 3: Build Unified Scorer"
-    # So ideally we should STOP calculating here and rely on scorer.py?
-    # Or import scorer here?
-    # Let's import the new metrics to calculate ON THE FLY for immediate feedback, 
-    # but ALSO save the file.
-    
-    from core.metrics import (
-        calculate_task1_stats, 
-        calculate_task2_stats, 
-        calculate_task3_stats,
-        calc_micro_f1
-    )
+    # Optional inline metrics; if core.metrics is unavailable, skip and rely on scorer.py
+    try:
+        from core.metrics import (
+            calculate_task1_stats, 
+            calculate_task2_stats, 
+            calculate_task3_stats,
+            calc_micro_f1
+        )
+    except ImportError:
+        logger.warning("core.metrics not found; skip inline metrics. Use experiments/scorer.py on preds file.")
+        return
     
     # Re-implement aggregation using NEW core metrics
     t1_strict_stats = {'tp':0, 'fp':0, 'fn':0}
