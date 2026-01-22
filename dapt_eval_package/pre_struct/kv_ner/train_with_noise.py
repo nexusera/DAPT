@@ -490,10 +490,9 @@ def train(args: argparse.Namespace) -> None:
     use_noise = False
     if args.noise_bins:
         try:
-            logger.warning("*** TEMPORARILY DISABLING NOISE for faster debugging. Remove this line once base pipeline works. ***")
-            # noise_processor = NoiseFeatureProcessor.load(args.noise_bins)
-            # use_noise = True
-            # logger.info(f"Loaded noise feature processor from {args.noise_bins}")
+            noise_processor = NoiseFeatureProcessor.load(args.noise_bins)
+            use_noise = True
+            logger.info(f"Loaded noise feature processor from {args.noise_bins}")
         except Exception as e:
             logger.warning(f"Failed to load noise bins: {e}; training without noise support")
             use_noise = False
