@@ -10,11 +10,13 @@ from collections import defaultdict
 
 # Add project root to path
 sys.path.insert(0, os.getcwd())
-# Also include local core/ under repo root
+# Also include local core/ and pre_struct/ under repo root
 repo_root = Path(__file__).resolve().parents[1]
 core_dir = repo_root / "core"
-if core_dir.is_dir() and str(core_dir) not in sys.path:
-    sys.path.insert(0, str(core_dir))
+pre_struct_dir = repo_root / "pre_struct"
+for d in (core_dir, pre_struct_dir, repo_root):
+    if d.is_dir() and str(d) not in sys.path:
+        sys.path.insert(0, str(d))
 
 try:
     from core.metrics import (
