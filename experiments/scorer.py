@@ -7,6 +7,7 @@ import logging
 import datetime
 from pathlib import Path
 from collections import defaultdict
+import itertools
 
 # Add project root to path
 sys.path.insert(0, os.getcwd())
@@ -52,12 +53,27 @@ def load_jsonl(filepath):
                 data.append(json.loads(line))
     return data
 
+
+def quick_check(preds, gts, max_samples=5):
+    """Check spans/kv presence in GT and pred_pairs in preds."""
+    has_spans = 0
+    has_kv = 0
+    for i, gt in enumerate(gts[:max_samples]):
+        if gt.get("spans"):
+            has_spans += 1
+        if gt.get("key_value_pairs"):
+            has_kv += 1
+    pred_kv = sum(1 for p in preds[:max_samples] if p.get("pred_pairs"))
+    print(f"GT first {max_samples}: spans_present={has_spans}, key_value_pairs_present={has_kv}")
+    print(f"Pred first {max_samples}: pred_pairs_present={pred_kv}")
+
 def main():
     parser = argparse.ArgumentParser(description="Unified Scorer for Intermediate Data Protocol")
     parser.add_argument("--pred_file", required=True, help="Prediction JSONL (must have 'pred_pairs')")
     parser.add_argument("--gt_file", required=True, help="Ground Truth JSONL (val_eval.jsonl)")
     parser.add_argument("--schema_file", default="data/kv_ner_prepared_comparison/keys_merged_1027_cleaned.json", help="Schema for Task 3")
     parser.add_argument("--output_file", default=None, help="Save metrics to JSON")
+        parser.add_argument("--check_only", action="store_true", help="Only check spans/kv existence in pred/gt and exit")
     args = parser.parse_args()
 
     # Load Data
@@ -66,6 +82,10 @@ def main():
     
     logger.info(f"Loading ground truth: {args.gt_file}")
     gts = load_jsonl(args.gt_file)
+
+    if args.check_only:
+        quick_check(preds, gts, max_samples=5)
+        return
     
     # Load Schema
     keys_dict = load_schema(args.schema_file)
