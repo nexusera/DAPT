@@ -73,7 +73,7 @@ def main():
     parser.add_argument("--gt_file", required=True, help="Ground Truth JSONL (val_eval.jsonl)")
     parser.add_argument("--schema_file", default="data/kv_ner_prepared_comparison/keys_merged_1027_cleaned.json", help="Schema for Task 3")
     parser.add_argument("--output_file", default=None, help="Save metrics to JSON")
-        parser.add_argument("--check_only", action="store_true", help="Only check spans/kv existence in pred/gt and exit")
+    parser.add_argument("--check_only", action="store_true", help="Only check spans/kv existence in pred/gt and exit")
     args = parser.parse_args()
 
     # Load Data
