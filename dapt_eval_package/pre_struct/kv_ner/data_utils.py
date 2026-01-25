@@ -136,13 +136,16 @@ def load_labelstudio_export(
             continue
 
         # 读取噪声：优先 per-word 扩展，其次 noise_values / data.noise_values / task.noise_values
+        # 优先使用 OCR 的 words_result 与 per-word 噪声，展开到字符级
         ocr_raw = task.get("ocr_raw") or data_block.get("ocr_raw")
         per_word_noise = data_block.get("noise_values_per_word") or task.get("noise_values_per_word")
         noise_values = _expand_word_noise_to_chars(ocr_raw, per_word_noise)
         if noise_values is None:
+            # 回退：直接读取已对齐到字符的 noise_values
             noise_values = data_block.get("noise_values") or task.get("noise_values")
         noise_values = _broadcast_global_noise(noise_values, len(text))
         if noise_values is None:
+            # 最终回退：用完美值填充，确保下游不会出现 None
             noise_values = [list(PERFECT_VALUES) for _ in range(len(text))] if len(text) > 0 else None
 
         results = _select_latest_annotation(task)

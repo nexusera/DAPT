@@ -137,6 +137,7 @@ def load_jsonl_with_noise(path: str | Path, label_map: Dict[str, str], include_u
 
     def _parse_labelstudio_task(task: dict) -> Optional[Sample]:
         data = task.get("data", {}) if isinstance(task, dict) else {}
+        # 标注行：若有 per-word 噪声，先与 ocr_raw.words_result 对齐后再展开到字符
         ocr_raw = task.get("ocr_raw") or data.get("ocr_raw")
         per_word_noise = data.get("noise_values_per_word") or task.get("noise_values_per_word")
         text = str(data.get("ocr_text") or data.get("text") or "").strip()
@@ -219,6 +220,7 @@ def load_jsonl_with_noise(path: str | Path, label_map: Dict[str, str], include_u
             text = str(obj.get("text", "")).strip()
             title = str(obj.get("title", ""))
 
+            # 普通 JSONL 行：同样优先处理 per-word 噪声，回退到 noise_values
             ocr_raw = obj.get("ocr_raw") or obj.get("data", {}).get("ocr_raw")
             per_word_noise = obj.get("noise_values_per_word") or obj.get("data", {}).get("noise_values_per_word")
             
