@@ -252,11 +252,13 @@ def prepare_data(
     seed: int = 42,
     config_path: Optional[str] = None,
 ) -> None:
-    label_map = DEFAULT_LABEL_MAP
+    label_map = dict(DEFAULT_LABEL_MAP)
     if config_path:
         try:
             cfg = config_io.load_config(config_path)
-            label_map = config_io.label_map_from(cfg)
+            # 合并：配置优先，但保留默认里的“键名/值/医院名称”等常见标签
+            cfg_map = config_io.label_map_from(cfg)
+            label_map.update(cfg_map)
         except Exception as e:
             logger.warning("读取配置失败，将使用默认标签映射: %s", e)
 
