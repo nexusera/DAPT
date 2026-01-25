@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Dict, Iterable, List, Optional, Sequence, Tuple
 
 from sklearn.model_selection import train_test_split
+from .noise_utils import PERFECT_VALUES
 
 
 @dataclass
@@ -68,6 +69,37 @@ def _normalize_label(raw_label: str, label_map: Dict[str, str]) -> Optional[str]
     return label_map.get(raw)
 
 
+def _expand_word_noise_to_chars(ocr_raw, noise_values_per_word):
+    """Expand per-word 7-d noise to per-character list using ocr_raw.words_result."""
+    if not (isinstance(ocr_raw, dict) and isinstance(noise_values_per_word, list)):
+        return None
+    words_result = ocr_raw.get("words_result")
+    if not isinstance(words_result, list):
+        return None
+    char_noise = []
+    for wr, nv in zip(words_result, noise_values_per_word):
+        if not (isinstance(wr, dict) and isinstance(nv, (list, tuple)) and len(nv) == 7):
+            continue
+        w = wr.get("words", "")
+        if not isinstance(w, str):
+            continue
+        repeat = max(1, len(w))
+        char_noise.extend([list(nv)] * repeat)
+    return char_noise if char_noise else None
+
+
+def _broadcast_global_noise(noise_values, text_len: int):
+    """If noise is a single 7-d vector, broadcast to text length."""
+    if (
+        isinstance(noise_values, list)
+        and len(noise_values) == 7
+        and all(not isinstance(v, (list, tuple)) for v in noise_values)
+        and text_len > 0
+    ):
+        return [list(noise_values) for _ in range(text_len)]
+    return noise_values
+
+
 def load_labelstudio_export(
     path: str | Path,
     label_map: Dict[str, str],
@@ -85,8 +117,9 @@ def load_labelstudio_export(
 
     samples: List[Sample] = []
     for task in data:
+        data_block = task.get("data", {}) if isinstance(task, dict) else {}
         try:
-            text = str(task.get("data", {}).get("ocr_text") or task.get("data", {}).get("text") or "")
+            text = str(data_block.get("ocr_text") or data_block.get("text") or "")
         except Exception:
             text = ""
         if not text:
@@ -95,12 +128,22 @@ def load_labelstudio_export(
                     Sample(
                         task_id=str(task.get("id")),
                         text="",
-                        title=str(task.get("data", {}).get("category") or ""),
+                        title=str(data_block.get("category") or ""),
                         entities=[],
                         relations=[],
                     )
                 )
             continue
+
+        # 读取噪声：优先 per-word 扩展，其次 noise_values / data.noise_values / task.noise_values
+        ocr_raw = task.get("ocr_raw") or data_block.get("ocr_raw")
+        per_word_noise = data_block.get("noise_values_per_word") or task.get("noise_values_per_word")
+        noise_values = _expand_word_noise_to_chars(ocr_raw, per_word_noise)
+        if noise_values is None:
+            noise_values = data_block.get("noise_values") or task.get("noise_values")
+        noise_values = _broadcast_global_noise(noise_values, len(text))
+        if noise_values is None:
+            noise_values = [list(PERFECT_VALUES) for _ in range(len(text))] if len(text) > 0 else None
 
         results = _select_latest_annotation(task)
         entities: List[Entity] = []
@@ -144,9 +187,10 @@ def load_labelstudio_export(
         sample = Sample(
             task_id=str(task.get("id")),
             text=text,
-            title=str(task.get("data", {}).get("category") or ""),
+            title=str(data_block.get("category") or ""),
             entities=sorted(entities, key=lambda e: (e.start, e.end)),
             relations=relations,
+            noise_values=noise_values,
         )
         if sample.entities or include_unlabeled:
             samples.append(sample)

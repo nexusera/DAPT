@@ -409,10 +409,11 @@ def _evaluate_model(
                 "token_type_ids": token_type_ids,
             }
             
-            # 如果有noise_ids且模型支持，传入
+            # 如果有noise_ids且模型支持，传入（允许样本缺噪声时跳过）
             if use_noise and "noise_ids" in (batch if isinstance(batch, dict) else batch.__dict__):
-                noise_ids = batch["noise_ids"].to(device) if isinstance(batch, dict) else batch.noise_ids.to(device)
-                if model.use_noise and model.noise_embeddings:
+                raw_noise = batch.get("noise_ids") if isinstance(batch, dict) else batch.noise_ids
+                noise_ids = raw_noise.to(device) if raw_noise is not None else None
+                if noise_ids is not None and model.use_noise and model.noise_embeddings:
                     with torch.no_grad():
                         for fi, emb in enumerate(model.noise_embeddings):
                             max_id = int(torch.max(noise_ids[:, :, fi]).item())
@@ -420,7 +421,7 @@ def _evaluate_model(
                                 raise ValueError(
                                     f"noise_ids feature {fi} has max id {max_id} >= num_embeddings {emb.num_embeddings}"
                                 )
-                kwargs["noise_ids"] = noise_ids
+                    kwargs["noise_ids"] = noise_ids
 
             decoded = model.predict(**kwargs)
 
