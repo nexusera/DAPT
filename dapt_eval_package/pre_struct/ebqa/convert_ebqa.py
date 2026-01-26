@@ -3,19 +3,19 @@ import sys
 import json
 from typing import Any, Dict, List, Optional
 
-# Ensure project root is in path
-sys.path.append(os.getcwd())
+# Ensure project root and package root are in path
+HERE = os.path.abspath(os.path.dirname(__file__))
+PKG_ROOT = os.path.abspath(os.path.join(HERE, "..", "..", ".."))  # dapt_eval_package/
+REPO_ROOT = os.path.abspath(os.path.join(PKG_ROOT, ".."))             # /data/ocean/DAPT
+for p in (HERE, PKG_ROOT, REPO_ROOT, os.getcwd()):
+    if p not in sys.path:
+        sys.path.append(p)
 
 # Local relative imports with fallback to module form
 try:
     from pre_struct.kv_ner.noise_utils import NoiseFeatureProcessor, PERFECT_VALUES
 except Exception:
-    try:
-        from dapt_eval_package.pre_struct.kv_ner.noise_utils import NoiseFeatureProcessor, PERFECT_VALUES  # type: ignore
-    except Exception:
-        # Attempt relative import when executed as a script from its own dir
-        sys.path.append(os.path.dirname(os.path.abspath(__file__)))
-        from kv_ner.noise_utils import NoiseFeatureProcessor, PERFECT_VALUES  # type: ignore
+    from dapt_eval_package.pre_struct.kv_ner.noise_utils import NoiseFeatureProcessor, PERFECT_VALUES  # type: ignore
 
 try:
     from pre_struct.ebqa.da_core.dataset import EnhancedQADataset
