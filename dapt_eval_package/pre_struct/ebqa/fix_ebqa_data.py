@@ -60,10 +60,12 @@ def _normalize_noise(item: Dict[str, Any], report_text: str) -> List[List[float]
     return normed
 
 
-def fix_data():
-    input_path = "data/kv_ner_prepared_comparison/train.json"
-    output_data_path = "data/kv_ner_prepared_comparison/train_flattened.jsonl"
-    output_schema_path = "data/kv_ner_prepared_comparison/keys_v2.json"
+def fix_data(input_path: str, output_data_path: str, output_schema_path: str):
+    if not os.path.exists(input_path):
+        raise FileNotFoundError(f"输入文件不存在: {input_path}")
+
+    os.makedirs(os.path.dirname(output_data_path) or ".", exist_ok=True)
+    os.makedirs(os.path.dirname(output_schema_path) or ".", exist_ok=True)
 
     with open(input_path, "r", encoding="utf-8") as f:
         data = json.load(f)
@@ -123,7 +125,13 @@ def fix_data():
 
     print(f"Schema saved to {output_schema_path}")
     print(f"Total keys found: {len(all_keys)}")
-
-
 if __name__ == "__main__":
-    fix_data()
+    import argparse
+
+    parser = argparse.ArgumentParser(description="扁平化 Label Studio KV 数据并携带噪声特征")
+    parser.add_argument("--input", dest="input_path", required=True, help="Label Studio 导出的 JSON/JSONL 文件")
+    parser.add_argument("--output_data", dest="output_data_path", default="data/kv_ner_prepared_comparison/train_flattened.jsonl", help="输出扁平化 jsonl")
+    parser.add_argument("--output_schema", dest="output_schema_path", default="data/kv_ner_prepared_comparison/keys_v2.json", help="输出 schema json")
+    args = parser.parse_args()
+
+    fix_data(args.input_path, args.output_data_path, args.output_schema_path)
