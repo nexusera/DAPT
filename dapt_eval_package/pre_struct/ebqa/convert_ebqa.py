@@ -3,10 +3,10 @@ import sys
 import json
 from typing import Any, Dict, List, Optional
 
-# Ensure project root and package root are in path
+# Ensure package root and repo root are in path
 HERE = os.path.abspath(os.path.dirname(__file__))
-PKG_ROOT = os.path.abspath(os.path.join(HERE, "..", "..", ".."))  # dapt_eval_package/
-REPO_ROOT = os.path.abspath(os.path.join(PKG_ROOT, ".."))             # /data/ocean/DAPT
+PKG_ROOT = os.path.abspath(os.path.join(HERE, "..", ".."))  # /data/ocean/DAPT/dapt_eval_package
+REPO_ROOT = os.path.abspath(os.path.join(PKG_ROOT, ".."))     # /data/ocean/DAPT
 for p in (HERE, PKG_ROOT, REPO_ROOT, os.getcwd()):
     if p not in sys.path:
         sys.path.append(p)
