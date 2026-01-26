@@ -5,23 +5,25 @@ from typing import Any, Dict, List, Optional
 
 # Ensure package root and repo root are in path
 HERE = os.path.abspath(os.path.dirname(__file__))
-PKG_ROOT = os.path.abspath(os.path.join(HERE, "..", ".."))  # /data/ocean/DAPT/dapt_eval_package
-REPO_ROOT = os.path.abspath(os.path.join(PKG_ROOT, ".."))     # /data/ocean/DAPT
-for p in (HERE, PKG_ROOT, REPO_ROOT, os.getcwd()):
+PKG_ROOT = os.path.abspath(os.path.join(HERE, "..", ".."))              # /data/ocean/DAPT/dapt_eval_package
+PRE_STRUCT_ROOT = os.path.abspath(os.path.join(PKG_ROOT, "pre_struct"))   # /data/ocean/DAPT/dapt_eval_package/pre_struct
+REPO_ROOT = os.path.abspath(os.path.join(PKG_ROOT, ".."))                 # /data/ocean/DAPT
+for p in (HERE, PRE_STRUCT_ROOT, PKG_ROOT, REPO_ROOT, os.getcwd()):
     if p not in sys.path:
         sys.path.append(p)
 
-# Also allow importing as a module when run from repo root
-if REPO_ROOT not in sys.path:
-    sys.path.insert(0, REPO_ROOT)
-
 # Local relative imports with fallback to module form
+# Robust imports (favor package names; fallback to local relative)
 try:
     from pre_struct.kv_ner.noise_utils import NoiseFeatureProcessor, PERFECT_VALUES
     from pre_struct.ebqa.da_core.dataset import EnhancedQADataset
 except Exception:
-    from dapt_eval_package.pre_struct.kv_ner.noise_utils import NoiseFeatureProcessor, PERFECT_VALUES  # type: ignore
-    from dapt_eval_package.pre_struct.ebqa.da_core.dataset import EnhancedQADataset  # type: ignore
+    try:
+        from dapt_eval_package.pre_struct.kv_ner.noise_utils import NoiseFeatureProcessor, PERFECT_VALUES  # type: ignore
+        from dapt_eval_package.pre_struct.ebqa.da_core.dataset import EnhancedQADataset  # type: ignore
+    except Exception:
+        from kv_ner.noise_utils import NoiseFeatureProcessor, PERFECT_VALUES  # type: ignore
+        from ebqa.da_core.dataset import EnhancedQADataset  # type: ignore
 import argparse
 
 
