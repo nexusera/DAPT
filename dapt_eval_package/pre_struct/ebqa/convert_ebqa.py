@@ -11,15 +11,16 @@ for p in (HERE, PKG_ROOT, REPO_ROOT, os.getcwd()):
     if p not in sys.path:
         sys.path.append(p)
 
+# Also allow importing as a module when run from repo root
+if REPO_ROOT not in sys.path:
+    sys.path.insert(0, REPO_ROOT)
+
 # Local relative imports with fallback to module form
 try:
     from pre_struct.kv_ner.noise_utils import NoiseFeatureProcessor, PERFECT_VALUES
-except Exception:
-    from dapt_eval_package.pre_struct.kv_ner.noise_utils import NoiseFeatureProcessor, PERFECT_VALUES  # type: ignore
-
-try:
     from pre_struct.ebqa.da_core.dataset import EnhancedQADataset
 except Exception:
+    from dapt_eval_package.pre_struct.kv_ner.noise_utils import NoiseFeatureProcessor, PERFECT_VALUES  # type: ignore
     from dapt_eval_package.pre_struct.ebqa.da_core.dataset import EnhancedQADataset  # type: ignore
 import argparse
 
