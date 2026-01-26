@@ -75,7 +75,14 @@ def fix_data(input_path: str, output_data_path: str, output_schema_path: str):
 
     with open(output_data_path, "w", encoding="utf-8") as fout:
         for item in data:
-            report_text = item.get("data", {}).get("text", "")
+            data_block = item.get("data", {}) if isinstance(item, dict) else {}
+            # Label Studio导出字段：优先用 ocr_text，其次 text，再次 raw_text
+            report_text = (
+                data_block.get("ocr_text")
+                or data_block.get("text")
+                or data_block.get("raw_text")
+                or ""
+            )
             if not report_text:
                 continue
 
@@ -86,9 +93,13 @@ def fix_data(input_path: str, output_data_path: str, output_schema_path: str):
             relations: List[Dict[str, Any]] = []
             for ann in item.get("annotations", []):
                 for res in ann.get("result", []):
-                    if res.get("type") == "labels":
-                        entities[res["id"]] = res
-                    elif res.get("type") == "relation":
+                    rtype = res.get("type")
+                    if rtype == "labels":
+                        # 兼容新版/旧版字段名
+                        res_id = res.get("id") or res.get("label_id")
+                        if res_id is not None:
+                            entities[res_id] = res
+                    elif rtype == "relation":
                         relations.append(res)
 
             for rel in relations:
