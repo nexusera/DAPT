@@ -6,12 +6,21 @@ from typing import Any, Dict, List, Optional
 # Ensure project root is in path
 sys.path.append(os.getcwd())
 
+# Local relative imports with fallback to module form
 try:
     from pre_struct.kv_ner.noise_utils import NoiseFeatureProcessor, PERFECT_VALUES
 except Exception:
-    from pre_struct.kv_ner.noise_utils import NoiseFeatureProcessor, PERFECT_VALUES  # type: ignore
+    try:
+        from dapt_eval_package.pre_struct.kv_ner.noise_utils import NoiseFeatureProcessor, PERFECT_VALUES  # type: ignore
+    except Exception:
+        # Attempt relative import when executed as a script from its own dir
+        sys.path.append(os.path.dirname(os.path.abspath(__file__)))
+        from kv_ner.noise_utils import NoiseFeatureProcessor, PERFECT_VALUES  # type: ignore
 
-from pre_struct.ebqa.da_core.dataset import EnhancedQADataset
+try:
+    from pre_struct.ebqa.da_core.dataset import EnhancedQADataset
+except Exception:
+    from dapt_eval_package.pre_struct.ebqa.da_core.dataset import EnhancedQADataset  # type: ignore
 import argparse
 
 
