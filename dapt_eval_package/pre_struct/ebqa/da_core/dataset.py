@@ -754,15 +754,13 @@ class EnhancedQADataset(Dataset):
         if not keys:  # 早期返回，避免无效处理
             return []
 
-        # 训练时：使用记录中的值作为 gold spans
+        # 训练时：使用记录中的值作为 gold spans；若提供了 spans 字典则优先使用
         # 推理时：让模型自主发现（不依赖预设值），除非记录确实提供了值
+        spans_dict = rec.get("spans") if isinstance(rec.get("spans"), dict) else {}
         if self.inference_mode:
-            # 推理模式：不提供 expected_map，让 extract_spans 返回 (-1,-1)，
-            # 这样所有样本都是 no-answer，模型会自主预测
             expected_map = {}
         else:
-            # 训练模式：使用记录中的值
-            expected_map = {k: str(rec.get(k, "") or "").strip() for k in keys}
+            expected_map = {k: str(spans_dict.get(k, rec.get(k, "")) or "").strip() for k in keys}
         spans = self._extract_spans_from_report(report, keys, expected_map=expected_map)
 
         rng = random.Random(self._base_seed + int(ridx))
