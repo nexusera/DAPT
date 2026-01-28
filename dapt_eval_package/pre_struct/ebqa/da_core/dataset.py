@@ -8,6 +8,14 @@ from pathlib import Path
 from typing import List, Dict, Tuple, Optional, Any
 import sys
 import re
+
+# ensure repo/package roots are importable (handles execution as script)
+_HERE = os.path.abspath(os.path.dirname(__file__))
+_PRE_STRUCT_ROOT = os.path.abspath(os.path.join(_HERE, "..", ".."))  # dapt_eval_package/pre_struct
+_PKG_ROOT = os.path.abspath(os.path.join(_PRE_STRUCT_ROOT, ".."))      # dapt_eval_package
+for _p in (_HERE, _PRE_STRUCT_ROOT, _PKG_ROOT, os.getcwd()):
+    if _p not in sys.path:
+        sys.path.append(_p)
 from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
 from multiprocessing import cpu_count
 from functools import lru_cache
@@ -32,17 +40,32 @@ try:
     from .chunking import SemanticChunker
     from . import extraction as EX
 except Exception:
-    sys.path.append(".")
-    from pre_struct.ebqa.da_core.utils import (
-        _load_jsonl_or_json,
-        _save_jsonl,
-        _dedup_keep_order,
-        split_train_test_balanced_by_title,
-    )
-    from pre_struct.ebqa.da_core.chunking import SemanticChunker
-    from pre_struct.ebqa.da_core import extraction as EX
-sys.path.append(".")
-from pre_struct.map_key2question import convert_key_to_question
+    try:
+        from pre_struct.ebqa.da_core.utils import (
+            _load_jsonl_or_json,
+            _save_jsonl,
+            _dedup_keep_order,
+            split_train_test_balanced_by_title,
+        )
+        from pre_struct.ebqa.da_core.chunking import SemanticChunker
+        from pre_struct.ebqa.da_core import extraction as EX
+    except Exception:
+        from dapt_eval_package.pre_struct.ebqa.da_core.utils import (  # type: ignore
+            _load_jsonl_or_json,
+            _save_jsonl,
+            _dedup_keep_order,
+            split_train_test_balanced_by_title,
+        )
+        from dapt_eval_package.pre_struct.ebqa.da_core.chunking import SemanticChunker  # type: ignore
+        from dapt_eval_package.pre_struct.ebqa.da_core import extraction as EX  # type: ignore
+
+try:
+    from pre_struct.map_key2question import convert_key_to_question
+except Exception:
+    try:
+        from dapt_eval_package.pre_struct.map_key2question import convert_key_to_question  # type: ignore
+    except Exception:
+        from map_key2question import convert_key_to_question  # type: ignore
 
 # --------- Collator（padding + 可选调试字段透传）---------
 class QACollator:
