@@ -151,6 +151,40 @@ class QACollator:
                     vfix = [(False if v is None else bool(v)) for v in vals]
                     out[train_field] = self.torch.tensor(vfix, dtype=self.torch.bool)
 
+        # noise_ids padding（形状：B x L x F，默认 F=7，缺省填0）
+        if any("noise_ids" in b for b in batch):
+            max_len = out["input_ids"].size(1)
+            noise_raw = []
+            max_feat = 0
+            for b in batch:
+                seq = b.get("noise_ids")
+                if isinstance(seq, self.torch.Tensor):
+                    seq = seq.tolist()
+                seq = seq or []
+                noise_raw.append(seq)
+                if seq and isinstance(seq[0], (list, tuple)):
+                    max_feat = max(max_feat, len(seq[0]))
+            max_feat = max(1, max_feat or 7)
+            noise_pad = self.torch.zeros(
+                (len(batch), max_len, max_feat), dtype=self.torch.long
+            )
+            for bi, seq in enumerate(noise_raw):
+                seq_len = len(input_ids[bi]) if bi < len(input_ids) else 0
+                for ti in range(min(seq_len, max_len)):
+                    vals = seq[ti] if ti < len(seq) else None
+                    if isinstance(vals, self.torch.Tensor):
+                        vals = vals.tolist()
+                    if isinstance(vals, (list, tuple)):
+                        padded = list(vals) + [0] * (max_feat - len(vals))
+                    elif vals is None:
+                        padded = [0] * max_feat
+                    else:
+                        padded = [int(vals)] + [0] * (max_feat - 1)
+                    noise_pad[bi, ti, :] = self.torch.tensor(
+                        padded[:max_feat], dtype=self.torch.long
+                    )
+            out["noise_ids"] = noise_pad
+
         if self.keep_debug_fields:
             dbg_keys = (
                 "question_key",
@@ -331,6 +365,8 @@ class EnhancedQADataset(Dataset):
             "start_positions": torch.tensor(item["start_positions"], dtype=torch.long),
             "end_positions": torch.tensor(item["end_positions"], dtype=torch.long),
         }
+        if "noise_ids" in item:
+            out["noise_ids"] = item.get("noise_ids")
         if self.keep_debug_fields:
             for k in (
                 "question_key",
@@ -754,13 +790,15 @@ class EnhancedQADataset(Dataset):
         if not keys:  # 早期返回，避免无效处理
             return []
 
-        # 训练时：使用记录中的值作为 gold spans；若提供了 spans 字典则优先使用
+        # 训练时：使用记录中的值作为 gold spans
         # 推理时：让模型自主发现（不依赖预设值），除非记录确实提供了值
-        spans_dict = rec.get("spans") if isinstance(rec.get("spans"), dict) else {}
         if self.inference_mode:
+            # 推理模式：不提供 expected_map，让 extract_spans 返回 (-1,-1)，
+            # 这样所有样本都是 no-answer，模型会自主预测
             expected_map = {}
         else:
-            expected_map = {k: str(spans_dict.get(k, rec.get(k, "")) or "").strip() for k in keys}
+            # 训练模式：使用记录中的值
+            expected_map = {k: str(rec.get(k, "") or "").strip() for k in keys}
         spans = self._extract_spans_from_report(report, keys, expected_map=expected_map)
 
         rng = random.Random(self._base_seed + int(ridx))
