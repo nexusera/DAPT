@@ -43,9 +43,13 @@ except Exception:  # pragma: no cover
             "align_score": 64,
         }
 
-import model_path_conf as _mpc  
-_DEF_MODEL = getattr(_mpc, "DEFAULT_MODEL_PATH", None)
-_DEF_TOK = getattr(_mpc, "DEFAULT_TOKENIZER_PATH", _DEF_MODEL)
+try:  # optional project-local defaults
+    import model_path_conf as _mpc  # type: ignore
+    _DEF_MODEL = getattr(_mpc, "DEFAULT_MODEL_PATH", None)
+    _DEF_TOK = getattr(_mpc, "DEFAULT_TOKENIZER_PATH", _DEF_MODEL)
+except Exception:
+    _DEF_MODEL = None
+    _DEF_TOK = None
 
 # tighten predicted char spans (trim surrounding whitespaces)
 try:

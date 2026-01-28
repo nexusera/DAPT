@@ -17,6 +17,16 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, Optional, Any
 
+# ---- ensure package roots on sys.path for script execution ----
+import sys
+
+_HERE = os.path.abspath(os.path.dirname(__file__))
+_PRE_STRUCT_ROOT = os.path.abspath(os.path.join(_HERE, ".."))  # .../pre_struct
+_PKG_ROOT = os.path.abspath(os.path.join(_PRE_STRUCT_ROOT, ".."))  # .../dapt_eval_package
+for _p in (_HERE, _PRE_STRUCT_ROOT, _PKG_ROOT, os.getcwd()):
+    if _p not in sys.path:
+        sys.path.append(_p)
+
 # plotting (headless-safe)
 try:
     import matplotlib
@@ -44,11 +54,6 @@ from transformers import (
 )
 
 # === 项目数据集与 collator ===
-import sys
-
-_THIS_DIR = os.path.dirname(os.path.abspath(__file__))
-if _THIS_DIR not in sys.path:
-    sys.path.append(_THIS_DIR)
 from da_core.dataset import EnhancedQADataset, QACollator
 from da_core.utils import _load_jsonl_or_json
 
