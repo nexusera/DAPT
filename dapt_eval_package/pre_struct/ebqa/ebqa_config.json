@@ -1,7 +1,7 @@
 {
   "report_struct_path": "data/kv_ner_prepared_comparison/keys_v2.json",
-  "model_name_or_path": "/data/ocean/DAPT/my-medical-model",
-  "tokenizer_name_or_path": "/data/ocean/DAPT/my-medical-tokenizer",
+  "model_name_or_path": "/data/ocean/DAPT/workspace/output_medical_bert_v2_8gpu_noise_v2",
+  "tokenizer_name_or_path": "/data/ocean/DAPT/workspace/output_medical_bert_v2_8gpu_noise_v2",
   "output_dir": "runs/ebqa_dapt_noise",
   "model_dir": "runs/ebqa_dapt_noise/best",
   "max_seq_len": 512,

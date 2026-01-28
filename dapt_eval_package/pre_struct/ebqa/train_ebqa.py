@@ -159,7 +159,50 @@ class JsonlStreamDataset(IterableDataset):
                     continue
 
 
-def _count_stream_split(jsonl_path: str, eval_ratio: float) -> tuple[int, int]:
+def _stream_meta(jsonl_path: str) -> dict:
+    return {
+        "mtime": os.path.getmtime(jsonl_path),
+        "size": os.path.getsize(jsonl_path),
+    }
+
+
+def _load_cached_stream_split(jsonl_path: str, eval_ratio: float):
+    meta_path = f"{jsonl_path}.split_counts.json"
+    if not os.path.isfile(meta_path):
+        return None
+    try:
+        cur_meta = _stream_meta(jsonl_path)
+        with open(meta_path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        if abs(float(data.get("eval_ratio", -1.0)) - float(eval_ratio)) > 1e-9:
+            return None
+        if int(data.get("size", -1)) != int(cur_meta["size"]):
+            return None
+        if abs(float(data.get("mtime", -1.0)) - float(cur_meta["mtime"])) > 1e-6:
+            return None
+        return int(data.get("n_train", -1)), int(data.get("n_eval", -1))
+    except Exception:
+        return None
+
+
+def _save_cached_stream_split(jsonl_path: str, eval_ratio: float, n_train: int, n_eval: int) -> None:
+    meta_path = f"{jsonl_path}.split_counts.json"
+    try:
+        cur_meta = _stream_meta(jsonl_path)
+        payload = {
+            "eval_ratio": float(eval_ratio),
+            "mtime": float(cur_meta["mtime"]),
+            "size": int(cur_meta["size"]),
+            "n_train": int(n_train),
+            "n_eval": int(n_eval),
+        }
+        with open(meta_path, "w", encoding="utf-8") as f:
+            json.dump(payload, f, ensure_ascii=False)
+    except Exception:
+        pass
+
+
+def _count_stream_split_once(jsonl_path: str, eval_ratio: float) -> tuple[int, int]:
     """单次遍历统计 train/eval 行数（解析 JSON 但不驻留）。"""
     n_train = n_eval = 0
     with open(jsonl_path, "r", encoding="utf-8") as f:
@@ -176,6 +219,17 @@ def _count_stream_split(jsonl_path: str, eval_ratio: float) -> tuple[int, int]:
             else:
                 n_train += 1
     return n_train, n_eval
+
+
+def _count_stream_split(jsonl_path: str, eval_ratio: float) -> tuple[int, int, bool]:
+    """统计流式数据的 train/eval 数量，带缓存，避免重复长时间扫描。"""
+    cached = _load_cached_stream_split(jsonl_path, eval_ratio)
+    if cached and cached[0] >= 0 and cached[1] >= 0:
+        return cached[0], cached[1], True
+
+    n_train, n_eval = _count_stream_split_once(jsonl_path, eval_ratio)
+    _save_cached_stream_split(jsonl_path, eval_ratio, n_train, n_eval)
+    return n_train, n_eval, False
 
 
 def _dataset_has_noise(ds, data_path: Optional[str] = None, sample_limit: int = 50) -> bool:
@@ -1170,8 +1224,9 @@ def train_loop(cfg: TrainConfig):
     dl_train, dl_eval = create_dataloaders(cfg, ds_train, ds_eval, tokenizer=tokenizer)
 
     if getattr(ds_train, "is_stream", False):
-        n_train, n_eval = _count_stream_split(cfg.data_path, cfg.eval_ratio)
-        print(f"[INFO] Stream split counts -> train={n_train}, eval={n_eval}")
+        n_train, n_eval, cached_counts = _count_stream_split(cfg.data_path, cfg.eval_ratio)
+        suffix = " (cached)" if cached_counts else ""
+        print(f"[INFO] Stream split counts -> train={n_train}, eval={n_eval}{suffix}")
     else:
         n_train, n_eval = len(ds_train), len(ds_eval)
 
