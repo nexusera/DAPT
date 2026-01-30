@@ -88,11 +88,28 @@ def extract_gt(item):
 
 def extract_pred(item):
     """
-    Extract keys and values from predictions (Label Studio format).
+    Extract keys and values from predictions.
+    Supports two formats:
+    1. Label Studio JSON (has 'predictions' -> 'result')
+    2. LLM Inference JSONL (has 'prediction' string field)
     """
     keys = []
     values = []
     
+    # CASE 1: LLM Inference Result (JSONL format with 'prediction' string)
+    if 'prediction' in item and isinstance(item['prediction'], str):
+        # The prediction is a raw string where keys are separated by newlines
+        lines = item['prediction'].split('\n')
+        for line in lines:
+            line = line.strip()
+            if not line or line == "NULL":
+                continue
+            # Since this task is Key Extraction, we treat everything as Keys
+            keys.append(line)
+        # Note: This specific LLM task seems to be Key Extraction only, so values list might be empty.
+        return keys, values
+    
+    # CASE 2: Label Studio JSON format
     if 'predictions' not in item:
         return keys, values
     
@@ -172,17 +189,62 @@ def main():
     print(f"Extracting texts (Mode: {args.mode})...")
     
     valid_count = 0
-    for item in tqdm(data):
+    generated_indices = 0 # Fallback ID counter for JSONL without IDs
+
+    for i, item in enumerate(tqdm(data)):
         item_id = item.get('id')
+        
+        # Handle cases where 'id' might be missing in JSONL files
         if item_id is None:
-            continue
-            
+            # Try to infer ID from '__idx' inside raw meta if available
+            if 'meta' in item and 'raw' in item['meta'] and '__idx' in item['meta']['raw']:
+                 item_id = item['meta']['raw']['__idx']
+        
+        # If still None, use line index
+        final_id = item_id if item_id is not None else f"line_{i}"
+        
+        # Store line index explicitly for fallback alignment
+        
         if args.mode == 'gt':
             keys, values = extract_gt(item)
         else:
             keys, values = extract_pred(item)
             
-        if not keys and not values:
+        results[final_id] = {
+            "keys_text": keys,
+            "values_text": values,
+            # Placeholders
+            "keys_emb": None,
+            "values_emb": None,
+            "line_idx": i
+        }
+
+    # If we are effectively using line numbers as IDs for the prediction file, we should probably do the same for GT if IDs are missing?
+    # But GT (raw_test.json) definitely has IDs.
+    
+    # CRITICAL FIX for Mapping:
+    # If the user provides a JSONL file without IDs (like the Qwen output), we need a way to map it back to GT.
+    # The GT file (raw_test.json) has explicit IDs (7, 10, 19...).
+    # If the Qwen file was generated sequentially from raw_test.json, then Line 1 of Qwen corresponds to Line 1 of raw_test.
+    # So we should probably use "positional index" as the join key if IDs are missing.
+    
+    # To support this, we need to know if we should fallback to positional index.
+    
+    # Let's Modify the results collection:
+    # We will store:
+    # results[original_id] if present
+    # results[f"line_{index}"] if not present
+    
+    # And we also add a helper to normalize keys for evaluation later.
+    pass 
+    
+    current_k_idx = 0
+    current_v_idx = 0
+    
+    # We need to stabilize the order of iteration
+    all_item_ids = list(results.keys())
+    
+    for item_id in all_item_id values:
             continue # Skip empty items
             
         results[item_id] = {

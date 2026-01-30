@@ -75,8 +75,39 @@ def main():
         pred_data = pickle.load(f)
         
     # Find common IDs
-    common_ids = set(gt_data.keys()).intersection(set(pred_data.keys()))
-    print(f"Found {len(common_ids)} common IDs to evaluate.")
+    s_gt = set(gt_data.keys())
+    s_pred = set(pred_data.keys())
+    common_ids = s_gt.intersection(s_pred)
+    
+    print(f"Direct ID match found {len(common_ids)} items.")
+    
+    # Fallback: Try to match by line index (0, 1, 2...) if ID match is poor
+    # This assumes both pickles have a 'line_idx' field stored or keys like "line_X".
+    if len(common_ids) == 0 and len(gt_data) > 0 and len(pred_data) > 0:
+        print("Attempting to align by line index (sequential order)...")
+        # Create map: line_idx -> item_data
+        gt_by_line = {}
+        for k, v in gt_data.items():
+            if 'line_idx' in v:
+                gt_by_line[v['line_idx']] = v
+        
+        pred_by_line = {}
+        for k, v in pred_data.items():
+            if 'line_idx' in v:
+                pred_by_line[v['line_idx']] = v
+                
+        # Intersect line indices
+        common_lines = set(gt_by_line.keys()).intersection(set(pred_by_line.keys()))
+        print(f"Found {len(common_lines)} items via sequential line alignment.")
+        
+        # Rebuild the 'common' iterator
+        # effectively we just iterate common_lines and pick from the maps
+        common_ids = sorted(list(common_lines))
+        # Swap the main dictionaries to be index-based for the loop below
+        gt_data = gt_by_line
+        pred_data = pred_by_line
+    
+    print(f"Final Count of Common IDs to evaluate: {len(common_ids)}")
     
     key_metrics_list = []
     value_metrics_list = []
