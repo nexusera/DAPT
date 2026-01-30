@@ -456,8 +456,12 @@ def create_dataloaders(cfg: TrainConfig, ds_train, ds_eval, tokenizer=None):
     if tokenizer is not None:
         if hasattr(tokenizer, 'pad_token_id'):
             pad_id = tokenizer.pad_token_id if tokenizer.pad_token_id is not None else 0
-        if hasattr(tokenizer, 'vocab_size'):
-            vocab_size = tokenizer.vocab_size
+        # 兼容“基础 vocab_size + added_tokens”，优先取 len(tokenizer)
+        try:
+            vocab_size = len(tokenizer)
+        except Exception:
+            if hasattr(tokenizer, 'vocab_size'):
+                vocab_size = tokenizer.vocab_size
     
     collator = QACollator(
         pad_id=pad_id,
@@ -1193,9 +1197,13 @@ def train_loop(cfg: TrainConfig):
         tokenizer = AutoTokenizer.from_pretrained(cfg.tokenizer_name_or_path)
         
         # ✅ 兼容性检查：验证数据与模型的词表是否匹配
-        if tokenizer and hasattr(tokenizer, 'vocab_size'):
-            vocab_size = tokenizer.vocab_size
-            print(f"[INFO] 当前tokenizer词表大小: {vocab_size}")
+        if tokenizer:
+            try:
+                vocab_size = len(tokenizer)
+            except Exception:
+                vocab_size = getattr(tokenizer, 'vocab_size', None)
+            if vocab_size is not None:
+                print(f"[INFO] 当前tokenizer词表大小: {vocab_size}")
             
             # 检查数据集中的token ids范围（仅检查非流式数据集）
             if not getattr(ds_train, "is_stream", False) and hasattr(ds_train, 'samples'):
