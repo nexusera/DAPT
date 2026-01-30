@@ -5,10 +5,52 @@ import sys
 import numpy as np
 import pickle
 from tqdm import tqdm
-from sentence_transformers import SentenceTransformer
+
+# Compatibility: Check for sentence_transformers, else fallback to transformers/torch
+try:
+    from sentence_transformers import SentenceTransformer
+    USE_ST = True
+except ImportError:
+    USE_ST = False
+    try:
+        import torch
+        from transformers import AutoModel, AutoTokenizer
+    except ImportError:
+        print("Error: Requirements missing. Please install 'sentence-transformers' OR 'transformers' + 'torch'.")
+        sys.exit(1)
 
 # Set default model path for the remote server
 DEFAULT_MODEL_PATH = "/data/ocean/embedding_model/BAAI/bge-m3"
+
+if not USE_ST:
+    class HFModelWrapper:
+        """Minimal wrapper to mimic SentenceTransformer using HuggingFace Transformers"""
+        def __init__(self, model_path):
+            print(f"Loading HF model from {model_path}...")
+            self.tokenizer = AutoTokenizer.from_pretrained(model_path)
+            self.model = AutoModel.from_pretrained(model_path)
+            self.device = "cuda" if torch.cuda.is_available() else "cpu"
+            self.model.to(self.device)
+            self.model.eval()
+
+        def encode(self, sentences, batch_size=32, show_progress_bar=False):
+            if not sentences: return np.array([])
+            all_embeddings = []
+            iterator = range(0, len(sentences), batch_size)
+            if show_progress_bar: iterator = tqdm(iterator, desc="Embedding")
+            
+            for i in iterator:
+                batch = sentences[i : i + batch_size]
+                inputs = self.tokenizer(batch, padding=True, truncation=True, return_tensors='pt', max_length=512)
+                inputs = {k: v.to(self.device) for k, v in inputs.items()}
+                with torch.no_grad():
+                    outputs = self.model(**inputs)
+                    # Use CLS token for BGE models
+                    embeddings = outputs.last_hidden_state[:, 0]
+                    embeddings = torch.nn.functional.normalize(embeddings, p=2, dim=1)
+                all_embeddings.append(embeddings.cpu().numpy())
+            
+            return np.vstack(all_embeddings) if all_embeddings else np.array([])
 
 def load_data(file_path):
     with open(file_path, 'r', encoding='utf-8') as f:
@@ -95,13 +137,27 @@ def main():
     args = parser.parse_args()
     
     print(f"Loading model from {args.model_path}...")
-    try:
-        model = SentenceTransformer(args.model_path)
-    except Exception as e:
-        print(f"Error loading model: {e}")
-        print("Attempting to load as generic HuggingFace model...")
-        # Fallback or exit
-        sys.exit(1)
+    
+    model = None
+    if USE_ST:
+        try:
+            model = SentenceTransformer(args.model_path)
+        except Exception as e:
+            print(f"Warning: SentenceTransformer failed ({e}). Trying HF fallback...")
+            if 'HFModelWrapper' in globals():
+                model = HFModelWrapper(args.model_path)
+            else:
+                # Need to define it if we are here but USE_ST was True initially
+                # This case is rare (import success, load fail), user likely has transformers if they have ST
+                import torch
+                from transformers import AutoModel, AutoTokenizer
+                # We would need to duplicate the class or import it. 
+                # Simplification: If ST exists but fails, just crash for now or ask user to check path.
+                print("Failed to load model with SentenceTransformer.")
+                sys.exit(1)
+    else:
+        print("Using Transformers library (sentence-transformers not found)...")
+        model = HFModelWrapper(args.model_path)
         
     print(f"Loading data from {args.input_file}...")
     data = load_data(args.input_file)
