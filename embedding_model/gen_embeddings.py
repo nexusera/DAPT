@@ -4,6 +4,8 @@ import os
 import sys
 import numpy as np
 import pickle
+import hashlib
+import re
 from tqdm import tqdm
 
 # Compatibility: Check for sentence_transformers, else fallback to transformers/torch
@@ -120,9 +122,6 @@ def extract_pred(item):
     # Assuming we take the first prediction if multiple exist, or iterate all
     # Usually valid prediction is just one.
     
-    # Process all predictions or just the first one? 
-    # Let's take the first one that has a 'result'.
-    
     pred_results = []
     for p in preds:
         if 'result' in p:
@@ -142,6 +141,43 @@ def extract_pred(item):
             values.append(text)
             
     return keys, values
+
+def get_content_fingerprint(item, mode):
+    """
+    Generate a hash fingerprint of the source text to allow content-based alignment.
+    """
+    text = ""
+    if mode == 'gt':
+        # Path: item['data']['ocr_text']
+        if 'data' in item and 'ocr_text' in item['data']:
+            text = item['data']['ocr_text']
+        # Failover
+        elif 'meta' in item and 'raw' in item['meta'] and 'ocr_text' in item['meta']['raw']:
+            text = item['meta']['raw']['ocr_text']
+            
+    elif mode == 'pred':
+        # Path: item['input'] which contains <text>...</text>
+        if 'input' in item:
+            inp = item['input']
+            match = re.search(r'<text>(.*?)</text>', inp, re.DOTALL)
+            if match:
+                text = match.group(1)
+            else:
+                # If regex fails, fallback to using full input as text? 
+                # Risky but better than None for strict alignment
+                # Let's try to see if it's just raw text
+                pass
+    
+    if not text:
+        return None
+        
+    # Normalize: remove all whitespace/newlines to be robust against formatting changes
+    clean_text = "".join(text.split())
+    
+    if not clean_text:
+        return None
+        
+    return hashlib.md5(clean_text.encode('utf-8')).hexdigest()
 
 def main():
     parser = argparse.ArgumentParser(description="Generate embeddings for keys and values from JSON data.")
@@ -176,13 +212,17 @@ def main():
         print("Using Transformers library (sentence-transformers not found)...")
         model = HFModelWrapper(args.model_path)
         
-    print(f"Loading data from {args.input_file}...")
-    data = load_data(args.input_file)
-    
-    results = {}
-    
-    # Pre-collect all texts to batch embed
-    all_keys = []
+        # Calculate fingerprint for Robust Alignment
+        fingerprint = get_content_fingerprint(item, args.mode)
+            
+        results[final_id] = {
+            "keys_text": keys,
+            "values_text": values,
+            # Placeholders
+            "keys_emb": None,
+            "values_emb": None,
+            "line_idx": i,
+            "fingerprint": fingerprint
     all_values = []
     item_indices = [] # Tuple of (id, type, start_idx, count) to reconstruct
     
@@ -278,10 +318,12 @@ def main():
         v_emb = values_embeddings[v_start:v_end] if idx_map['v_len'] > 0 else []
         
         final_output[item_id] = {
-            "keys": results[item_id]["keys_text"],
+            "keys": results[item_id]["keys_text"],,
+            "fingerprint": results[item_id].get("fingerprint", None)
             "values": results[item_id]["values_text"],
             "keys_emb": k_emb,
-            "values_emb": v_emb
+            "values_emb": v_emb,
+            "line_idx": results[item_id].get("line_idx", -1) # Preserve line_idx for fallback alignment
         }
         
     print(f"Saving results to {args.output_file}...")

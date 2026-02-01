@@ -81,31 +81,54 @@ def main():
     
     print(f"Direct ID match found {len(common_ids)} items.")
     
-    # Fallback: Try to match by line index (0, 1, 2...) if ID match is poor
-    # This assumes both pickles have a 'line_idx' field stored or keys like "line_X".
+    # Fallback 1: ID Match
     if len(common_ids) == 0 and len(gt_data) > 0 and len(pred_data) > 0:
-        print("Attempting to align by line index (sequential order)...")
-        # Create map: line_idx -> item_data
-        gt_by_line = {}
+        # Fallback 2: Content-based Match (Fingerprint)
+        print("Attempting to align by Content Fingerprint (MD5 of text)...")
+        
+        # Build GT Map: hash -> item_id
+        gt_hash_map = {}
         for k, v in gt_data.items():
-            if 'line_idx' in v:
-                gt_by_line[v['line_idx']] = v
-        
-        pred_by_line = {}
-        for k, v in pred_data.items():
-            if 'line_idx' in v:
-                pred_by_line[v['line_idx']] = v
+            if v.get('fingerprint'):
+                gt_hash_map[v['fingerprint']] = k
                 
-        # Intersect line indices
-        common_lines = set(gt_by_line.keys()).intersection(set(pred_by_line.keys()))
-        print(f"Found {len(common_lines)} items via sequential line alignment.")
+        common_via_hash = []
+        # Pred needs to be re-mapped to GT keys
+        new_pred_data = {} 
         
-        # Rebuild the 'common' iterator
-        # effectively we just iterate common_lines and pick from the maps
-        common_ids = sorted(list(common_lines))
-        # Swap the main dictionaries to be index-based for the loop below
-        gt_data = gt_by_line
-        pred_data = pred_by_line
+        for k, v in pred_data.items():
+            if v.get('fingerprint') and v['fingerprint'] in gt_hash_map:
+                gt_id = gt_hash_map[v['fingerprint']]
+                common_via_hash.append(gt_id)
+                new_pred_data[gt_id] = v
+                
+        if len(common_via_hash) > 0:
+            print(f"Found {len(common_via_hash)} items via Content Alignment.")
+            common_ids = common_via_hash
+            # Pred data uses GT keys now
+            pred_data = new_pred_data
+        else:
+            # Fallback 3: Line Index
+            print("Content alignment failed. Attempting to align by line index (sequential order)...")
+            # Create map: line_idx -> item_data
+            gt_by_line = {}
+            for k, v in gt_data.items():
+                if 'line_idx' in v:
+                    gt_by_line[v['line_idx']] = v
+            
+            pred_by_line = {}
+            for k, v in pred_data.items():
+                if 'line_idx' in v:
+                    pred_by_line[v['line_idx']] = v
+                    
+            # Intersect line indices
+            common_lines = set(gt_by_line.keys()).intersection(set(pred_by_line.keys()))
+            print(f"Found {len(common_lines)} items via sequential line alignment.")
+            
+            # Rebuild the 'common' iterator
+            common_ids = sorted(list(common_lines))
+            gt_data = gt_by_line
+            pred_data = pred_by_line
     
     print(f"Final Count of Common IDs to evaluate: {len(common_ids)}")
     
