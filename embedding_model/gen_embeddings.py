@@ -212,17 +212,13 @@ def main():
         print("Using Transformers library (sentence-transformers not found)...")
         model = HFModelWrapper(args.model_path)
         
-        # Calculate fingerprint for Robust Alignment
-        fingerprint = get_content_fingerprint(item, args.mode)
-            
-        results[final_id] = {
-            "keys_text": keys,
-            "values_text": values,
-            # Placeholders
-            "keys_emb": None,
-            "values_emb": None,
-            "line_idx": i,
-            "fingerprint": fingerprint
+    print(f"Loading data from {args.input_file}...")
+    data = load_data(args.input_file)
+    
+    results = {}
+    
+    # Pre-collect all texts to batch embed
+    all_keys = []
     all_values = []
     item_indices = [] # Tuple of (id, type, start_idx, count) to reconstruct
     
@@ -249,6 +245,8 @@ def main():
             keys, values = extract_gt(item)
         else:
             keys, values = extract_pred(item)
+        
+        fingerprint = get_content_fingerprint(item, args.mode)
             
         results[final_id] = {
             "keys_text": keys,
@@ -256,7 +254,8 @@ def main():
             # Placeholders
             "keys_emb": None,
             "values_emb": None,
-            "line_idx": i
+            "line_idx": i,
+            "fingerprint": fingerprint
         }
 
     print(f"Generating embeddings for {len(results)} items...")
@@ -318,12 +317,12 @@ def main():
         v_emb = values_embeddings[v_start:v_end] if idx_map['v_len'] > 0 else []
         
         final_output[item_id] = {
-            "keys": results[item_id]["keys_text"],,
-            "fingerprint": results[item_id].get("fingerprint", None)
+            "keys": results[item_id]["keys_text"],
             "values": results[item_id]["values_text"],
             "keys_emb": k_emb,
             "values_emb": v_emb,
-            "line_idx": results[item_id].get("line_idx", -1) # Preserve line_idx for fallback alignment
+            "line_idx": results[item_id].get("line_idx", -1),
+            "fingerprint": results[item_id].get("fingerprint", None)
         }
         
     print(f"Saving results to {args.output_file}...")
