@@ -219,46 +219,7 @@ def main():
             "line_idx": i
         }
 
-    # If we are effectively using line numbers as IDs for the prediction file, we should probably do the same for GT if IDs are missing?
-    # But GT (raw_test.json) definitely has IDs.
-    
-    # CRITICAL FIX for Mapping:
-    # If the user provides a JSONL file without IDs (like the Qwen output), we need a way to map it back to GT.
-    # The GT file (raw_test.json) has explicit IDs (7, 10, 19...).
-    # If the Qwen file was generated sequentially from raw_test.json, then Line 1 of Qwen corresponds to Line 1 of raw_test.
-    # So we should probably use "positional index" as the join key if IDs are missing.
-    
-    # To support this, we need to know if we should fallback to positional index.
-    
-    # Let's Modify the results collection:
-    # We will store:
-    # results[original_id] if present
-    # results[f"line_{index}"] if not present
-    
-    # And we also add a helper to normalize keys for evaluation later.
-    pass 
-    
-    current_k_idx = 0
-    current_v_idx = 0
-    
-    # We need to stabilize the order of iteration
-    all_item_ids = list(results.keys())
-    
-    for item_id in all_item_id values:
-            continue # Skip empty items
-            
-        results[item_id] = {
-            "keys_text": keys,
-            "values_text": values,
-            # Placeholders
-            "keys_emb": None,
-            "values_emb": None
-        }
-        
     print(f"Generating embeddings for {len(results)} items...")
-    
-    # We will embed strictly item by item to simplify mapping back, 
-    # or batch across everything? Batch across everything is faster.
     
     # Prepare flat lists
     flat_keys = []
