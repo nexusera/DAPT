@@ -106,6 +106,7 @@ def call_baidu_ocr(ocr_url: str, token: str, image_path: Path) -> Dict[str, Any]
 def process_items(
     items: List[Dict[str, Any]],
     image_root: Path,
+    extra_root: Optional[Path],
     ocr_caller,
     limit: Optional[int],
     offset: int,
@@ -119,24 +120,28 @@ def process_items(
         item = items[idx]
         image_field = item.get("data", {}).get("image")
         rel = extract_rel_path(str(image_field) if image_field else "")
-        img_path = image_root.joinpath(rel)
 
-        # 兜底：部分入院记录路径需要截到首个以 'U' 开头的目录再拼接
-        if not img_path.exists():
-            alt_rel = _tail_after_u_segment(rel)
+        def _try_paths(root: Path, rel_path: str) -> Optional[Path]:
+            p = root.joinpath(rel_path)
+            if p.exists():
+                return p
+            alt_rel = _tail_after_u_segment(rel_path)
             if alt_rel:
-                alt_path = image_root.joinpath(alt_rel)
-                if alt_path.exists():
-                    img_path = alt_path
-                else:
-                    print(
-                        f"[WARN] 图像不存在，尝试U前缀仍失败 idx={idx} orig={img_path} alt={alt_path}",
-                        file=sys.stderr,
-                    )
-                    continue
-            else:
-                print(f"[WARN] 图像不存在，跳过 idx={idx} path={img_path}", file=sys.stderr)
-                continue
+                p2 = root.joinpath(alt_rel)
+                if p2.exists():
+                    return p2
+            return None
+
+        img_path = _try_paths(image_root, rel)
+        if img_path is None and extra_root is not None:
+            img_path = _try_paths(extra_root, rel)
+
+        if img_path is None:
+            print(
+                f"[WARN] 图像不存在，已尝试主/备root及U前缀 idx={idx} rel={rel}",
+                file=sys.stderr,
+            )
+            continue
         try:
             ocr_result = ocr_caller(img_path)
             item["ocr_raw"] = ocr_result
@@ -151,6 +156,7 @@ def main():
     ap = argparse.ArgumentParser(description="从标注数据调用百度 OCR 并合并原始结果")
     ap.add_argument("--anno_json", required=True, type=Path, help="标注 JSON 路径")
     ap.add_argument("--image_root", required=True, type=Path, help="图片根目录，如 /data/ocean")
+    ap.add_argument("--extra_root", type=Path, default=None, help="可选的第二图片根目录，主目录找不到时回退")
     ap.add_argument("--output", required=True, type=Path, help="输出合并后的 JSON 路径")
     ap.add_argument("--api_key", help="百度 OCR API Key（官方 openapi 模式需要）")
     ap.add_argument("--secret_key", help="百度 OCR Secret Key（官方 openapi 模式需要）")
@@ -180,6 +186,7 @@ def main():
     process_items(
         items,
         image_root=args.image_root,
+        extra_root=args.extra_root,
         ocr_caller=ocr_caller,
         limit=limit,
         offset=args.offset,
