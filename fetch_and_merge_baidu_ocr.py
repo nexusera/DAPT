@@ -111,11 +111,14 @@ def process_items(
     limit: Optional[int],
     offset: int,
     sleep_seconds: float,
+    missing_log: Optional[Path],
 ) -> None:
     """就地为每条标注附加 ocr_raw。ocr_caller 接收 Path 返回 OCR JSON。"""
     total = len(items)
     start = offset
     end = total if limit is None else min(total, offset + limit)
+    missing_records: List[Dict[str, Any]] = []
+
     for idx in range(start, end):
         item = items[idx]
         image_field = item.get("data", {}).get("image")
@@ -137,9 +140,14 @@ def process_items(
             img_path = _try_paths(extra_root, rel)
 
         if img_path is None:
-            print(
-                f"[WARN] 图像不存在，已尝试主/备root及U前缀 idx={idx} rel={rel}",
-                file=sys.stderr,
+            msg = f"[WARN] 图像不存在，已尝试主/备root及U前缀 idx={idx} rel={rel}"
+            print(msg, file=sys.stderr)
+            missing_records.append(
+                {
+                    "idx": idx,
+                    "rel": rel,
+                    "image_field": image_field,
+                }
             )
             continue
         try:
@@ -151,6 +159,12 @@ def process_items(
         if sleep_seconds > 0:
             time.sleep(sleep_seconds)
 
+    if missing_log and missing_records:
+        missing_log.parent.mkdir(parents=True, exist_ok=True)
+        with missing_log.open("w", encoding="utf-8") as f:
+            json.dump(missing_records, f, ensure_ascii=False, indent=2)
+        print(f"[INFO] Missing images logged to: {missing_log} ({len(missing_records)} records)")
+
 
 def main():
     ap = argparse.ArgumentParser(description="从标注数据调用百度 OCR 并合并原始结果")
@@ -158,6 +172,7 @@ def main():
     ap.add_argument("--image_root", required=True, type=Path, help="图片根目录，如 /data/ocean")
     ap.add_argument("--extra_root", type=Path, default=None, help="可选的第二图片根目录，主目录找不到时回退")
     ap.add_argument("--output", required=True, type=Path, help="输出合并后的 JSON 路径")
+    ap.add_argument("--missing_log", type=Path, default=None, help="记录未找到图片的样本 JSON 路径；未指定则使用 output 同目录的 .missing.json")
     ap.add_argument("--api_key", help="百度 OCR API Key（官方 openapi 模式需要）")
     ap.add_argument("--secret_key", help="百度 OCR Secret Key（官方 openapi 模式需要）")
     ap.add_argument("--ocr_url", default=DEFAULT_OCR_URL, help="OCR 接口 URL，可换其他模型（官方模式）")
@@ -183,6 +198,10 @@ def main():
         ocr_caller = _caller_openapi
     limit = None if args.limit <= 0 else args.limit
 
+    missing_log = args.missing_log
+    if missing_log is None:
+        missing_log = args.output.with_suffix(".missing.json")
+
     process_items(
         items,
         image_root=args.image_root,
@@ -191,6 +210,7 @@ def main():
         limit=limit,
         offset=args.offset,
         sleep_seconds=args.sleep,
+        missing_log=missing_log,
     )
 
     save_annotations(args.output, items)
