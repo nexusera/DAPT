@@ -62,6 +62,20 @@ def extract_rel_path(image_field: str) -> str:
     return image_field.lstrip("/")
 
 
+def _tail_after_u_segment(rel_path: str) -> Optional[str]:
+    """针对入院记录数据的兜底：找到第一个以 'U' 开头的目录，截掉此前所有前缀。
+
+    示例：
+        原始: semi_struct/all_type_pic_oss_csv/0923/Uxxxx/abc.jpg
+        兜底: Uxxxx/abc.jpg
+    """
+    parts = [p for p in rel_path.split("/") if p]
+    for i, p in enumerate(parts):
+        if p.startswith("U"):
+            return "/".join(parts[i:])
+    return None
+
+
 def get_access_token(api_key: str, secret_key: str) -> str:
     """获取百度 OCR 的 access_token。"""
     params = {
@@ -106,9 +120,23 @@ def process_items(
         image_field = item.get("data", {}).get("image")
         rel = extract_rel_path(str(image_field) if image_field else "")
         img_path = image_root.joinpath(rel)
+
+        # 兜底：部分入院记录路径需要截到首个以 'U' 开头的目录再拼接
         if not img_path.exists():
-            print(f"[WARN] 图像不存在，跳过 idx={idx} path={img_path}", file=sys.stderr)
-            continue
+            alt_rel = _tail_after_u_segment(rel)
+            if alt_rel:
+                alt_path = image_root.joinpath(alt_rel)
+                if alt_path.exists():
+                    img_path = alt_path
+                else:
+                    print(
+                        f"[WARN] 图像不存在，尝试U前缀仍失败 idx={idx} orig={img_path} alt={alt_path}",
+                        file=sys.stderr,
+                    )
+                    continue
+            else:
+                print(f"[WARN] 图像不存在，跳过 idx={idx} path={img_path}", file=sys.stderr)
+                continue
         try:
             ocr_result = ocr_caller(img_path)
             item["ocr_raw"] = ocr_result
