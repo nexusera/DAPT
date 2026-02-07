@@ -76,6 +76,41 @@ def _tail_after_u_segment(rel_path: str) -> Optional[str]:
     return None
 
 
+def _rel_candidates(rel_path: str, root: Path) -> List[str]:
+    """生成多个相对路径候选，兼容重复前缀和可选的日期目录（如 0923）。"""
+    cands = []
+    base = rel_path.lstrip("/")
+    # 1) 原始
+    cands.append(base)
+
+    # 2) 去掉重复的长前缀（semi_struct/all_type_pic_oss_csv/）
+    long_prefix = "semi_struct/all_type_pic_oss_csv/"
+    if base.startswith(long_prefix):
+        cands.append(base[len(long_prefix):])
+
+    # 3) 去掉与 root 同名的前缀
+    root_name = root.name
+    if base.startswith(root_name + "/"):
+        cands.append(base[len(root_name) + 1 :])
+
+    # 4) 去掉前缀后的首个全数字目录（如 0923）
+    more = []
+    for x in list(cands):
+        parts = [p for p in x.split("/") if p]
+        if parts and parts[0].isdigit():
+            more.append("/".join(parts[1:]))
+    cands.extend(more)
+
+    # 去重保持顺序
+    seen = set()
+    uniq = []
+    for c in cands:
+        if c and c not in seen:
+            seen.add(c)
+            uniq.append(c)
+    return uniq
+
+
 def get_access_token(api_key: str, secret_key: str) -> str:
     """获取百度 OCR 的 access_token。"""
     params = {
@@ -125,14 +160,15 @@ def process_items(
         rel = extract_rel_path(str(image_field) if image_field else "")
 
         def _try_paths(root: Path, rel_path: str) -> Optional[Path]:
-            p = root.joinpath(rel_path)
-            if p.exists():
-                return p
-            alt_rel = _tail_after_u_segment(rel_path)
-            if alt_rel:
-                p2 = root.joinpath(alt_rel)
-                if p2.exists():
-                    return p2
+            for cand in _rel_candidates(rel_path, root):
+                p = root.joinpath(cand)
+                if p.exists():
+                    return p
+                alt_rel = _tail_after_u_segment(cand)
+                if alt_rel:
+                    p2 = root.joinpath(alt_rel)
+                    if p2.exists():
+                        return p2
             return None
 
         img_path = _try_paths(image_root, rel)
