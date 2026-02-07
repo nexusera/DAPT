@@ -140,8 +140,7 @@ def call_baidu_ocr(ocr_url: str, token: str, image_path: Path) -> Dict[str, Any]
 
 def process_items(
     items: List[Dict[str, Any]],
-    image_root: Path,
-    extra_root: Optional[Path],
+    roots: List[Path],
     ocr_caller,
     limit: Optional[int],
     offset: int,
@@ -171,9 +170,11 @@ def process_items(
                         return p2
             return None
 
-        img_path = _try_paths(image_root, rel)
-        if img_path is None and extra_root is not None:
-            img_path = _try_paths(extra_root, rel)
+        img_path = None
+        for r in roots:
+            img_path = _try_paths(r, rel)
+            if img_path is not None:
+                break
 
         if img_path is None:
             msg = f"[WARN] 图像不存在，已尝试主/备root及U前缀 idx={idx} rel={rel}"
@@ -207,6 +208,7 @@ def main():
     ap.add_argument("--anno_json", required=True, type=Path, help="标注 JSON 路径")
     ap.add_argument("--image_root", required=True, type=Path, help="图片根目录，如 /data/ocean")
     ap.add_argument("--extra_root", type=Path, default=None, help="可选的第二图片根目录，主目录找不到时回退")
+    ap.add_argument("--extra_root2", type=Path, default=None, help="可选的第三图片根目录，再次回退")
     ap.add_argument("--output", required=True, type=Path, help="输出合并后的 JSON 路径")
     ap.add_argument("--missing_log", type=Path, default=None, help="记录未找到图片的样本 JSON 路径；未指定则使用 output 同目录的 .missing.json")
     ap.add_argument("--api_key", help="百度 OCR API Key（官方 openapi 模式需要）")
@@ -238,10 +240,18 @@ def main():
     if missing_log is None:
         missing_log = args.output.with_suffix(".missing.json")
 
+    # 构建根目录列表，自动附加 ~/data/semi_struct/all_type_pic_oss_csv 若存在
+    roots: List[Path] = [args.image_root]
+    for r in (args.extra_root, args.extra_root2):
+        if r is not None:
+            roots.append(r)
+    home_fallback = Path.home() / "data" / "semi_struct" / "all_type_pic_oss_csv"
+    if home_fallback.exists():
+        roots.append(home_fallback)
+
     process_items(
         items,
-        image_root=args.image_root,
-        extra_root=args.extra_root,
+        roots=roots,
         ocr_caller=ocr_caller,
         limit=limit,
         offset=args.offset,
