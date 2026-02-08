@@ -529,13 +529,12 @@ def main():
     print("Initializing Multi-Task Model...")
     model = RobertaForDaptMTL.from_pretrained("hfl/chinese-roberta-wwm-ext")
     
-    # 词表扩充适配
-    if len(tokenizer) > model.roberta.embeddings.word_embeddings.num_embeddings:
+    # 修改词表大小，以适应扩充了的 tokenizer
+    # 关键修复：确保 embedding 层和 lm_head 的输出层都被扩展
+    if len(tokenizer) > model.config.vocab_size:
+        print(f"Resizing token embeddings from {model.config.vocab_size} to {len(tokenizer)}")
         model.resize_token_embeddings(len(tokenizer))
     
-    # 位置编码扩充 (512 -> 1024 or similar if needed)
-    # 此处省略，如需支持长文本请复用 train_dapt_distributed.py 中的 resize_position_embeddings
-
     # 4. Collator
     collator = MultiTaskCollator(
         tokenizer=tokenizer,
