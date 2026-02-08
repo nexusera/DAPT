@@ -493,19 +493,33 @@ def main():
 
     # 2. 准备 KV-NSP 数据集
     nsp_files = []
-    if os.path.isdir(args.nsp_data_dir):
-        # 简单扫描 json 文件
-        nsp_files = [Path(args.nsp_data_dir) / f for f in os.listdir(args.nsp_data_dir) if f.endswith(".json")]
+    nsp_path_arg = Path(args.nsp_data_dir)
+    
+    if nsp_path_arg.is_dir():
+        print(f"Scanning directory for NSP JSONs: {nsp_path_arg}")
+        nsp_files = [nsp_path_arg / f for f in os.listdir(nsp_path_arg) if f.endswith(".json")]
+    elif nsp_path_arg.is_file():
+        print(f"Using single file for NSP: {nsp_path_arg}")
+        nsp_files = [nsp_path_arg]
+    elif not nsp_path_arg.exists():
+        print(f"Error: NSP path does not exist: {nsp_path_arg}")
+    else:
+        print(f"Error: NSP path is neither file nor dir (special file?): {nsp_path_arg}")
     
     if not nsp_files:
         print(f"No NSP JSON files found in {args.nsp_data_dir}, dummy NSP dataset will be used (empty).")
-        # 创建一个空 KVDataset，避免报错，Collator 会处理空的情况
-        # Hack: KVDataset __init__ raises error if empty. Handle gracefully.
+        # 创建一个空 KVDataset，不再报错
         try:
-            nsp_dataset = KVDataset(nsp_files, tokenizer)
-        except:
-            nsp_dataset = KVDataset([], tokenizer) # dummy
-            nsp_dataset.pairs = [] 
+            nsp_dataset = KVDataset([], tokenizer) 
+        except Exception as e:
+            # Fallback for old code if KVDataset still raises error
+            print(f"Failed to create empty KVDataset: {e}. Using raw object.")
+            class DummyDS:
+                pairs = []
+                value_pool = []
+                negative_prob = 0.5
+                hard_negative_prob = 0.5
+            nsp_dataset = DummyDS()
     else:
         print(f"Loading NSP data from {len(nsp_files)} files...")
         nsp_dataset = KVDataset(nsp_files, tokenizer)

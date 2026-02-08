@@ -57,7 +57,9 @@ class KVDataset(Dataset):
 
         self._load_all_files(data_files)
         if not self.pairs:
-            raise ValueError("未能在数据文件中找到任何键值对，请检查标注或路径是否正确。")
+            print(f"Warning: 未能在数据文件中找到任何键值对 (Data files: {data_files})。数据集将为空。")
+            # 允许空数据集，避免 Dummy 初始化时报错
+            # raise ValueError("未能在数据文件中找到任何键值对，请检查标注或路径是否正确。")
 
     # ------------------------------------------------------------------ #
     # 数据加载与解析
