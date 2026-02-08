@@ -82,56 +82,55 @@ class RobertaModelWithNoise(RobertaModel):
         return_dict: Optional[bool] = None,
         noise_ids: Optional[torch.Tensor] = None,
     ) -> BaseModelOutputWithPoolingAndCrossAttentions:
-        
-        # 确保调用的是 RobertaNoiseEmbeddings.forward
-        return super().forward(
-            input_ids=input_ids,
-            attention_mask=attention_mask,
-            token_type_ids=token_type_ids,
-            position_ids=position_ids,
-            head_mask=head_mask,
-            inputs_embeds=inputs_embeds,
-            encoder_hidden_states=encoder_hidden_states,
-            encoder_attention_mask=encoder_attention_mask,
-            past_key_values=past_key_values,
-            use_cache=use_cache,
-            output_attentions=output_attentions,
-            output_hidden_states=output_hidden_states,
-            return_dict=return_dict,
-        ) 
-        # 注意：这里传递给 super().forward 是没用的，因为 super().forward 会调用 self.embeddings(...)
-        # 但 RobertaModel 的 forward 签名通常不接受额外的 kwargs 传递给 embeddings。
-        # 因此，我们需要 Hack 一下，或者确认 RobertaModel.forward 是否透传 kwargs。
-        # 实际上，transformers 的 RobertaModel.forward 不接收 noise_ids。
-        # 最稳妥的方式是重写 forward，或者在调用 forward 前把 noise_ids 注入到 embeddings 对象的状态中（不推荐）。
-        # 下面是完整重写 forward 的简化版（只处理 embeddings 调用部分）：
-        
-        input_shape = input_ids.size() if input_ids is not None else inputs_embeds.size()[:-1]
+        return_dict = return_dict if return_dict is not None else self.config.use_return_dict
+
+        if input_ids is not None and inputs_embeds is not None:
+            raise ValueError("You cannot specify both input_ids and inputs_embeds at the same time")
+        elif input_ids is not None:
+            input_shape = input_ids.size()
+        elif inputs_embeds is not None:
+            input_shape = inputs_embeds.size()[:-1]
+        else:
+            raise ValueError("You have to specify either input_ids or inputs_embeds")
+
         device = input_ids.device if input_ids is not None else inputs_embeds.device
-        
+        if attention_mask is None:
+            attention_mask = torch.ones(input_shape, device=device)
         if token_type_ids is None:
             token_type_ids = torch.zeros(input_shape, dtype=torch.long, device=device)
+
+        extended_attention_mask = self.get_extended_attention_mask(attention_mask, input_shape, device)
+
+        head_mask = self.get_head_mask(head_mask, self.config.num_hidden_layers)
+        encoder_extended_attention_mask = None
+        if encoder_hidden_states is not None:
+            encoder_extended_attention_mask = self.invert_attention_mask(encoder_attention_mask)
+        past_key_values_length = 0
+        if past_key_values is not None:
+            past_key_values_length = past_key_values[0][0].shape[2]
 
         embedding_output = self.embeddings(
             input_ids=input_ids,
             position_ids=position_ids,
             token_type_ids=token_type_ids,
             inputs_embeds=inputs_embeds,
-            past_key_values_length=0,
-            noise_ids=noise_ids, # 关键点：传入 noise_ids
+            past_key_values_length=past_key_values_length,
+            noise_ids=noise_ids,
         )
 
         encoder_outputs = self.encoder(
             embedding_output,
-            attention_mask=self.get_extended_attention_mask(attention_mask, input_shape, device),
-            head_mask=self.get_head_mask(head_mask, self.config.num_hidden_layers),
+            attention_mask=extended_attention_mask,
+            head_mask=head_mask,
             encoder_hidden_states=encoder_hidden_states,
-            encoder_attention_mask=encoder_attention_mask,
+            encoder_attention_mask=encoder_extended_attention_mask,
+            past_key_values=past_key_values,
+            use_cache=use_cache,
             output_attentions=output_attentions,
             output_hidden_states=output_hidden_states,
             return_dict=return_dict,
         )
-        
+
         sequence_output = encoder_outputs[0]
         pooled_output = self.pooler(sequence_output) if self.pooler is not None else None
 
@@ -141,6 +140,7 @@ class RobertaModelWithNoise(RobertaModel):
         return BaseModelOutputWithPoolingAndCrossAttentions(
             last_hidden_state=sequence_output,
             pooler_output=pooled_output,
+            past_key_values=encoder_outputs.past_key_values,
             hidden_states=encoder_outputs.hidden_states,
             attentions=encoder_outputs.attentions,
             cross_attentions=encoder_outputs.cross_attentions,
@@ -175,6 +175,12 @@ class RobertaForDaptMTL(RobertaPreTrainedModel):
         self.nsp_head.out_proj = torch.nn.Linear(config.hidden_size, 2)
 
         self.init_weights()
+
+    def get_output_embeddings(self):
+        return self.lm_head.decoder
+
+    def set_output_embeddings(self, new_embeddings):
+        self.lm_head.decoder = new_embeddings
 
     def forward(
         self,
@@ -531,26 +537,12 @@ def main():
     
     # 修改词表大小，以适应扩充了的 tokenizer
     # 关键修复：确保 embedding 层和 lm_head 的输出层都被扩展
-    # 显式检查并手动修复 LM Head，以防自动 Resize 失效
+    # 通过在 RobertaForDaptMTL 中实现了 get_output_embeddings/set_output_embeddings，
+    # model.resize_token_embeddings 会自动处理 lm_head 的维度调整。
     if len(tokenizer) > model.config.vocab_size:
         print(f"Resizing token embeddings from {model.config.vocab_size} to {len(tokenizer)}")
         model.resize_token_embeddings(len(tokenizer))
-        
-        # 强制检查 LM Head 维度
-        if model.lm_head.decoder.out_features != len(tokenizer):
-            print(f"Manually resizing LM Head match: {model.lm_head.decoder.out_features} -> {len(tokenizer)}")
-            old_decoder = model.lm_head.decoder
-            new_decoder = torch.nn.Linear(old_decoder.in_features, len(tokenizer), bias=True)
-            
-            # 复制旧权重
-            with torch.no_grad():
-                new_decoder.weight[:old_decoder.out_features, :] = old_decoder.weight
-                new_decoder.bias[:old_decoder.out_features] = old_decoder.bias
-            
-            model.lm_head.decoder = new_decoder
-            # RobertaLMHead 通常共用 decoder.bias 和独立的 bias 变量，需同步
-            model.lm_head.bias = new_decoder.bias
-            model.config.vocab_size = len(tokenizer)
+
 
     # 4. Collator
     collator = MultiTaskCollator(
