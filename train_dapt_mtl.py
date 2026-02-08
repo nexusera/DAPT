@@ -565,6 +565,7 @@ def main():
         fp16=torch.cuda.is_available(),
         ddp_find_unused_parameters=True, # 必须为 True，因为多任务学习中某些 Head 可能在当前 Batch 不参与 Loss 计算
         remove_unused_columns=False, # 必须保留，否则 Collator 返回的自定义列会被过滤
+        save_safetensors=False, # 关键修复：禁用 safetensors，防止自定义模型共享权重导致保存崩溃
         report_to="tensorboard"
     )
 
