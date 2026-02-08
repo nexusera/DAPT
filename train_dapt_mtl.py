@@ -531,10 +531,27 @@ def main():
     
     # 修改词表大小，以适应扩充了的 tokenizer
     # 关键修复：确保 embedding 层和 lm_head 的输出层都被扩展
+    # 显式检查并手动修复 LM Head，以防自动 Resize 失效
     if len(tokenizer) > model.config.vocab_size:
         print(f"Resizing token embeddings from {model.config.vocab_size} to {len(tokenizer)}")
         model.resize_token_embeddings(len(tokenizer))
-    
+        
+        # 强制检查 LM Head 维度
+        if model.lm_head.decoder.out_features != len(tokenizer):
+            print(f"Manually resizing LM Head match: {model.lm_head.decoder.out_features} -> {len(tokenizer)}")
+            old_decoder = model.lm_head.decoder
+            new_decoder = torch.nn.Linear(old_decoder.in_features, len(tokenizer), bias=True)
+            
+            # 复制旧权重
+            with torch.no_grad():
+                new_decoder.weight[:old_decoder.out_features, :] = old_decoder.weight
+                new_decoder.bias[:old_decoder.out_features] = old_decoder.bias
+            
+            model.lm_head.decoder = new_decoder
+            # RobertaLMHead 通常共用 decoder.bias 和独立的 bias 变量，需同步
+            model.lm_head.bias = new_decoder.bias
+            model.config.vocab_size = len(tokenizer)
+
     # 4. Collator
     collator = MultiTaskCollator(
         tokenizer=tokenizer,
