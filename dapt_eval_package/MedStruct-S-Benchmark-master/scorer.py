@@ -10,7 +10,8 @@ from collections import defaultdict
 # Add project root to path
 sys.path.insert(0, os.getcwd())
 
-from core.metrics import (
+# Modified to import from local metrics which handles 4-arg calculate_task1_stats
+from metrics import (
     calculate_task1_stats,
     calculate_task2_stats,
     calculate_task3_stats,
