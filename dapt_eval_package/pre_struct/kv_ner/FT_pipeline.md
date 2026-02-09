@@ -49,10 +49,10 @@ PY
 ```
 cd /data/ocean/DAPT
 python pre_struct/kv_ner/train.py \
-  --model_name_or_path /path/to/dapt_model \
-  --train_file /path/to/train.jsonl \
-  --eval_file /path/to/dev.jsonl \
-  --output_dir runs/dapt_kv_ner_finetuned \
+  --model_name_or_path /data/ocean/DAPT/workspace/output_medical_bert_v2_8gpu_noise_v2/final_model \
+  --train_file biaozhu_with_ocr_noise/train.jsonl \
+  --eval_file biaozhu_with_ocr_noise/dev.jsonl \
+  --output_dir runs/dapt_kv_ner_finetuned_v1 \
   --noise_bins_json /path/to/noise_bins.json \
   --num_train_epochs 3 \
   --per_device_train_batch_size 16 \
