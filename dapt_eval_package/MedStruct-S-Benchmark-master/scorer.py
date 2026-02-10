@@ -217,6 +217,13 @@ def main():
         # 动态稠密化：根据标题加载对应的 Schema 字段
         title = preds[i].get('report_title', "") or gts[i].get('report_title', "通用病历")
         local_schema = keys_dict.get(title, {})
+        
+        # Fallback: 如果按标题找不到 Schema，则使用全量 Keys (flat_keys)
+        # 这对于 keys_v2.json 这种可能按类别而非标题组织的 Schema 很重要
+        if not local_schema and keys_search_set:
+            # logger.debug(f"Title '{title}' not found in schema, using full schema.")
+            local_schema = {k: k for k in keys_search_set}
+
         if isinstance(local_schema, list):
             local_schema = {k: k for k in local_schema}
         
