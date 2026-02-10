@@ -437,6 +437,7 @@ def main():
             ddp_find_unused_parameters=True, 
             dataloader_num_workers=4,
             save_safetensors=False,
+            remove_unused_columns=False, # 关键修复
             report_to="tensorboard",
             run_name=f"dapt_round_{round_idx}_mlm"
         )
@@ -471,6 +472,7 @@ def main():
             ddp_find_unused_parameters=True,
             dataloader_num_workers=4,
             save_safetensors=False,
+            remove_unused_columns=False, # 关键修复
             report_to="tensorboard",
             run_name=f"dapt_round_{round_idx}_nsp"
         )
