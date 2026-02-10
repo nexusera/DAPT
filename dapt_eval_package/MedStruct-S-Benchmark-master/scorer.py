@@ -222,6 +222,7 @@ def main():
         # 这对于 keys_v2.json 这种可能按类别而非标题组织的 Schema 很重要
         if not local_schema and keys_search_set:
             # logger.debug(f"Title '{title}' not found in schema, using full schema.")
+            # keys_search_set is a SET of strings, so we make it a dict to satisfy local_schema.keys()
             local_schema = {k: k for k in keys_search_set}
 
         if isinstance(local_schema, list):
@@ -229,6 +230,8 @@ def main():
         
         # 构建当前标题下的稠密 GT 字典
         # 1. 获取归一化后的 Schema 键集
+        # [DEBUG]
+        # print(f"Title: {title}, Schema Size: {len(local_schema)}")
         schema_keys_norm = set(normalize_key(sk) for sk in local_schema.keys())
         # 2. 将原始归一化后的 GT 对转为字典
         g_dict_norm = dict(g_pairs_norm)
