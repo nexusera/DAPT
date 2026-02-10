@@ -12,6 +12,8 @@ conda activate medical_bert
   - Tokenizer：`/data/ocean/DAPT/my-medical-tokenizer`
   - 噪声分桶：`/data/ocean/DAPT/workspace/noise_bins.json`
 
+多任务模型：/data/ocean/DAPT/workspace/output_medical_mtl_v1/
+
 ## Task1/2：KV-NER（序列标注）
 ### 训练
 - 脚本：`pre_struct/kv_ner/train_with_noise.py`
@@ -107,3 +109,56 @@ python pre_struct/ebqa/predict_ebqa.py \
 - 评测指标：
   - Task1/2：核心计算在 `core/metrics.py`，提供 Strict/Loose；脚本会输出 JSON 与 preds.jsonl。
   - Task3：`predict_ebqa.py` 输出预测；若有 GT 可用 `core/metrics.py` 的 Task3 计算或 `compare_models.py`/`experiments/scorer.py` 汇总。
+
+## 🧪 消融实验方法论 (Ablation Methodology)
+
+当你有一个新的预训练模型（例如 `output_medical_mtl_v1`）并希望进行下游 KV-NER 的全流程测验时，请遵循以下 SOP：
+
+### 1. 配置准备 (Configuration)
+1.  **复制配置文件**：不要直接修改现有配置，建议复制一份 `kv_ner_config.json` 或 `kv_ner_multitask_config.json`。
+2.  **修改关键参数**：
+    *   `model_name_or_path`: 替换为新模型的绝对路径（如 `/data/ocean/DAPT/workspace/output_medical_mtl_v1/`）。
+    *   `output_dir`: 修改为你希望保存微调权重的地方（如 `runs/kv_ner_finetuned_mtl`），避免覆盖其他实验。
+
+### 2. 微调 (Fine-tuning)
+使用新配置运行 `train_with_noise.py`。
+> **注意**：如果新模型使用了不同的 Tokenizer，请确保 `--noise_bins` 如果依赖 Tokenizer 必须重新生成或匹配。如果没变则复用。
+
+### 3. 推理 (Inference)
+使用 `compare_models.py` 进行推理生成预测文件。
+*   你需要指定 `runs/kv_ner_finetuned_mtl/best/` 作为权重的隐含来源（脚本通常会自动加载 config 里的 output_dir 或通过 `--ner_config` 指定）。
+*   但更推荐直接用 `compare_models.py` 显式加载：
+    *   它会读取 config 里的 `output_dir` 找到 `best` 模型进行预测。
+    *   确保 `--output_summary` 指向一个新的结果文件（如 `runs/unified_eval_mtl.json`），这会自动生成 `runs/unified_eval_mtl_preds.jsonl`。
+
+### 4. 评测 (Evaluation)
+使用 `scorer.py` 对生成的 `preds.jsonl` 进行打分。
+*   `--pred_file`: 指向第 3 步生成的 `_preds.jsonl`。
+*   `--gt_file`: 保持不变 (`test_eval.jsonl`)。
+*   `--output_file`: 指定一个新的分数文件（如 `runs/unified_eval_mtl_scores.json`）。
+
+---
+### 实战命令速查 (MTL 实验)
+
+```bash
+# 1. 训练
+python dapt_eval_package/pre_struct/kv_ner/train_with_noise.py \
+  --config dapt_eval_package/pre_struct/kv_ner/kv_ner_multitask_config.json \
+  --noise_bins /data/ocean/DAPT/workspace/noise_bins.json \
+  --pretrained_model /data/ocean/DAPT/workspace/output_medical_mtl_v1/
+
+# 2. 推理 (生成 unified_eval_mtl_preds.jsonl)
+python dapt_eval_package/pre_struct/kv_ner/compare_models.py \
+  --ner_config dapt_eval_package/pre_struct/kv_ner/kv_ner_multitask_config.json \
+  --test_data biaozhu_with_ocr_noise_prepared/test_eval.jsonl \
+  --noise_bins workspace/noise_bins.json \
+  --output_summary runs/unified_eval_mtl.json
+
+# 3. 评测
+PYTHONPATH=/data/ocean/DAPT/dapt_eval_package/MedStruct-S-Benchmark-master:/data/ocean/DAPT/dapt_eval_package:/data/ocean/DAPT:$PYTHONPATH \
+python dapt_eval_package/MedStruct-S-Benchmark-master/scorer.py \
+  --pred_file runs/unified_eval_mtl_preds.jsonl \
+  --gt_file biaozhu_with_ocr_noise_prepared/test_eval.jsonl \
+  --schema_file data/kv_ner_prepared_comparison/keys_v2.json \
+  --output_file runs/unified_eval_mtl_scores.json
+```
