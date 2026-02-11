@@ -42,8 +42,6 @@ DEFAULT_OCR_URL = "https://aip.baidubce.com/rest/2.0/ocr/v1/accurate"
 def load_annotations(path: Path) -> List[Dict[str, Any]]:
     """Load annotations from JSON or JSONL file."""
     with path.open("r", encoding="utf-8") as f:
-        # Check first char to guess format if extension is ambiguous?
-        # But suffix check is safer for now.
         if path.suffix.lower() == '.jsonl':
             return [json.loads(line) for line in f if line.strip()]
         return json.load(f)
@@ -167,10 +165,20 @@ def process_items(
         item = items[idx]
         image_field = item.get("data", {}).get("image")
         
-        # [修改] 如果存在 ocr_raw.source_image，优先使用它
-        # 这对于处理过的中间文件特别重要，因为原始 data 可能被简化了
-        if "ocr_raw" in item and isinstance(item["ocr_raw"], dict) and item["ocr_raw"].get("source_image"):
-            image_field = item["ocr_raw"]["source_image"]
+        # [修改] 查找 source_image 
+        # Case A: 处理过的文件可能把 source_image 放在顶层
+        if not image_field and "source_image" in item:
+             image_field = item["source_image"]
+        
+        # Case B: 也可能放在 ocr_raw 里面
+        if not image_field and "ocr_raw" in item and isinstance(item["ocr_raw"], dict):
+             image_field = item["ocr_raw"].get("source_image")
+
+        # [DEBUG]
+        if not image_field:
+            print(f"[DEBUG] Item {idx} keys: {list(item.keys())}", file=sys.stderr)
+            if "ocr_raw" in item:
+                print(f"[DEBUG] Item {idx} ocr_raw keys: {list(item['ocr_raw'].keys()) if isinstance(item['ocr_raw'], dict) else 'Not Dict'}", file=sys.stderr)
 
         rel = extract_rel_path(str(image_field) if image_field else "")
 
