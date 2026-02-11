@@ -436,7 +436,7 @@ def main():
             fp16=torch.cuda.is_available(),
             # DDP Settings
             ddp_find_unused_parameters=True, 
-            dataloader_num_workers=2, # 降低 Worker 数量，防止 IPC 管道崩溃
+            dataloader_num_workers=0, # 彻底禁用多进程 Loader，解决死锁/IPC崩溃问题
             save_safetensors=False,
             remove_unused_columns=False, 
             report_to="tensorboard",
@@ -471,7 +471,7 @@ def main():
             save_total_limit=1,
             fp16=torch.cuda.is_available(),
             ddp_find_unused_parameters=True,
-            dataloader_num_workers=2, # 同步降低
+            dataloader_num_workers=0, # 同步禁用
             save_safetensors=False,
             remove_unused_columns=False, # 关键修复
             report_to="tensorboard",
