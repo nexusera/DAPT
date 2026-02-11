@@ -178,9 +178,22 @@ class HybridMaskingCollator:
             # 修复核心：transformers 4.x get_special_tokens_mask 不支持 Tensor 输入，必须先转列表
             # labels 是 Tensor [bsz, seq_len] -> 必须转为 list of list
             labels_list = labels.tolist()
-            special_tokens_mask = self.tokenizer.get_special_tokens_mask(labels_list, already_has_special_tokens=True)
+            # 注意：get_special_tokens_mask 可能会返回由 0/1 组成的列表
+            # 我们需要确保其形状与 labels 张量完全一致
+            special_tokens_mask_list = self.tokenizer.get_special_tokens_mask(labels_list, already_has_special_tokens=True)
             
-            probability_matrix.masked_fill_(torch.tensor(special_tokens_mask, dtype=torch.bool), value=0.0)
+            # 安全校验：确保 special_tokens_mask 是 tensor，且与 labels 形状完全匹配
+            # 部分 tokenizer 对于 batched input 返回 list[list[int]]，部分可能扁平化，需显式转换
+            special_tokens_mask = torch.tensor(special_tokens_mask_list, dtype=torch.bool, device=labels.device)
+            
+            # 如果 tokenizer 返回的是扁平列表 (某些版本行为)，需要 reshape
+            if special_tokens_mask.dim() == 1 and special_tokens_mask.numel() == labels.numel():
+                special_tokens_mask = special_tokens_mask.view(labels.shape)
+            elif special_tokens_mask.shape != labels.shape:
+                # 极端兜底：如果维度不匹配 (例如 tokenizer 自动 pad 了)，裁剪到 labels 尺寸
+                 special_tokens_mask = special_tokens_mask[:labels.shape[0], :labels.shape[1]]
+                 
+            probability_matrix.masked_fill_(special_tokens_mask, value=0.0)
             if self.tokenizer.pad_token_id is not None:
                 probability_matrix.masked_fill_(input_ids == self.tokenizer.pad_token_id, value=0.0)
             
