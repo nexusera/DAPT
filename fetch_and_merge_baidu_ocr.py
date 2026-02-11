@@ -164,6 +164,15 @@ def process_items(
     for idx in range(start, end):
         item = items[idx]
         image_field = item.get("data", {}).get("image")
+        
+        # Fallback 1: Try checking "source_image" inside "ocr_raw" (common in processed files)
+        if not image_field and "ocr_raw" in item:
+            image_field = item["ocr_raw"].get("source_image")
+            
+        # Fallback 2: Try checking direct "image" field (if flattened)
+        if not image_field:
+            image_field = item.get("image")
+
         rel = extract_rel_path(str(image_field) if image_field else "")
 
         def _try_paths(root: Path, rel_path: str) -> Optional[Path]:
