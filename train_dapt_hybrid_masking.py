@@ -184,14 +184,19 @@ class HybridMaskingCollator:
             
             # 安全校验：确保 special_tokens_mask 是 tensor，且与 labels 形状完全匹配
             # 部分 tokenizer 对于 batched input 返回 list[list[int]]，部分可能扁平化，需显式转换
-            special_tokens_mask = torch.tensor(special_tokens_mask_list, dtype=torch.bool, device=labels.device)
             
-            # 如果 tokenizer 返回的是扁平列表 (某些版本行为)，需要 reshape
-            if special_tokens_mask.dim() == 1 and special_tokens_mask.numel() == labels.numel():
-                special_tokens_mask = special_tokens_mask.view(labels.shape)
-            elif special_tokens_mask.shape != labels.shape:
-                # 极端兜底：如果维度不匹配 (例如 tokenizer 自动 pad 了)，裁剪到 labels 尺寸
-                 special_tokens_mask = special_tokens_mask[:labels.shape[0], :labels.shape[1]]
+            # [Fix]: 先不要通过 tensor 构造函数一次性转，因为 list[list] 长度不一致时会报错或被视为 list
+            # 最稳妥的方式是把 list[list] 展平后转 tensor 再 reshape，或者利用 pad_sequence (如果能保证内部对齐)
+            # 但这里最简单的是直接利用 tokenizer.pad 已经做好的对齐结构，重新生成一份 mask
+            
+            # 方案 B: 利用 input_ids 直接计算 (更稳健)
+            # 我们只需要知道哪些 ID 是 special tokens
+            special_ids_set = set(self.tokenizer.all_special_ids)
+            # 使用 apply 或者 map 可能会慢，利用 tensor 操作
+            # 创建一个全 False 的 mask
+            special_tokens_mask = torch.zeros_like(labels, dtype=torch.bool)
+            for sp_id in special_ids_set:
+                special_tokens_mask |= (labels == sp_id)
                  
             probability_matrix.masked_fill_(special_tokens_mask, value=0.0)
             if self.tokenizer.pad_token_id is not None:
