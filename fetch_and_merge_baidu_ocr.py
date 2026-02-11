@@ -40,14 +40,22 @@ DEFAULT_OCR_URL = "https://aip.baidubce.com/rest/2.0/ocr/v1/accurate"
 
 
 def load_annotations(path: Path) -> List[Dict[str, Any]]:
+    """Load annotations from JSON or JSONL file."""
     with path.open("r", encoding="utf-8") as f:
+        if path.suffix.lower() == '.jsonl':
+            return [json.loads(line) for line in f if line.strip()]
         return json.load(f)
 
 
 def save_annotations(path: Path, items: List[Dict[str, Any]]):
+    """Save items to JSON or JSONL based on extension."""
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("w", encoding="utf-8") as f:
-        json.dump(items, f, ensure_ascii=False)
+        if path.suffix.lower() == '.jsonl':
+            for item in items:
+                f.write(json.dumps(item, ensure_ascii=False) + '\n')
+        else:
+            json.dump(items, f, ensure_ascii=False, indent=2)
 
 
 def extract_rel_path(image_field: str) -> str:
