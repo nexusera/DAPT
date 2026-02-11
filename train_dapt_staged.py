@@ -342,7 +342,10 @@ class NSPStageCollator:
              # 如果 processor 存在，映射一次 Perfect Values 确保 ID 正确
              perfect_ids_row = self.noise_processor.map_batch([PERFECT_VALUES])[0]
              
-        noise_ids = torch.tensor([perfect_ids_row] * seq_len, dtype=torch.long).unsqueeze(0).expand(bsz, -1, -1)
+        # 修复：pin_memory 报错 "more than one element... refers to a single memory location"
+        # .expand() 创建的是共享内存的视图，这在 PyTorch pin_memory 中是不允许的。
+        # 必须使用 .repeat() 来物理复制数据，或者确保每个样本都有独立的内存空间。
+        noise_ids = torch.tensor([perfect_ids_row], dtype=torch.long).repeat(bsz, seq_len, 1)
 
         return {
             "input_ids": enc["input_ids"],
