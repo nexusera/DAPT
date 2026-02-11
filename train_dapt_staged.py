@@ -15,6 +15,7 @@ from torch.utils.data import Dataset
 # ===========================
 os.environ["HF_ENDPOINT"] = "https://hf-mirror.com"
 os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
+os.environ["TOKENIZERS_PARALLELISM"] = "false" # 关键修复：防止 DataLoader 死锁
 os.environ.setdefault("TORCHINDUCTOR_BENCHMARK_KERNEL", "0")
 
 from datasets import load_from_disk
@@ -435,9 +436,9 @@ def main():
             fp16=torch.cuda.is_available(),
             # DDP Settings
             ddp_find_unused_parameters=True, 
-            dataloader_num_workers=4,
+            dataloader_num_workers=2, # 降低 Worker 数量，防止 IPC 管道崩溃
             save_safetensors=False,
-            remove_unused_columns=False, # 关键修复
+            remove_unused_columns=False, 
             report_to="tensorboard",
             run_name=f"dapt_round_{round_idx}_mlm"
         )
@@ -470,7 +471,7 @@ def main():
             save_total_limit=1,
             fp16=torch.cuda.is_available(),
             ddp_find_unused_parameters=True,
-            dataloader_num_workers=4,
+            dataloader_num_workers=2, # 同步降低
             save_safetensors=False,
             remove_unused_columns=False, # 关键修复
             report_to="tensorboard",
