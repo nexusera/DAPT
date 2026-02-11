@@ -164,8 +164,12 @@ def process_items(
     for idx in range(start, end):
         item = items[idx]
         image_field = item.get("data", {}).get("image")
-        if not image_field and "ocr_raw" in item:
-            image_field = item["ocr_raw"].get("source_image")
+        
+        # [修改] 如果存在 ocr_raw.source_image，优先使用它
+        # 这对于处理过的中间文件特别重要，因为原始 data 可能被简化了
+        if "ocr_raw" in item and isinstance(item["ocr_raw"], dict) and item["ocr_raw"].get("source_image"):
+            image_field = item["ocr_raw"]["source_image"]
+
         rel = extract_rel_path(str(image_field) if image_field else "")
 
         def _try_paths(root: Path, rel_path: str) -> Optional[Path]:
