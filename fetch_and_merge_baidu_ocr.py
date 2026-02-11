@@ -42,6 +42,8 @@ DEFAULT_OCR_URL = "https://aip.baidubce.com/rest/2.0/ocr/v1/accurate"
 def load_annotations(path: Path) -> List[Dict[str, Any]]:
     """Load annotations from JSON or JSONL file."""
     with path.open("r", encoding="utf-8") as f:
+        # Check first char to guess format if extension is ambiguous?
+        # But suffix check is safer for now.
         if path.suffix.lower() == '.jsonl':
             return [json.loads(line) for line in f if line.strip()]
         return json.load(f)
