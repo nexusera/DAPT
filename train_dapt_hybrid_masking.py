@@ -172,10 +172,14 @@ class HybridMaskingCollator:
             input_ids = padded["input_ids"]
             labels = input_ids.clone()
             
-            # 随机 Mask 逻辑 (WWMM - Whole Word Masking 这里简化为随机Token以节省篇幅，核心是混合)
-            # 生产环境建议带上 Word Masking 逻辑
+            # 随机 Mask 逻辑
             probability_matrix = torch.full(labels.shape, self.mlm_probability)
-            special_tokens_mask = self.tokenizer.get_special_tokens_mask(labels, already_has_special_tokens=True)
+            
+            # 修复核心：transformers 4.x get_special_tokens_mask 不支持 Tensor 输入，必须先转列表
+            # labels 是 Tensor [bsz, seq_len] -> 必须转为 list of list
+            labels_list = labels.tolist()
+            special_tokens_mask = self.tokenizer.get_special_tokens_mask(labels_list, already_has_special_tokens=True)
+            
             probability_matrix.masked_fill_(torch.tensor(special_tokens_mask, dtype=torch.bool), value=0.0)
             if self.tokenizer.pad_token_id is not None:
                 probability_matrix.masked_fill_(input_ids == self.tokenizer.pad_token_id, value=0.0)
@@ -395,9 +399,9 @@ def main():
     print("Starting Hybrid Training...")
     trainer.train()
     
-    print(f"Saving model to {args.output_dir}/final_hybrid_model")
-    trainer.save_model(os.path.join(args.output_dir, "final_hybrid_model"))
-    tokenizer.save_pretrained(os.path.join(args.output_dir, "final_hybrid_model"))
+    print(f"Saving model to {args.output_dir}/final_hybrid_span_model")
+    trainer.save_model(os.path.join(args.output_dir, "final_hybrid_span_model"))
+    tokenizer.save_pretrained(os.path.join(args.output_dir, "final_hybrid_span_model"))
 
 if __name__ == "__main__":
     main()
