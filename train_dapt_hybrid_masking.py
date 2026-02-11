@@ -357,17 +357,25 @@ def main():
     # 4. 初始化模型
     model = RobertaForMaskedLMWithNoise.from_pretrained(args.model_name_or_path or args.tokenizer_path)
 
-    # 5. Trainer 配置
+    # 5. Trainer 配置 (对齐 train_dapt_distributed.py 的训练参数以进行消融实验)
     training_args = TrainingArguments(
         output_dir=args.output_dir,
         num_train_epochs=args.num_epochs,
-        per_device_train_batch_size=32, # 建议根据显存调整
-        learning_rate=5e-5,
-        save_steps=1000,
-        logging_steps=100,
-        remove_unused_columns=False, # 必须为 False，否则 'noise_ids' 等自定义字段会被 Trainer 删除
-        dataloader_num_workers=0,    # 保持 0 以避免死锁
-        fp16=True,                   # H200 当然要开 fp16 或 bf16
+        per_device_train_batch_size=16,          # Aligned: 16
+        gradient_accumulation_steps=4,           # Aligned: 4
+        learning_rate=8e-5,                      # Aligned: 8e-5
+        weight_decay=0.01,                       # Aligned: 0.01
+        warmup_ratio=0.05,                       # Aligned: 0.05
+        bf16=True,                               # Aligned: 使用 bf16 (H200)
+        tf32=True,                               # Aligned
+        gradient_checkpointing=True,             # Aligned
+        save_strategy="steps",
+        save_steps=100,                          # Aligned: 100
+        save_total_limit=3,                      # Aligned
+        logging_steps=10,                        # Aligned: 10
+        remove_unused_columns=False,             # 必须为 False
+        dataloader_num_workers=4,                # 适当开启多进程加速数据处理，如遇死锁请改回0
+        ddp_find_unused_parameters=False,        # Aligned
         report_to="none"
     )
 
