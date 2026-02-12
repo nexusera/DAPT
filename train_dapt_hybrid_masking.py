@@ -34,12 +34,174 @@ sys.path.append(current_dir)
 from noise_embeddings import RobertaNoiseEmbeddings
 from noise_feature_processor import NoiseFeatureProcessor, FEATURES
 
-# 复用我们自定义的带噪声嵌入的模型类
+from transformers.models.roberta.modeling_roberta import (
+    RobertaLMHead,
+    BaseModelOutputWithPoolingAndCrossAttentions,
+    MaskedLMOutput,
+)
+
+# ===========================
+# 1. 模型定义（支持 Noise Embedding）
+# ===========================
+
+class RobertaModelWithNoise(RobertaModel):
+    """
+    轻量包装：用 RobertaNoiseEmbeddings，并将 noise_ids 传入 embeddings。
+    必须重写 forward，因为原版 forward 不接受 noise_ids 参数。
+    """
+
+    def __init__(self, config, add_pooling_layer: bool = True):
+        super().__init__(config, add_pooling_layer=add_pooling_layer)
+        self.embeddings = RobertaNoiseEmbeddings(config)
+
+    def forward(
+        self,
+        input_ids: Optional[torch.Tensor] = None,
+        attention_mask: Optional[torch.Tensor] = None,
+        token_type_ids: Optional[torch.Tensor] = None,
+        position_ids: Optional[torch.Tensor] = None,
+        head_mask: Optional[torch.Tensor] = None,
+        inputs_embeds: Optional[torch.Tensor] = None,
+        encoder_hidden_states: Optional[torch.Tensor] = None,
+        encoder_attention_mask: Optional[torch.Tensor] = None,
+        past_key_values: Optional[Tuple[Tuple[torch.Tensor]]] = None,
+        use_cache: Optional[bool] = None,
+        output_attentions: Optional[bool] = None,
+        output_hidden_states: Optional[bool] = None,
+        return_dict: Optional[bool] = None,
+        noise_ids: Optional[torch.Tensor] = None,
+    ) -> BaseModelOutputWithPoolingAndCrossAttentions:
+        return_dict = return_dict if return_dict is not None else self.config.use_return_dict
+
+        if input_ids is not None and inputs_embeds is not None:
+            raise ValueError("You cannot specify both input_ids and inputs_embeds at the same time")
+        elif input_ids is not None:
+            input_shape = input_ids.size()
+        elif inputs_embeds is not None:
+            input_shape = inputs_embeds.size()[:-1]
+        else:
+            raise ValueError("You have to specify either input_ids or inputs_embeds")
+
+        device = input_ids.device if input_ids is not None else inputs_embeds.device
+        if attention_mask is None:
+            attention_mask = torch.ones(input_shape, device=device)
+        if token_type_ids is None:
+            token_type_ids = torch.zeros(input_shape, dtype=torch.long, device=device)
+
+        extended_attention_mask = self.get_extended_attention_mask(attention_mask, input_shape, device)
+
+        head_mask = self.get_head_mask(head_mask, self.config.num_hidden_layers)
+        encoder_extended_attention_mask = None
+        if encoder_hidden_states is not None:
+            encoder_extended_attention_mask = self.invert_attention_mask(encoder_attention_mask)
+        past_key_values_length = 0
+        if past_key_values is not None:
+            past_key_values_length = past_key_values[0][0].shape[2]
+
+        # 核心修改：传递 noise_ids
+        embedding_output = self.embeddings(
+            input_ids=input_ids,
+            position_ids=position_ids,
+            token_type_ids=token_type_ids,
+            inputs_embeds=inputs_embeds,
+            past_key_values_length=past_key_values_length,
+            noise_ids=noise_ids,
+        )
+
+        encoder_outputs = self.encoder(
+            embedding_output,
+            attention_mask=extended_attention_mask,
+            head_mask=head_mask,
+            encoder_hidden_states=encoder_hidden_states,
+            encoder_attention_mask=encoder_extended_attention_mask,
+            past_key_values=past_key_values,
+            use_cache=use_cache,
+            output_attentions=output_attentions,
+            output_hidden_states=output_hidden_states,
+            return_dict=return_dict,
+        )
+
+        sequence_output = encoder_outputs[0]
+        pooled_output = self.pooler(sequence_output) if self.pooler is not None else None
+
+        if not return_dict:
+            return (sequence_output, pooled_output) + encoder_outputs[1:]
+
+        return BaseModelOutputWithPoolingAndCrossAttentions(
+            last_hidden_state=sequence_output,
+            pooler_output=pooled_output,
+            past_key_values=encoder_outputs.past_key_values,
+            hidden_states=encoder_outputs.hidden_states,
+            attentions=encoder_outputs.attentions,
+            cross_attentions=encoder_outputs.cross_attentions,
+        )
+
 class RobertaForMaskedLMWithNoise(RobertaForMaskedLM):
+    """
+    覆盖 RobertaForMaskedLM 以支持 noise_features/noise_masks。
+    必须重写 forward 接收 noise_ids 并传给 self.roberta
+    """
+
     def __init__(self, config):
         super().__init__(config)
-        # 替换 embeddings 层为支持噪声输入的版本
-        self.roberta.embeddings = RobertaNoiseEmbeddings(config)
+        self.roberta = RobertaModelWithNoise(config, add_pooling_layer=False)
+        # 确保 head 权重正确绑定
+        self.init_weights()
+
+    def forward(
+        self,
+        input_ids: Optional[torch.Tensor] = None,
+        attention_mask: Optional[torch.Tensor] = None,
+        token_type_ids: Optional[torch.Tensor] = None,
+        position_ids: Optional[torch.Tensor] = None,
+        head_mask: Optional[torch.Tensor] = None,
+        inputs_embeds: Optional[torch.Tensor] = None,
+        encoder_hidden_states: Optional[torch.Tensor] = None,
+        encoder_attention_mask: Optional[torch.Tensor] = None,
+        labels: Optional[torch.Tensor] = None,
+        output_attentions: Optional[bool] = None,
+        output_hidden_states: Optional[bool] = None,
+        return_dict: Optional[bool] = None,
+        noise_ids: Optional[torch.Tensor] = None,
+    ) -> MaskedLMOutput:
+        return_dict = return_dict if return_dict is not None else self.config.use_return_dict
+
+        # 核心修改：传递 noise_ids 给 self.roberta
+        outputs = self.roberta(
+            input_ids,
+            attention_mask=attention_mask,
+            token_type_ids=token_type_ids,
+            position_ids=position_ids,
+            head_mask=head_mask,
+            inputs_embeds=inputs_embeds,
+            encoder_hidden_states=encoder_hidden_states,
+            encoder_attention_mask=encoder_attention_mask,
+            output_attentions=output_attentions,
+            output_hidden_states=output_hidden_states,
+            return_dict=return_dict,
+            noise_ids=noise_ids,
+        )
+
+        sequence_output = outputs[0]
+        prediction_scores = self.lm_head(sequence_output)
+
+        masked_lm_loss = None
+        if labels is not None:
+            loss_fct = torch.nn.CrossEntropyLoss()
+            masked_lm_loss = loss_fct(
+                prediction_scores.view(-1, self.config.vocab_size), labels.view(-1)
+            )
+
+        if not return_dict:
+            output = (prediction_scores,) + outputs[2:]
+            return ((masked_lm_loss,) + output) if masked_lm_loss is not None else output
+
+        return MaskedLMOutput(
+            loss=masked_lm_loss,
+            logits=prediction_scores,
+            hidden_states=outputs.hidden_states,
+            attentions=outputs.attentions,
+        )
 
 PERFECT_VALUES = [1.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0]
 
