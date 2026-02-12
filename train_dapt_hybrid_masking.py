@@ -75,25 +75,34 @@ class RobertaModelWithNoise(RobertaModel):
 
         if input_ids is not None and inputs_embeds is not None:
             raise ValueError("You cannot specify both input_ids and inputs_embeds at the same time")
-        elif input_ids is not None:
-            input_shape = input_ids.size()
+        
+        # 修复：计算 input_shape 和 device 的逻辑
+        if input_ids is not None:
+             input_shape = input_ids.size()
+             device = input_ids.device
         elif inputs_embeds is not None:
-            input_shape = inputs_embeds.size()[:-1]
+             input_shape = inputs_embeds.size()[:-1]
+             device = inputs_embeds.device
         else:
             raise ValueError("You have to specify either input_ids or inputs_embeds")
 
-        device = input_ids.device if input_ids is not None else inputs_embeds.device
         if attention_mask is None:
             attention_mask = torch.ones(input_shape, device=device)
         if token_type_ids is None:
             token_type_ids = torch.zeros(input_shape, dtype=torch.long, device=device)
 
+        # 核心修复点：扩展 Attention Mask
+        # RobertaModel.forward 内部调用 get_extended_attention_mask 时，需要处理 4D mask 兼容性
+        # 在 DDP 环境下，如果这里不正确处理，会导致 vectorized_gather_kernel 越界
         extended_attention_mask = self.get_extended_attention_mask(attention_mask, input_shape, device)
 
         head_mask = self.get_head_mask(head_mask, self.config.num_hidden_layers)
+        
+        # 处理 encoder_hidden_states (用于 cross-attention，这里通常为 None)
         encoder_extended_attention_mask = None
         if encoder_hidden_states is not None:
             encoder_extended_attention_mask = self.invert_attention_mask(encoder_attention_mask)
+        
         past_key_values_length = 0
         if past_key_values is not None:
             past_key_values_length = past_key_values[0][0].shape[2]
