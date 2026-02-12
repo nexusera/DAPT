@@ -76,6 +76,16 @@ class RobertaModelWithNoise(RobertaModel):
         if input_ids is not None and inputs_embeds is not None:
             raise ValueError("You cannot specify both input_ids and inputs_embeds at the same time")
         
+        # 调试防御：在 CUDA 崩溃前检查词表越界
+        if input_ids is not None:
+             max_id = input_ids.max().item()
+             if max_id >= self.config.vocab_size:
+                 raise ValueError(
+                     f"Fatal Error: Input contains Token ID {max_id}, but model vocabulary size is {self.config.vocab_size}. "
+                     "This causes CUDA Device-side Assert in Embedding lookup. "
+                     "Please ensure `model.resize_token_embeddings(len(tokenizer))` is called."
+                 )
+        
         # 修复：计算 input_shape 和 device 的逻辑
         if input_ids is not None:
              input_shape = input_ids.size()
@@ -549,6 +559,11 @@ def main():
     
     # 4. 初始化模型
     model = RobertaForMaskedLMWithNoise.from_pretrained(args.model_name_or_path or args.tokenizer_path)
+
+    # 关键修复：确保模型 Embedding 足够大，防止 Tokenizer 新增词汇导致 CUDA Assert
+    if len(tokenizer) > model.config.vocab_size:
+        print(f"Warning: Tokenizer vocab size ({len(tokenizer)}) > Model vocab size ({model.config.vocab_size}). Resizing model embeddings...")
+        model.resize_token_embeddings(len(tokenizer))
 
     # 5. Trainer 配置 (对齐 train_dapt_distributed.py 的训练参数以进行消融实验)
     training_args = TrainingArguments(
