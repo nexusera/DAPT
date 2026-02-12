@@ -323,46 +323,14 @@ class NSPStageCollator:
         labels = [x["label"] for x in batch_items]
 
         # Tokenize pair
-        # 核心修改：利用 Tokenizer 自动生成 token_type_ids (000...111...)
-        # BERT 类 Tokenizer 这里会自动处理：
-        # [CLS] A [SEP] B [SEP]
-        #  0    0   0   1   1
         enc = self.tokenizer(
             text_a_list,
             text_b_list,
             max_length=self.max_length,
-            truncation=True, # 默认只截断第二个序列，或按 max_length 截断
-            padding="longest", # 显式指定 padding 策略，避免模糊
+            truncation=True,
+            padding=True,
             return_tensors="pt"
         )
-        
-        # 强制检查：如果 Tokenizer 是 RoBERTa 类型，它可能默认不返回 token_type_ids 或全返回 0
-        # 我们需要手动修正 token_type_ids 以提供结构信息
-        input_ids = enc["input_ids"]
-        token_type_ids = enc.get("token_type_ids")
-
-        if token_type_ids is None or token_type_ids.sum() == 0:
-            # 手动构造 Segment Embeddings
-            # RoBERTa 的 sep_token_id 通常是 2
-            sep_id = self.tokenizer.sep_token_id
-            token_type_ids = torch.zeros_like(input_ids)
-            
-            for i in range(input_ids.shape[0]):
-                # 找到第一个 [SEP] 的位置
-                sep_indices = (input_ids[i] == sep_id).nonzero(as_tuple=True)[0]
-                if len(sep_indices) >= 2:
-                    # 第一个 SEP 之后的内容全部设为 1
-                    first_sep_idx = sep_indices[0]
-                    # 从 first_sep_idx + 1 开始到结尾（或即使是 padding 其实也不影响，Attention mask 会屏蔽）
-                    # 但严谨起见，我们只把第二个分段设为 1
-                    token_type_ids[i, first_sep_idx + 1 :] = 1
-                    
-                    # 将 padding 部分还原为 0 (可选，Standard BERT 里 Padding 的 type id 通常也是 0)
-                    if self.tokenizer.pad_token_id is not None:
-                         token_type_ids[i, input_ids[i] == self.tokenizer.pad_token_id] = 0
-            
-            # 将手动构造的 type ids 塞回
-            enc["token_type_ids"] = token_type_ids
         
         # Prepare Inputs
         bsz, seq_len = enc["input_ids"].shape
