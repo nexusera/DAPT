@@ -2,6 +2,7 @@ import torch
 from torch import nn
 from typing import Optional
 from transformers.models.roberta.modeling_roberta import RobertaEmbeddings
+from transformers.models.bert.modeling_bert import BertEmbeddings
 
 # 7 维特征（与 processor 对齐）
 FEATURES = [
