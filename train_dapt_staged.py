@@ -286,6 +286,8 @@ class DynamicNSPDataset(Dataset):
     """
     def __init__(self, raw_kv_dataset: KVDataset):
         self.ds = raw_kv_dataset
+        # Optimize: 预先构建 ground truth lookup set，防止 False Negative
+        self.valid_pairs_set = set(self.ds.pairs)
     
     def __len__(self):
         return len(self.ds.pairs)
@@ -302,7 +304,16 @@ class DynamicNSPDataset(Dataset):
                 key_text, value_text = value_text, key_text
             else:
                 # Easy negative: random value
-                value_text = random.choice(self.ds.value_pool)
+                # Fix: Rejection Sampling to avoid False Negatives
+                max_retries = 10
+                for _ in range(max_retries):
+                    candidate_value = random.choice(self.ds.value_pool)
+                    # 检查是否撞到了真实存在的正样本
+                    if (key_text, candidate_value) not in self.valid_pairs_set:
+                        value_text = candidate_value
+                        break
+                else:
+                    value_text = candidate_value
         
         return {
             "text_a": key_text,
