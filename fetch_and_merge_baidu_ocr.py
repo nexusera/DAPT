@@ -163,16 +163,27 @@ def process_items(
 
     for idx in range(start, end):
         item = items[idx]
-        image_field = item.get("data", {}).get("image")
+        # [修改] 查找 image_field
+        # 1. 优先尝试从 record_id 获取 (最可靠)
+        #    Pattern: {record_id}.jpg 
+        if "record_id" in item:
+             image_field = f"{item['record_id']}.jpg"
         
-        # [修改] 查找 source_image 
-        # Case A: 处理过的文件可能把 source_image 放在顶层
+        # 2. 尝试从 relative_image_path 获取
+        if not image_field and "relative_image_path" in item:
+             image_field = item["relative_image_path"]
+
+        # 3. 尝试从 source_image 获取 (顶层)
         if not image_field and "source_image" in item:
              image_field = item["source_image"]
         
-        # Case B: 也可能放在 ocr_raw 里面
+        # 4. 尝试从 ocr_raw 获取
         if not image_field and "ocr_raw" in item and isinstance(item["ocr_raw"], dict):
              image_field = item["ocr_raw"].get("source_image")
+
+        # 5. 尝试从 data.image 获取 (旧格式)
+        if not image_field:
+             image_field = item.get("data", {}).get("image")
 
         # [DEBUG]
         if not image_field:

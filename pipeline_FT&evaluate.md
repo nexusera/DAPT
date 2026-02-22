@@ -2,6 +2,13 @@
 
 本文件汇总当前使用的两套下游微调与评测流程（基于 DAPT 噪声模型），包含训练脚本、数据准备、评测脚本与示例命令，来自近期对话确认的实际路径与配置。
 
+kv-masking方法得到的预训练模型：/data/ocean/DAPT/hybrid_dapt_output/final_hybrid_span_model
+强行让robaerta塞入segment embedding，进行分阶段训练的模型：./staged_dapt_output_fixed_v2/final_staged_model
+macbert:./macbert_staged_output/final_staged_model
+多任务模型：/data/ocean/DAPT/workspace/output_medical_mtl_v1/
+
+训练集：/data/ocean/DAPT/biaozhu_with_ocr/merged_train_with_ocr.json
+测试集：/data/ocean/DAPT/biaozhu_with_ocr/merged_eval_with_ocr.json 
 ## 前置条件
 - 进入工程根目录：`cd /data/ocean/DAPT`
 cd /data/ocean/DAPT
@@ -12,7 +19,7 @@ conda activate medical_bert
   - Tokenizer：`/data/ocean/DAPT/my-medical-tokenizer`
   - 噪声分桶：`/data/ocean/DAPT/workspace/noise_bins.json`
 
-多任务模型：/data/ocean/DAPT/workspace/output_medical_mtl_v1/
+
 
 ## Task1/2：KV-NER（序列标注）
 ### 训练
