@@ -164,15 +164,15 @@ def process_items(
     for idx in range(start, end):
         item = items[idx]
         # [修改] 查找 image_field
-        # 1. 优先尝试从 record_id 获取 (最可靠)
-        #    Pattern: {record_id}.jpg 
-        if "record_id" in item:
-             image_field = f"{item['record_id']}.jpg"
-        
-        # 2. 尝试从 relative_image_path 获取
-        if not image_field and "relative_image_path" in item:
+        # 1. 尝试从 relative_image_path 获取
+        if "relative_image_path" in item and item["relative_image_path"]:
              image_field = item["relative_image_path"]
 
+        # 2. 优先尝试从 record_id 获取 (作为最后的 fallback)
+        #    Pattern: {record_id}.jpg 
+        if not image_field and "record_id" in item:
+             image_field = f"{item['record_id']}.jpg"
+        
         # 3. 尝试从 source_image 获取 (顶层)
         if not image_field and "source_image" in item:
              image_field = item["source_image"]
