@@ -227,7 +227,10 @@ def load_jsonl_with_noise(path: str | Path, label_map: Dict[str, str], include_u
     
     with p.open("r", encoding="utf-8") as f:
         # Check if the file starts with '[' (array) or '{' (object)
+        # Skip potential whitespace
         first_char = f.read(1)
+        while first_char and first_char.isspace():
+            first_char = f.read(1)
         f.seek(0)
         
         objects = []
@@ -303,8 +306,8 @@ def load_jsonl_with_noise(path: str | Path, label_map: Dict[str, str], include_u
                      # 兼容两种 offset 写法，并处理可能的空值
                      s = ann.get("start")
                      e = ann.get("end")
-                     if s is None: s = ann.get("start_offset", -1)
-                     if e is None: e = ann.get("end_offset", -1)
+                     if s is None: s = ann.get("start_offset")
+                     if e is None: e = ann.get("end_offset")
                      
                      start = int(s) if s is not None else -1
                      end = int(e) if e is not None else -1
@@ -321,6 +324,10 @@ def load_jsonl_with_noise(path: str | Path, label_map: Dict[str, str], include_u
                                  label=normalized, 
                                  text=ann.get("text")
                              ))
+                         else:
+                             # 尝试自动修复 out-of-bounds? 暂时仅 log
+                             # logger.warning(f"Entity out of bounds: {label} [{start}:{end}] vs len {len(text)}")
+                             pass
 
             # Case 3: relations
             relations: List[Relation] = []
@@ -344,6 +351,10 @@ def load_jsonl_with_noise(path: str | Path, label_map: Dict[str, str], include_u
                 relations=relations,
                 noise_values=noise_values,
             )
+            # Debug filtering
+            # if not entities:
+            #     logger.debug(f"Sample {task_id} has no valid entities, skipping.")
+            # else:
             samples.append(sample)
     
     logger.info(f"Loaded {len(samples)} samples from {p}")
