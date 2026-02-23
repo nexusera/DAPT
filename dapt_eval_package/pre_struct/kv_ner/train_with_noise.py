@@ -199,16 +199,32 @@ def load_jsonl_with_noise(path: str | Path, label_map: Dict[str, str], include_u
         )
     
     with p.open("r", encoding="utf-8") as f:
-        for line_no, line in enumerate(f, 1):
-            line = line.strip()
-            if not line:
-                continue
+        # Check if the file starts with '[' (array) or '{' (object)
+        first_char = f.read(1)
+        f.seek(0)
+        
+        objects = []
+        if first_char == "[":
             try:
-                obj = json.loads(line)
+                objects = json.load(f)
             except json.JSONDecodeError as e:
-                logger.warning(f"Line {line_no}: JSON parse error - {e}")
-                continue
+                logger.error(f"Failed to parse JSON array from {p}: {e}")
+                raise
+        else:
+             # Regular JSONL or Single Object
+             for line_no, line in enumerate(f, 1):
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    obj = json.loads(line)
+                    objects.append(obj)
+                except json.JSONDecodeError as e:
+                    logger.warning(f"Line {line_no}: JSON parse error - {e}")
+                    continue
 
+        for obj in objects:
+            # Common handling for both formats
             # Label Studio JSONL（单行一个任务）
             if isinstance(obj, dict) and "annotations" in obj and "data" in obj:
                 sample = _parse_labelstudio_task(obj)
@@ -216,9 +232,9 @@ def load_jsonl_with_noise(path: str | Path, label_map: Dict[str, str], include_u
                     samples.append(sample)
                 continue
             
-            task_id = str(obj.get("id", line_no))
-            text = str(obj.get("text", "")).strip()
-            title = str(obj.get("title", ""))
+            task_id = str(obj.get("id", obj.get("record_id", "unknown")))
+            text = str(obj.get("ocr_text") or obj.get("text", "")).strip()
+            title = str(obj.get("category") or obj.get("title", ""))
 
             # 普通 JSONL 行：同样优先处理 per-word 噪声，回退到 noise_values
             ocr_raw = obj.get("ocr_raw") or obj.get("data", {}).get("ocr_raw")
@@ -231,36 +247,57 @@ def load_jsonl_with_noise(path: str | Path, label_map: Dict[str, str], include_u
             noise_values = expanded_noise or obj.get("noise_values") or obj.get("data", {}).get("noise_values")
             noise_values = _broadcast_global_noise(noise_values, len(text))
             
-            # 解析 key_value_pairs 为 Entity
+            # 解析 transferred_annotations 为 Entity (兼容旧的 key_value_pairs)
             entities: List[Entity] = []
+            
+            # Case 1: Standard key_value_pairs
             kv_list = obj.get("key_value_pairs", [])
-            if isinstance(kv_list, list):
+            if isinstance(kv_list, list) and kv_list:
                 for kv in kv_list:
-                    if not isinstance(kv, dict):
-                        continue
-                    
+                    if not isinstance(kv, dict): continue
+                    # ... processing key_value_pairs (omitted for brevity, assume similar logic)
                     key_info = kv.get("key", {})
                     key_start = int(key_info.get("start", -1)) if isinstance(key_info, dict) else -1
                     key_end = int(key_info.get("end", -1)) if isinstance(key_info, dict) else -1
                     if 0 <= key_start < key_end <= len(text):
-                        entities.append(Entity(
-                            start=key_start,
-                            end=key_end,
-                            label="KEY",
-                            text=key_info.get("text") if isinstance(key_info, dict) else None,
-                        ))
+                        entities.append(Entity(start=key_start, end=key_end, label="KEY", text=key_info.get("text")))
                     
                     val_info = kv.get("value", {})
                     val_start = int(val_info.get("start", -1)) if isinstance(val_info, dict) else -1
                     val_end = int(val_info.get("end", -1)) if isinstance(val_info, dict) else -1
                     if 0 <= val_start < val_end <= len(text):
-                        entities.append(Entity(
-                            start=val_start,
-                            end=val_end,
-                            label="VALUE",
-                            text=val_info.get("text") if isinstance(val_info, dict) else None,
-                        ))
-            
+                        entities.append(Entity(start=val_start, end=val_end, label="VALUE", text=val_info.get("text")))
+
+            # Case 2: transferred_annotations (New Format)
+            annos = obj.get("transferred_annotations")
+            if isinstance(annos, list):
+                 for ann in annos:
+                     # e.g. {"start": 0, "end": 5, "label": "KEY", "text": "姓名:"}
+                     start = int(ann.get("start", ann.get("start_offset", -1)))
+                     end = int(ann.get("end", ann.get("end_offset", -1)))
+                     label = ann.get("label")
+                     
+                     normalized = _normalize_label(label, label_map)
+                     if normalized and 0 <= start < end <= len(text):
+                         entities.append(Entity(
+                             start=start, 
+                             end=end, 
+                             label=normalized, 
+                             text=ann.get("text")
+                         ))
+
+            # Case 3: relations
+            relations: List[Relation] = []
+            rels = obj.get("relations", [])
+            if isinstance(rels, list):
+                for r in rels:
+                   # e.g. {"from": 3, "to": 4, "type": "key_val_pair"} or {"from_id": "...", "to_id": "..."}
+                   # For "real_train_with_ocr.json", relations seem to be list of objects
+                   f_id = r.get("from_id")
+                   t_id = r.get("to_id")
+                   if f_id and t_id:
+                       relations.append(Relation(from_id=str(f_id), to_id=str(t_id), direction="right"))
+
             entities.sort(key=lambda e: (e.start, e.end))
             
             sample = Sample(
@@ -268,7 +305,7 @@ def load_jsonl_with_noise(path: str | Path, label_map: Dict[str, str], include_u
                 text=text,
                 title=title,
                 entities=entities,
-                relations=[],
+                relations=relations,
                 noise_values=noise_values,
             )
             samples.append(sample)
