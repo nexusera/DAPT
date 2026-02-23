@@ -45,7 +45,7 @@ if __package__ in (None, ""):
         Relation,
         Sample,
         _select_latest_annotation,
-        _normalize_label,
+        # _normalize_label,  # Use local version
     )
     from pre_struct.kv_ner.dataset import TokenClassificationDataset, collate_batch
     from pre_struct.kv_ner.metrics import compute_ner_metrics
@@ -66,7 +66,7 @@ else:
         Relation,
         Sample,
         _select_latest_annotation,
-        _normalize_label,
+        # _normalize_label, # Use local version
     )
     from .dataset import TokenClassificationDataset, collate_batch
     from .metrics import compute_ner_metrics
@@ -82,6 +82,33 @@ LOG_FORMAT = "[%(asctime)s] [%(levelname)s] %(message)s"
 logging.basicConfig(level=logging.INFO, format=LOG_FORMAT)
 logger = logging.getLogger(__name__)
 
+
+def _normalize_label(raw: str, label_map: Dict[str, str]) -> Optional[str]:
+    # Debug: Print unrecognized labels to help troubleshooting 
+    if not raw: return None
+    
+    # 1. Exact match in config map
+    if raw in label_map:
+        return label_map[raw]
+        
+    # 2. Heuristic normalization (Case insensitive)
+    # 许多数据里的 label 是 "KEY"/"Value" 或中文 "键"/"值"
+    # 我们不仅查表，还尝试模糊匹配
+    upper_raw = raw.upper()
+    
+    # Check if upper case version is in map
+    if upper_raw in label_map:
+        return label_map[upper_raw]
+        
+    # Check common hardcoded targets
+    if upper_raw in ["KEY", "VALUE", "HOSPITAL"]: 
+        return upper_raw
+        
+    # Keywords check
+    if "key" in raw.lower() or "键" in raw: return "KEY"
+    if "value" in raw.lower() or "值" in raw: return "VALUE"
+    
+    return None
 
 def _expand_word_noise_to_chars(ocr_raw, noise_values_per_word):
     """Expand per-word 7-d noise to per-character list using ocr_raw.words_result."""
@@ -273,18 +300,27 @@ def load_jsonl_with_noise(path: str | Path, label_map: Dict[str, str], include_u
             if isinstance(annos, list):
                  for ann in annos:
                      # e.g. {"start": 0, "end": 5, "label": "KEY", "text": "姓名:"}
-                     start = int(ann.get("start", ann.get("start_offset", -1)))
-                     end = int(ann.get("end", ann.get("end_offset", -1)))
+                     # 兼容两种 offset 写法，并处理可能的空值
+                     s = ann.get("start")
+                     e = ann.get("end")
+                     if s is None: s = ann.get("start_offset", -1)
+                     if e is None: e = ann.get("end_offset", -1)
+                     
+                     start = int(s) if s is not None else -1
+                     end = int(e) if e is not None else -1
+                     
                      label = ann.get("label")
                      
                      normalized = _normalize_label(label, label_map)
-                     if normalized and 0 <= start < end <= len(text):
-                         entities.append(Entity(
-                             start=start, 
-                             end=end, 
-                             label=normalized, 
-                             text=ann.get("text")
-                         ))
+                     # 放宽校验：如果 label 存在且 normalize 后非空，即使 text=None 也尝试添加
+                     if normalized:
+                         if 0 <= start < end <= len(text):
+                             entities.append(Entity(
+                                 start=start, 
+                                 end=end, 
+                                 label=normalized, 
+                                 text=ann.get("text")
+                             ))
 
             # Case 3: relations
             relations: List[Relation] = []
