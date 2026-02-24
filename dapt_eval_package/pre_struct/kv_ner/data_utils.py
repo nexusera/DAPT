@@ -43,7 +43,8 @@ class Sample:
 
 
 def _select_latest_annotation(task: dict) -> List[dict]:
-    annotations = task.get("annotations") or []
+    # Revised: Check for 'annotations' OR 'transferred_annotations'
+    annotations = task.get("annotations") or task.get("transferred_annotations") or []
     valid = [a for a in annotations if not a.get("was_cancelled")]
     pool = valid if valid else annotations
     if not pool:
@@ -119,16 +120,19 @@ def load_labelstudio_export(
     for task in data:
         data_block = task.get("data", {}) if isinstance(task, dict) else {}
         try:
-            text = str(data_block.get("ocr_text") or data_block.get("text") or "")
+            # Revised: check for text in data_block first, then fallback to task root
+            text = str(data_block.get("ocr_text") or data_block.get("text") or task.get("ocr_text") or task.get("text") or "")
         except Exception:
             text = ""
         if not text:
             if include_unlabeled:
+                # Revised: check for category in data_block first, then fallback to task root
+                title_val = str(data_block.get("category") or task.get("category") or "")
                 samples.append(
                     Sample(
                         task_id=str(task.get("id")),
                         text="",
-                        title=str(data_block.get("category") or ""),
+                        title=title_val,
                         entities=[],
                         relations=[],
                     )
