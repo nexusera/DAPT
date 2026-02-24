@@ -72,11 +72,28 @@ python dapt_eval_package/pre_struct/kv_ner/compare_models.py \
   --noise_bins $NOISE_BINS \
   --output_summary runs/hybrid_eval_summary.json
 
-# 1.3 评测 (使用 MedStruct-S-Benchmark 工具包)
+# 1.3 评估阶段
+# (a) 对齐数据 (Task 1 关键步骤：解决 Span 不匹配)
+python scripts/align_for_scorer.py \
+  --gt_in "$TEST_DATA" \
+  --pred_in "runs/hybrid_eval_summary_preds.jsonl" \
+  --gt_out "runs/hybrid_eval_aligned_gt.jsonl" \
+  --pred_out "runs/hybrid_eval_aligned_preds.jsonl" \
+
+# (b) 运行 scorer.py (使用对齐后的文件，添加 --overlap_threshold -1 忽略 span 位置)
 python dapt_eval_package/MedStruct-S-Benchmark-feature-configurable-metrics/scorer.py \
-  --pred_file runs/hybrid_eval_summary_preds.jsonl \
-  --gt_file runs/hybrid_eval_summary_gt.jsonl \
-  --output_dir runs/hybrid_eval_report
+  --pred_file "runs/hybrid_eval_aligned_preds.jsonl" \
+  --gt_file "runs/hybrid_eval_aligned_gt.jsonl" \
+  --task_type task1 \
+  --overlap_threshold -1 \
+  --output_file "runs/hybrid_eval_report_task1.json"
+
+# Task 3 Optional (Task 3 通常不需要严格对齐 Span)
+python dapt_eval_package/MedStruct-S-Benchmark-feature-configurable-metrics/scorer.py \
+  --pred_file "runs/hybrid_eval_aligned_preds.jsonl" \
+  --gt_file "runs/hybrid_eval_aligned_gt.jsonl" \
+  --task_type task3 \
+  --output_file "runs/hybrid_eval_report_task3.json"
 ```
 
 ---
@@ -95,11 +112,20 @@ python dapt_eval_package/pre_struct/kv_ner/compare_models.py \
   --noise_bins $NOISE_BINS \
   --output_summary runs/staged_eval_summary.json
 
-# 2.3 评测
+# 2.3 评测 (Task 1 & Task 3, 跳过 Task 2 因为缺失 Schema)
+# Task 1: Key Extraction
 python dapt_eval_package/MedStruct-S-Benchmark-feature-configurable-metrics/scorer.py \
   --pred_file runs/staged_eval_summary_preds.jsonl \
   --gt_file runs/staged_eval_summary_gt.jsonl \
-  --output_dir runs/staged_eval_report
+  --task_type task1 \
+  --output_file runs/staged_eval_report_task1.json
+
+# Task 3: End-to-End QA
+python dapt_eval_package/MedStruct-S-Benchmark-feature-configurable-metrics/scorer.py \
+  --pred_file runs/staged_eval_summary_preds.jsonl \
+  --gt_file runs/staged_eval_summary_gt.jsonl \
+  --task_type task3 \
+  --output_file runs/staged_eval_report_task3.json
 ```
 
 ---
@@ -118,11 +144,20 @@ python dapt_eval_package/pre_struct/kv_ner/compare_models.py \
   --noise_bins $NOISE_BINS \
   --output_summary runs/macbert_eval_summary.json
 
-# 3.3 评测
+# 3.3 评测 (Task 1 & Task 3, 跳过 Task 2 因为缺失 Schema)
+# Task 1: Key Extraction
 python dapt_eval_package/MedStruct-S-Benchmark-feature-configurable-metrics/scorer.py \
   --pred_file runs/macbert_eval_summary_preds.jsonl \
   --gt_file runs/macbert_eval_summary_gt.jsonl \
-  --output_dir runs/macbert_eval_report
+  --task_type task1 \
+  --output_file runs/macbert_eval_report_task1.json
+
+# Task 3: End-to-End QA
+python dapt_eval_package/MedStruct-S-Benchmark-feature-configurable-metrics/scorer.py \
+  --pred_file runs/macbert_eval_summary_preds.jsonl \
+  --gt_file runs/macbert_eval_summary_gt.jsonl \
+  --task_type task3 \
+  --output_file runs/macbert_eval_report_task3.json
 ```
 
 ---
@@ -141,11 +176,20 @@ python dapt_eval_package/pre_struct/kv_ner/compare_models.py \
   --noise_bins $NOISE_BINS \
   --output_summary runs/mtl_eval_summary.json
 
-# 4.3 评测
+# 4.3 评测 (Task 1 & Task 3, 跳过 Task 2 因为缺失 Schema)
+# Task 1: Key Extraction
 python dapt_eval_package/MedStruct-S-Benchmark-feature-configurable-metrics/scorer.py \
   --pred_file runs/mtl_eval_summary_preds.jsonl \
   --gt_file runs/mtl_eval_summary_gt.jsonl \
-  --output_dir runs/mtl_eval_report
+  --task_type task1 \
+  --output_file runs/mtl_eval_report_task1.json
+
+# Task 3: End-to-End QA
+python dapt_eval_package/MedStruct-S-Benchmark-feature-configurable-metrics/scorer.py \
+  --pred_file runs/mtl_eval_summary_preds.jsonl \
+  --gt_file runs/mtl_eval_summary_gt.jsonl \
+  --task_type task3 \
+  --output_file runs/mtl_eval_report_task3.json
 ```
 
 Made changes.
