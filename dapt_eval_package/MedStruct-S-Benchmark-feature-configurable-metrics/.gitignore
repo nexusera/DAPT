@@ -1,0 +1,7 @@
+__pycache__/
+*.pyc
+.DS_Store
+legacy_tmp/
+.vscode/
+tests/
+legacy_evaluation/

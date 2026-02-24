@@ -12,8 +12,8 @@ try:
 except Exception:
     tqdm = None  # type: ignore
 
-API_KEY = "haixin_csco1435tG8y98hTa717"
-BASE_URL = "https://qwen3.yoo.la/v1"
+API_KEY = "YOUR_API_KEY_HERE"
+BASE_URL = "https://your.api.base.url/v1"
 
 logger = logging.getLogger("extract_keys")
 

@@ -7,8 +7,24 @@ kv-masking方法得到的预训练模型：/data/ocean/DAPT/hybrid_dapt_output/f
 macbert:./macbert_staged_output/final_staged_model
 多任务模型：/data/ocean/DAPT/workspace/output_medical_mtl_v1/
 
+旧的训练/测试集：
 训练集：/data/ocean/DAPT/biaozhu_with_ocr/merged_train_with_ocr.json
 测试集：/data/ocean/DAPT/biaozhu_with_ocr/merged_eval_with_ocr.json 
+
+新的训练/测试集：
+训练集 (Train):
+/data/ocean/DAPT/biaozhu_with_ocr_noise_prepared/real_train_with_ocr.json
+测试集 (Test):
+/data/ocean/DAPT/biaozhu_with_ocr_noise_prepared/real_test_with_ocr.json
+
+cd /data/ocean/DAPT
+conda activate medical_bert
+export PYTHONPATH=$PYTHONPATH:$(pwd)
+# 确保使用正确的 Tokenizer 和 噪声配置
+NOISE_BINS="/data/ocean/DAPT/workspace/noise_bins.json"
+TEST_DATA="biaozhu_with_ocr_noise_prepared/test_eval.jsonl"
+GT_FILE="biaozhu_with_ocr_noise_prepared/test_eval.jsonl"
+
 ## 前置条件
 - 进入工程根目录：`cd /data/ocean/DAPT`
 cd /data/ocean/DAPT
