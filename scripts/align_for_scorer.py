@@ -125,3 +125,9 @@ if __name__ == "__main__":
     
     # 2. 处理 Pred
     process_pred(args.pred_in, args.pred_out)
+    
+    # Simple check
+    print("-" * 30)
+    print(f"对齐检查: GT样本数={len(json.load(open(args.gt_out)) if os.path.exists(args.gt_out) else [])}, PRED样本数={len(open(args.pred_out).readlines() if os.path.exists(args.pred_out) else [])}")
+    print("注意：如果样本数不一致，后续 scorer.py 会报错。请确保 --pred_in 的源文件是由当前 --gt_in 对应的测试集生成的。")
+    print("-" * 30)
