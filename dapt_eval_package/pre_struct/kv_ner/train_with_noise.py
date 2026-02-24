@@ -225,30 +225,50 @@ def load_jsonl_with_noise(path: str | Path, label_map: Dict[str, str], include_u
             noise_values=noise_values,
         )
     
-    with p.open("r", encoding="utf-8") as f:
-        # Check if the file starts with '[' (array) or '{' (object)
-        # Skip potential whitespace
-        first_char = f.read(1)
-        while first_char and first_char.isspace():
-            first_char = f.read(1)
-        f.seek(0)
+    with p.open("r", encoding="utf-8-sig") as f:
+        # Robust check: Read first non-whitespace char
+        pos = 0
+        while True:
+            char = f.read(1)
+            pos += 1
+            if not char: break # EOF
+            if not char.isspace():
+                break
         
+        f.seek(0)
         objects = []
-        if first_char == "[":
+        
+        # Debug log
+        if char:
+            logger.info(f"First non-whitespace char: '{char}' (ord: {ord(char)})")
+        else:
+            logger.warning("File seems empty or only whitespace")
+
+        if char == "[":
             try:
+                # Seek to 0 ONLY if we didn't advance too much? No, seek 0 is safe usually.
+                # If we skipped whitespace, we might want to seek back to 'pos' not 0?
+                # Actually, standard JSON ignores whitespace, so seeking 0 is fine.
+                f.seek(0)
                 objects = json.load(f)
+                logger.info(f"Loaded {len(objects)} items from JSON array.")
             except json.JSONDecodeError as e:
                 logger.error(f"Failed to parse JSON array from {p}: {e}")
                 raise
         else:
              # Regular JSONL or Single Object
+             f.seek(0)
              for line_no, line in enumerate(f, 1):
                 line = line.strip()
                 if not line:
                     continue
                 try:
                     obj = json.loads(line)
-                    objects.append(obj)
+                    # If line is a list (e.g. single-line array file missed by '[' check due to BOM/encoding issues)
+                    if isinstance(obj, list):
+                        objects.extend(obj)
+                    else:
+                        objects.append(obj)
                 except json.JSONDecodeError as e:
                     logger.warning(f"Line {line_no}: JSON parse error - {e}")
                     continue
@@ -306,8 +326,8 @@ def load_jsonl_with_noise(path: str | Path, label_map: Dict[str, str], include_u
                      # 兼容两种 offset 写法，并处理可能的空值
                      s = ann.get("start")
                      e = ann.get("end")
-                     if s is None: s = ann.get("start_offset")
-                     if e is None: e = ann.get("end_offset")
+                     if s is None: s = ann.get("start_offset", -1)
+                     if e is None: e = ann.get("end_offset", -1)
                      
                      start = int(s) if s is not None else -1
                      end = int(e) if e is not None else -1
@@ -324,10 +344,6 @@ def load_jsonl_with_noise(path: str | Path, label_map: Dict[str, str], include_u
                                  label=normalized, 
                                  text=ann.get("text")
                              ))
-                         else:
-                             # 尝试自动修复 out-of-bounds? 暂时仅 log
-                             # logger.warning(f"Entity out of bounds: {label} [{start}:{end}] vs len {len(text)}")
-                             pass
 
             # Case 3: relations
             relations: List[Relation] = []
@@ -351,10 +367,6 @@ def load_jsonl_with_noise(path: str | Path, label_map: Dict[str, str], include_u
                 relations=relations,
                 noise_values=noise_values,
             )
-            # Debug filtering
-            # if not entities:
-            #     logger.debug(f"Sample {task_id} has no valid entities, skipping.")
-            # else:
             samples.append(sample)
     
     logger.info(f"Loaded {len(samples)} samples from {p}")
