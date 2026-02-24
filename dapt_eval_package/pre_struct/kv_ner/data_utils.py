@@ -57,16 +57,74 @@ def _select_latest_annotation(task: dict) -> List[dict]:
 
     # 回退到 transferred_annotations (通常 MedStruct-S Real 格式直接存储结果列表)
     transferred = task.get("transferred_annotations")
-    if transferred and isinstance(transferred, list):
-        # 如果是列表，检查第一个元素是否像 LabelStudio 的 Annotation 对象那样包含 'result'
-        # 或者它本身就是一个结果列表 (List[Dict])
+    if transferred and isinstance(transferred, list) and len(transferred) > 0:
         first = transferred[0]
+
+        # Case A: List[Annotation] (standard Label Studio export snippet)
         if isinstance(first, dict) and "result" in first:
-             # Case A: List[Annotation] -> 取第一个或最新的 result
              return first.get("result", [])
-        elif isinstance(first, dict) and "value" in first:
-             # Case B: List[ResultItem] -> 本身就是 result 列表
+
+        # Case B: List[ResultItem] (Label Studio 'result' list directly)
+        if isinstance(first, dict) and "value" in first and "type" in first:
              return transferred
+        
+        # Case C: MedStruct-S Real simplified format (direct entity list)
+        converted = []
+        # 1. Process Entities from 'transferred_annotations'
+        full_text = task.get("ocr_text") or task.get("text") or ""
+        for item in transferred:
+            if not isinstance(item, dict):
+                continue
+            labels = item.get("labels")
+            if not labels:
+                continue
+            
+            val_text = item.get("text", "")
+            
+            # Estimate start/end if missing
+            start_idx = item.get("start")
+            end_idx = item.get("end")
+            
+            if (start_idx is None or end_idx is None) and val_text and full_text:
+                # Find first occurrence of val_text in full_text
+                found = full_text.find(val_text)
+                if found != -1:
+                    start_idx = found
+                    end_idx = found + len(val_text)
+                else:
+                    # Text not found, cannot anchor entity
+                    continue
+            
+            if start_idx is None or end_idx is None:
+                continue
+
+            converted.append({
+                "type": "labels",
+                "value": {
+                    "labels": labels,
+                    "text": val_text,
+                    "start": start_idx,
+                    "end": end_idx
+                },
+                "id": item.get("original_id") # Use original_id for linking relations
+            })
+            
+        # 2. Process Relations from root 'relations' key
+        root_relations = task.get("relations")
+        if root_relations and isinstance(root_relations, list):
+            for rel in root_relations:
+                if not isinstance(rel, dict):
+                    continue
+                # Ensure it has from_id and to_id
+                if "from_id" in rel and "to_id" in rel:
+                    converted.append({
+                        "type": "relation",
+                        "from_id": rel["from_id"],
+                        "to_id": rel["to_id"],
+                        "direction": rel.get("direction", "right")
+                    })
+            
+        return converted
         
     return []
 
