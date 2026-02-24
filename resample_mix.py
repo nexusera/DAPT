@@ -52,8 +52,12 @@ def main():
              "clinical/book_core/book_old/paper/general/supplement/[wiki_med]/[wiki_general]/[med_book]/[general2]",
     )
     ap.add_argument("--total_lines", type=int, default=None, help="目标总行数；默认为各源行数加权和的整数")
+    ap.add_argument("--seed", type=int, default=None, help="随机种子（用于复现实验/论文统计）")
     ap.add_argument("--output", type=str, required=True)
     args = ap.parse_args()
+
+    if args.seed is not None:
+        random.seed(args.seed)
 
     sources = [
         ("clinical", args.clinical),
@@ -89,6 +93,8 @@ def main():
     total = args.total_lines or total_weighted
     print(f"目标总行数: {total} (默认加权和 {total_weighted})")
 
+    sampled_counts = [0 for _ in sources]
+
     os.makedirs(os.path.dirname(args.output), exist_ok=True)
     with open(args.output, "w", encoding="utf-8") as fout:
         for _ in range(total):
@@ -99,8 +105,16 @@ def main():
                 continue
             line = random.choice(pool)
             fout.write(line + "\n")
+            sampled_counts[src_idx] += 1
 
     print(f"Done. Saved to {args.output}")
+
+    # 打印实际抽样比例（便于论文直接引用）
+    print("\n抽样后来源分布:")
+    total_sampled = sum(sampled_counts)
+    for (name, _), n in zip(sources, sampled_counts):
+        pct = (n / total_sampled * 100.0) if total_sampled else 0.0
+        print(f"  - {name}: {n} lines ({pct:.2f}%)")
 
 
 if __name__ == "__main__":
