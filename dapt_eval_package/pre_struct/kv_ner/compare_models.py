@@ -28,10 +28,25 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(
 logger = logging.getLogger(__name__)
 
 def load_data(filepath):
+    # Try reading as JSON list first (standard JSON array)
+    try:
+        with open(filepath, 'r', encoding='utf-8') as f:
+            content = json.load(f)
+            if isinstance(content, list):
+                return content
+    except json.JSONDecodeError:
+        pass # Not a standard JSON file, try JSONL
+
+    # Fallback to JSONL (Newline Delimited JSON)
     data = []
     with open(filepath, 'r', encoding='utf-8') as f:
         for line in f:
-            data.append(json.loads(line))
+            line = line.strip()
+            if not line: continue
+            try:
+                data.append(json.loads(line))
+            except json.JSONDecodeError:
+                continue
     return data
 
 
@@ -120,6 +135,24 @@ def get_ground_truth(item):
                 # But if it's in spans keys, it's a schema key.
                 pass
                 
+    # Support for MedStruct-S Real (transferred_annotations)
+    if not gt_keys and 'transferred_annotations' in item:
+        transferred = item['transferred_annotations']
+        if isinstance(transferred, list):
+            for anno in transferred:
+                if not isinstance(anno, dict): continue
+                
+                labels = anno.get('labels', [])
+                text = anno.get('text', '')
+                
+                if labels and text:
+                    key = labels[0]
+                    gt_keys.add(key)
+                    gt_pairs.add((key, text))
+                    gt_qa_map[key] = text
+                    if key not in schema_keys:
+                        schema_keys.append(key)
+
     return gt_keys, gt_pairs, schema_keys, gt_qa_map
 
 
@@ -626,6 +659,22 @@ def main():
         )
         
         # --- Task 1 Metrics ---
+        # Modified to include all predicted entities as potential keys if the GT implies it?
+        # Or purely stick to 'KEY' type?
+        # If the model predicts specific labels (e.g. HOSPITAL), we should count them as keys found IF GT has them.
+        # But wait, Task 1 is Key Extraction. In "Hospital: ABC", "Hospital" is Key.
+        # If model predicts "ABC" as HOSPITAL, it found the Value. Where is the Key?
+        # If the task is purely V extraction for implicit keys, then 'key' is the label name.
+        # Let's assume for now we only evaluate explicit KEY/VALUE pairs or just count valid entities.
+        # Let's broaden the filter: include any entity that is NOT 'VALUE' (or 'O') as a key candidate?
+        # No, 'VALUE' is a value. 'KEY' is a key. 'HOSPITAL' is a value (implicit key).
+        # Evaluating implicit keys is harder.
+        # Let's keep it simple: collect ALL entity texts as "Keys" if they are not explicitly VALUE?
+        # No, that's dangerous.
+        
+        # Let's stick to the original logic but adding a fallback:
+        # If the entity type is in our schema keys, treat it as a key?
+        # No, let's just make it robust to crash first.
         pred_keys = set([e['text'] for e in pred_entities if e['type'] == 'KEY'])
         
         # Strict
