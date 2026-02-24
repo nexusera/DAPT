@@ -18,104 +18,21 @@ logger = logging.getLogger(__name__)
 
 def load_jsonl(filepath):
     """
-    Load JSON (array) or JSONL (line-delimited) file.
-    And normalize data structure to have 'pairs'.
+    加载 JSONL 格式的文件。
+    逐行解析并处理可能的 JSON 格式错误或空行。
     """
     data = []
-    
     if not filepath or not os.path.exists(filepath):
-        logger.error(f"File not found: {filepath}")
+        logger.error(f"文件未找到: {filepath}")
         return []
-
-    # 1. Attempt to load as standard JSON array first
-    loaded = False
-    try:
-        with open(filepath, 'r', encoding='utf-8') as f:
-            content = json.load(f)
-            if isinstance(content, list):
-                if content and isinstance(content[0], list):
-                     data = [item for sublist in content for item in sublist]
-                else:
-                    data = content
-                loaded = True
-            elif isinstance(content, dict):
-                 data = [content]
-                 loaded = True
-    except (json.JSONDecodeError, UnicodeDecodeError):
-        pass # Not a standard JSON file, try JSONL
-
-    # 2. Fallback to JSONL if not loaded
-    if not loaded:
-        data = []
-        try:
-            with open(filepath, 'r', encoding='utf-8') as f:
-                for line in f:
-                    if line.strip():
-                        try:
-                            data.append(json.loads(line))
-                        except Exception as e:
-                            logger.warning(f"Failed to parse line: {line[:50]}... Error: {e}")
-        except Exception as e:
-             logger.error(f"Failed to read file as JSONL: {e}")
-             return []
-
-    # 3. Normalize Data Structure (Convert custom formats to 'pairs')
-    normalized_data = []
-    for item in data:
-        if not isinstance(item, dict): continue
-        
-        # Check if 'pairs' already exists (Standard Format)
-        if "pairs" in item:
-            normalized_data.append(item)
-            continue
-            
-        normalized_pairs = []
-        
-        # Case A: compare_models.py output ('pred_pairs')
-        if "pred_pairs" in item:
-            for pp in item["pred_pairs"]:
-                normalized_pairs.append({
-                    "key": pp.get("key", ""),
-                    "value": pp.get("value", ""),
-                    "key_span": None # Prediction usually lacks span unless full structured
-                })
-                
-        # Case B: MedStruct-S Real GT ('transferred_annotations')
-        if "transferred_annotations" in item:
-            # Flatten transferred_annotations
-            transferred = item["transferred_annotations"]
-            if isinstance(transferred, list):
-                for anno in transferred:
-                    if isinstance(anno, dict):
-                        labels = anno.get("labels", [])
-                        text = anno.get("text", "")
-                        # box = anno.get("box") # Not used yet for eval unless strict span
-                        if labels and text:
-                            key = labels[0]
-                            normalized_pairs.append({
-                                "key": key,
-                                "value": text,
-                                "key_span": None # GT span not used in non-strict overlap mode
-                            })
-                            
-        # Case C: Label Studio Export ('annotations') - if needed
-        # (Omitted for brevity unless user provides LS export)
-        
-        # Create normalized item
-        new_item = item.copy()
-        # If we found pairs, use them. If prediction file has pred_pairs, use that.
-        # If GT file has transferred_annotations, use that.
-        # Note: If both exist? (Unlikely). Prioritize explicit pairs if constructed.
-        if normalized_pairs:
-            new_item["pairs"] = normalized_pairs
-        elif "pred_pairs" not in item and "transferred_annotations" not in item:
-             # Maybe it's empty or unknown format, keep as is (might have empty pairs)
-             if "pairs" not in new_item:
-                 new_item["pairs"] = []
-             
-        normalized_data.append(new_item)
-        
-    return normalized_data
+    with open(filepath, 'r', encoding='utf-8') as f:
+        for line in f:
+            if line.strip():
+                try:
+                    data.append(json.loads(line))
+                except Exception as e:
+                    logger.warning(f"行解析失败: {line[:50]}... 错误: {e}")
+    return data
 
 def load_schema(p):
     """

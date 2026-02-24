@@ -33,18 +33,7 @@ def evaluate_task1_discovery(predictions, ground_truth, normalize=True, tau_dyna
     # 内部行为标志（强制启用）
     use_em = True
     use_am = True
-    # Disable span check if overlap_threshold is negative (convention) or if forced
-    # But here, let's allow it to be disabled via argument if user wants?
-    # Current signature doesn't expose use_span.
-    # Hack: check if data has valid spans.
-    # Better: just set use_span based on overlap_threshold > 0? No, usually 0 means "any overlap".
-    # If overlap_threshold is set to -1, disable span?
-    use_span = overlap_threshold >= 0 
-    
-    # Actually, if both spans are None, compute_iou often handles it.
-    # But let's look at metrics.py: if not span1 and not span2: return 1.0 (perfect match of nothing?)
-    # If metrics.py handles None,None as 1.0, then 1.0 > 0.0 -> OK.
-    # Let's trust metrics.py check first.
+    use_span = True
     
     use_norm = normalize
     sim_threshold = similarity_threshold

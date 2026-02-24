@@ -768,37 +768,114 @@ def main():
 
         # --- Record for saving ---
         results_list.append({
+            "id": item.get('id') or item.get('record_id') or f"sample_{idx}",
             "title": title,
-            "text": report_text,
+            "text": report_text, # Used for inference input
+            "ocr_text": item.get('ocr_text') or report_text, # Preserves original OCR text
             "pred_pairs": pred_pairs_tuples,
+            "full_pred_pairs": pred_pairs_list, # Contains span info
             "gt_keys": gt_keys,
             "gt_pairs": gt_pairs,
+            "item_original": item, # Keep original item for GT span extraction if needed
             "gt_qa_map": gt_qa_map
         })
                 
     # --- Final Aggregation (Micro-Avg) ---
     # --- Standardize Output for Unified Scorer ---
     output_records = []
+    gt_records = []
     
     for item in results_list:
-        # Standard format: {"report_title": "...", "text": "...", "pred_pairs": [{"key": "...", "value": "..."}, ...]}
-        record = {
+        # 1. Prediction Record
+        # Standard format: {"id": "...", "report_title": "...", "ocr_text": "...", "pairs": [{"key": "...", "value": "...", "key_span": [s, e]}, ...]}
+        pred_record = {
+            "id": str(item['id']),
             "report_title": item['title'],
-            "text": item['text'],
-            "pred_pairs": []
+            "ocr_text": item['ocr_text'],
+            "pairs": []
         }
         
-        # Convert tuple list back to dictionary list for JSON serialization
-        for k, v in item['pred_pairs']:
-            record['pred_pairs'].append({"key": k, "value": v})
-            
-        output_records.append(record)
+        for p in item['full_pred_pairs']:
+            # Key span from entity
+            k_span = [p['key']['start'], p['key']['end']]
+            pred_record['pairs'].append({
+                "key": p['key']['text'], 
+                "value": p['value_text'],
+                "key_span": k_span
+            })
+        output_records.append(pred_record)
+
+        # 2. Ground Truth Record
+        # Construct pairs from GT data (requires spans if available)
+        gt_record = {
+            "id": str(item['id']),
+            "report_title": item['title'],
+            "ocr_text": item['ocr_text'],
+            "pairs": []
+        }
+        
+        # Extract pairs with spans from original item if possible
+        # Logic for MedStruct-S Real (transferred_annotations)
+        original = item['item_original']
+        
+        # Case A: transferred_annotations (Real format)
+        if 'transferred_annotations' in original:
+            transferred = original['transferred_annotations']
+            if isinstance(transferred, list):
+                for anno in transferred:
+                    if isinstance(anno, dict):
+                        labels = anno.get('labels', [])
+                        text = anno.get('text', '')
+                        # Try to get span or infer it
+                        # For GT file generation, we need 'key_span'. 
+                        # In the new data, we might not have 'key' span separate from 'value' span?
+                        # Wait, the annotations ARE the values usually. 
+                        # {"labels": ["KeyName"], "text": "ValueText", "box": ...}
+                        # The "text" IS the value. The "key" is the label class.
+                        # The span of the KEY itself is usually NOT in the annotation for KV extraction tasks 
+                        # unless it's a "Key-Value Pair" annotation.
+                        # But MedStruct Benchmark usually expects key_span to be the span of the key string in text.
+                        # If the key is implicit (e.g. "Name: Alice"), "Name" is key.
+                        # If "Alice" is labeled as "Name", we know where "Alice" is, but where is "Name"?
+                        # If key_span is null, scorer might skipping key-span check? 
+                        # "key_span在ocr_text中的字符位置，无则为null" -> If null, allows validation without span.
+                        
+                        # So we can set key_span: null
+                        if labels and text:
+                            gt_record['pairs'].append({
+                                "key": labels[0],
+                                "value": text,
+                                "key_span": None  # Set to None/null as we don't know where the key word is
+                            })
+                            
+        # Case B: Standard pairs/spans format
+        elif 'spans' in original:
+             # Spans usually map key -> {text, start, end} of the VALUE
+             # Pairs format requires key span. 
+             # If not available, use null.
+             for k, v in original['spans'].items():
+                 gt_record['pairs'].append({
+                     "key": k,
+                     "value": v.get('text', ''),
+                     "key_span": None # Value span is v['start'],v['end']. Key span unknown.
+                 })
+                 
+        gt_records.append(gt_record)
     
     output_file = args.output_summary.replace('.json', '_preds.jsonl') if args.output_summary else 'bert_preds.jsonl'
+    gt_file = args.output_summary.replace('.json', '_gt.jsonl') if args.output_summary else 'bert_gt.jsonl'
     
     with open(output_file, 'w', encoding='utf-8') as f:
         for rec in output_records:
             f.write(json.dumps(rec, ensure_ascii=False) + "\n")
+            
+    with open(gt_file, 'w', encoding='utf-8') as f:
+        for rec in gt_records:
+            f.write(json.dumps(rec, ensure_ascii=False) + "\n")
+            
+    logger.info(f"Standardized predictions saved to {output_file}")
+    logger.info(f"Standardized GT saved to {gt_file}")
+    logger.info(f"Ready for Unified Scorer: python dapt_eval_package/MedStruct-S-Benchmark-feature-configurable-metrics/scorer.py --pred_file {output_file} --gt_file {gt_file}")
             
     logger.info(f"Standardized predictions saved to {output_file} (Ready for Unified Scorer)")
     
