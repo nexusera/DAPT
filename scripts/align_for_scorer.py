@@ -128,6 +128,18 @@ if __name__ == "__main__":
     
     # Simple check
     print("-" * 30)
-    print(f"对齐检查: GT样本数={len(json.load(open(args.gt_out)) if os.path.exists(args.gt_out) else [])}, PRED样本数={len(open(args.pred_out).readlines() if os.path.exists(args.pred_out) else [])}")
+    # GT output is JSONL, so we count lines
+    gt_count = 0
+    if os.path.exists(args.gt_out):
+        with open(args.gt_out, 'r', encoding='utf-8') as f:
+             gt_count = sum(1 for _ in f)
+             
+    # Pred output is JSONL, count lines
+    pred_count = 0
+    if os.path.exists(args.pred_out):
+        with open(args.pred_out, 'r', encoding='utf-8') as f:
+            pred_count = sum(1 for _ in f)
+
+    print(f"对齐检查: GT样本数={gt_count}, PRED样本数={pred_count}")
     print("注意：如果样本数不一致，后续 scorer.py 会报错。请确保 --pred_in 的源文件是由当前 --gt_in 对应的测试集生成的。")
     print("-" * 30)
