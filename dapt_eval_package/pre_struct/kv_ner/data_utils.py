@@ -44,22 +44,30 @@ class Sample:
 
 def _select_latest_annotation(task: dict) -> List[dict]:
     # Revised: Check for 'annotations' OR 'transferred_annotations'
-    annotations = task.get("annotations") or task.get("transferred_annotations") or []
-    valid = [a for a in annotations if not a.get("was_cancelled")]
-    pool = valid if valid else annotations
-    if not pool:
-        return []
+    # 优先检查标准的 annotations
+    annotations = task.get("annotations")
+    if annotations:
+        valid = [a for a in annotations if not a.get("was_cancelled")]
+        pool = valid if valid else annotations
+        if pool:
+            def _anno_key(anno: dict) -> Tuple[str, str]:
+                return (str(anno.get("updated_at") or ""), str(anno.get("created_at") or ""))
+            latest = sorted(pool, key=_anno_key)[-1]
+            return latest.get("result", [])
 
-    def _anno_key(anno: dict) -> Tuple[str, str]:
-        return (
-            str(anno.get("updated_at") or ""),
-            str(anno.get("created_at") or ""),
-        )
-
-    latest = sorted(pool, key=_anno_key)
-    results = latest[-1].get("result") if latest else None
-    if isinstance(results, list):
-        return results
+    # 回退到 transferred_annotations (通常 MedStruct-S Real 格式直接存储结果列表)
+    transferred = task.get("transferred_annotations")
+    if transferred and isinstance(transferred, list):
+        # 如果是列表，检查第一个元素是否像 LabelStudio 的 Annotation 对象那样包含 'result'
+        # 或者它本身就是一个结果列表 (List[Dict])
+        first = transferred[0]
+        if isinstance(first, dict) and "result" in first:
+             # Case A: List[Annotation] -> 取第一个或最新的 result
+             return first.get("result", [])
+        elif isinstance(first, dict) and "value" in first:
+             # Case B: List[ResultItem] -> 本身就是 result 列表
+             return transferred
+        
     return []
 
 
