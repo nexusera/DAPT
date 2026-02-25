@@ -572,8 +572,13 @@ def train(args: argparse.Namespace) -> None:
         raise FileNotFoundError(f"Data path not found: {data_path}")
     
     # 根据文件类型选择加载方式
-    if str(data_path).endswith(".jsonl"):
-        train_samples = load_jsonl_with_noise(data_path, label_map)
+    # 优先尝试使用 load_jsonl_with_noise，因为它支持 JSON Array 和 JSONL 两种格式，且容错性更好
+    if str(data_path).endswith(".jsonl") or str(data_path).endswith(".json"):
+        try:
+            train_samples = load_jsonl_with_noise(data_path, label_map)
+        except Exception as e:
+            logger.warning(f"load_jsonl_with_noise faied for {data_path}, falling back to load_labelstudio_export: {e}")
+            train_samples = load_labelstudio_export(data_path, label_map, include_unlabeled=False)
     else:
         train_samples = load_labelstudio_export(data_path, label_map, include_unlabeled=False)
     
@@ -582,8 +587,13 @@ def train(args: argparse.Namespace) -> None:
     # 加载验证集
     val_path = train_block.get("val_data_path")
     if val_path:
-        if str(val_path).endswith(".jsonl"):
-            val_pool = load_jsonl_with_noise(val_path, label_map)
+        val_path_str = str(val_path)
+        if val_path_str.endswith(".jsonl") or val_path_str.endswith(".json"):
+            try:
+                val_pool = load_jsonl_with_noise(val_path, label_map)
+            except Exception as e:
+                logger.warning(f"load_jsonl_with_noise failed for {val_path}, falling back to load_labelstudio_export: {e}")
+                val_pool = load_labelstudio_export(Path(val_path), label_map, include_unlabeled=False)
         else:
             val_pool = load_labelstudio_export(Path(val_path), label_map, include_unlabeled=False)
         
