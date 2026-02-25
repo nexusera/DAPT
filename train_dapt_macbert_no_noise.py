@@ -58,7 +58,7 @@ class PretrainingTrainer(Trainer):
         model,
         inputs,
         return_outputs: bool = False,
-        num_items_in_batch: int | None = None,  # type: ignore[override]
+        num_items_in_batch: Optional[int] = None,  # type: ignore[override]
     ):
         # 取出并从 inputs 中移除标签，避免传给 model
         labels = inputs.pop("labels", None)
@@ -74,8 +74,10 @@ class PretrainingTrainer(Trainer):
         # MLM Loss（token 级别）
         if labels is not None:
             loss_fct = CrossEntropyLoss()
+            # 直接从 logits 形状读取 vocab size，避免访问 DDP 包裹模型的 config
+            vocab_size = prediction_logits.size(-1)
             mlm_loss = loss_fct(
-                prediction_logits.view(-1, model.config.vocab_size),
+                prediction_logits.view(-1, vocab_size),
                 labels.view(-1),
             )
             total_loss = mlm_loss
