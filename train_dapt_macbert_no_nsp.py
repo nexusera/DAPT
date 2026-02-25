@@ -30,6 +30,7 @@ from transformers import (
 from transformers.models.roberta.modeling_roberta import (
     RobertaLMHead,
     MaskedLMOutput,
+    BaseModelOutputWithPoolingAndCrossAttentions,
 )
 from transformers.models.bert.modeling_bert import (
     BertEmbeddings,
