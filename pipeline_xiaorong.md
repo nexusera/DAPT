@@ -61,39 +61,40 @@ TEST_DATA="/data/ocean/DAPT/biaozhu_with_ocr_noise_prepared/real_test_with_ocr.j
 #### 实验 1: Hybrid Span Model
 ```bash
 # 1.1 训练
-python dapt_eval_package/pre_struct/kv_ner/train_with_noise.py \
-  --config dapt_eval_package/pre_struct/kv_ner/kv_ner_config_hybrid.json \
-  --noise_bins $NOISE_BINS
+python /data/ocean/DAPT/dapt_eval_package/pre_struct/kv_ner/train_with_noise.py \
+  --config /data/ocean/DAPT/dapt_eval_package/pre_struct/kv_ner/kv_ner_config_hybrid.json \
+  --noise_bins "/data/ocean/DAPT/workspace/noise_bins.json"
 
 # 1.2 推理 (生成 predictions 和 gt)
-python dapt_eval_package/pre_struct/kv_ner/compare_models.py \
-  --ner_config dapt_eval_package/pre_struct/kv_ner/kv_ner_config_hybrid.json \
-  --test_data $TEST_DATA \
-  --noise_bins $NOISE_BINS \
-  --output_summary runs/hybrid_eval_summary.json
+python /data/ocean/DAPT/dapt_eval_package/pre_struct/kv_ner/compare_models.py \
+  --ner_config /data/ocean/DAPT/dapt_eval_package/pre_struct/kv_ner/kv_ner_config_hybrid.json \
+  --test_data "/data/ocean/DAPT/biaozhu_with_ocr_noise_prepared/real_test_with_ocr.json" \
+  --noise_bins "/data/ocean/DAPT/workspace/noise_bins.json" \
+  --output_summary /data/ocean/DAPT/runs/hybrid_eval_summary.json
 
 # 1.3 评估阶段
 # (a) 对齐数据 (Task 1 关键步骤：解决 Span 不匹配)
-python scripts/align_for_scorer.py \
-  --gt_in "$TEST_DATA" \
-  --pred_in "runs/hybrid_eval_summary_preds.jsonl" \
-  --gt_out "runs/hybrid_eval_aligned_gt.jsonl" \
-  --pred_out "runs/hybrid_eval_aligned_preds.jsonl" \
+python /data/ocean/DAPT/scripts/align_for_scorer.py \
+  --gt_in "/data/ocean/DAPT/biaozhu_with_ocr_noise_prepared/real_test_with_ocr.json" \
+  --pred_in "/data/ocean/DAPT/runs/hybrid_eval_summary_preds.jsonl" \
+  --gt_out "/data/ocean/DAPT/runs/hybrid_eval_aligned_gt.jsonl" \
+  --pred_out "/data/ocean/DAPT/runs/hybrid_eval_aligned_preds.jsonl"
+
 
 # (b) 运行 scorer.py (使用对齐后的文件，添加 --overlap_threshold -1 忽略 span 位置)
-python dapt_eval_package/MedStruct-S-Benchmark-feature-configurable-metrics/scorer.py \
-  --pred_file "runs/hybrid_eval_aligned_preds.jsonl" \
-  --gt_file "runs/hybrid_eval_aligned_gt.jsonl" \
+python /data/ocean/DAPT/dapt_eval_package/MedStruct-S-Benchmark-feature-configurable-metrics/scorer.py \
+  --pred_file "/data/ocean/DAPT/runs/hybrid_eval_aligned_preds.jsonl" \
+  --gt_file "/data/ocean/DAPT/runs/hybrid_eval_aligned_gt.jsonl" \
   --task_type task1 \
   --overlap_threshold -1 \
-  --output_file "runs/hybrid_eval_report_task1.json"
+  --output_file "/data/ocean/DAPT/runs/hybrid_eval_report_task1.json"
 
 # Task 3 Optional (Task 3 通常不需要严格对齐 Span)
-python dapt_eval_package/MedStruct-S-Benchmark-feature-configurable-metrics/scorer.py \
-  --pred_file "runs/hybrid_eval_aligned_preds.jsonl" \
-  --gt_file "runs/hybrid_eval_aligned_gt.jsonl" \
+python /data/ocean/DAPT/dapt_eval_package/MedStruct-S-Benchmark-feature-configurable-metrics/scorer.py \
+  --pred_file "/data/ocean/DAPT/runs/hybrid_eval_aligned_preds.jsonl" \
+  --gt_file "/data/ocean/DAPT/runs/hybrid_eval_aligned_gt.jsonl" \
   --task_type task3 \
-  --output_file "runs/hybrid_eval_report_task3.json"
+  --output_file "/data/ocean/DAPT/runs/hybrid_eval_report_task3.json"
 ```
 
 ---
@@ -101,31 +102,39 @@ python dapt_eval_package/MedStruct-S-Benchmark-feature-configurable-metrics/scor
 #### 实验 2: Staged RoBERTa
 ```bash
 # 2.1 训练
-python dapt_eval_package/pre_struct/kv_ner/train_with_noise.py \
-  --config dapt_eval_package/pre_struct/kv_ner/kv_ner_config_staged.json \
-  --noise_bins $NOISE_BINS
+python /data/ocean/DAPT/dapt_eval_package/pre_struct/kv_ner/train_with_noise.py \
+  --config /data/ocean/DAPT/dapt_eval_package/pre_struct/kv_ner/kv_ner_config_staged.json \
+  --noise_bins "/data/ocean/DAPT/workspace/noise_bins.json"
 
 # 2.2 推理
-python dapt_eval_package/pre_struct/kv_ner/compare_models.py \
-  --ner_config dapt_eval_package/pre_struct/kv_ner/kv_ner_config_staged.json \
-  --test_data $TEST_DATA \
-  --noise_bins $NOISE_BINS \
-  --output_summary runs/staged_eval_summary.json
+python /data/ocean/DAPT/dapt_eval_package/pre_struct/kv_ner/compare_models.py \
+  --ner_config /data/ocean/DAPT/dapt_eval_package/pre_struct/kv_ner/kv_ner_config_staged.json \
+  --test_data "/data/ocean/DAPT/biaozhu_with_ocr_noise_prepared/real_test_with_ocr.json" \
+  --noise_bins "/data/ocean/DAPT/workspace/noise_bins.json" \
+  --output_summary /data/ocean/DAPT/runs/staged_eval_summary.json
 
-# 2.3 评测 (Task 1 & Task 3, 跳过 Task 2 因为缺失 Schema)
-# Task 1: Key Extraction
-python dapt_eval_package/MedStruct-S-Benchmark-feature-configurable-metrics/scorer.py \
-  --pred_file runs/staged_eval_summary_preds.jsonl \
-  --gt_file runs/staged_eval_summary_gt.jsonl \
+# 2.3 评估阶段
+# (a) 对齐数据 (Task 1 关键步骤：解决 Span 不匹配)
+python /data/ocean/DAPT/scripts/align_for_scorer.py \
+  --gt_in "/data/ocean/DAPT/biaozhu_with_ocr_noise_prepared/real_test_with_ocr.json" \
+  --pred_in "/data/ocean/DAPT/runs/staged_eval_summary_preds.jsonl" \
+  --gt_out "/data/ocean/DAPT/runs/staged_eval_aligned_gt.jsonl" \
+  --pred_out "/data/ocean/DAPT/runs/staged_eval_aligned_preds.jsonl"
+
+# (b) 运行 scorer.py (使用对齐后的文件，添加 --overlap_threshold -1 忽略 span 位置)
+python /data/ocean/DAPT/dapt_eval_package/MedStruct-S-Benchmark-feature-configurable-metrics/scorer.py \
+  --pred_file "/data/ocean/DAPT/runs/staged_eval_aligned_preds.jsonl" \
+  --gt_file "/data/ocean/DAPT/runs/staged_eval_aligned_gt.jsonl" \
   --task_type task1 \
-  --output_file runs/staged_eval_report_task1.json
+  --overlap_threshold -1 \
+  --output_file "/data/ocean/DAPT/runs/staged_eval_report_task1.json"
 
-# Task 3: End-to-End QA
-python dapt_eval_package/MedStruct-S-Benchmark-feature-configurable-metrics/scorer.py \
-  --pred_file runs/staged_eval_summary_preds.jsonl \
-  --gt_file runs/staged_eval_summary_gt.jsonl \
+# Task 3 Optional
+python /data/ocean/DAPT/dapt_eval_package/MedStruct-S-Benchmark-feature-configurable-metrics/scorer.py \
+  --pred_file "/data/ocean/DAPT/runs/staged_eval_aligned_preds.jsonl" \
+  --gt_file "/data/ocean/DAPT/runs/staged_eval_aligned_gt.jsonl" \
   --task_type task3 \
-  --output_file runs/staged_eval_report_task3.json
+  --output_file "/data/ocean/DAPT/runs/staged_eval_report_task3.json"
 ```
 
 ---
@@ -133,31 +142,39 @@ python dapt_eval_package/MedStruct-S-Benchmark-feature-configurable-metrics/scor
 #### 实验 3: MacBERT Staged
 ```bash
 # 3.1 训练
-python dapt_eval_package/pre_struct/kv_ner/train_with_noise.py \
-  --config dapt_eval_package/pre_struct/kv_ner/kv_ner_config_macbert.json \
-  --noise_bins $NOISE_BINS
+python /data/ocean/DAPT/dapt_eval_package/pre_struct/kv_ner/train_with_noise.py \
+  --config /data/ocean/DAPT/dapt_eval_package/pre_struct/kv_ner/kv_ner_config_macbert.json \
+  --noise_bins "/data/ocean/DAPT/workspace/noise_bins.json"
 
 # 3.2 推理
-python dapt_eval_package/pre_struct/kv_ner/compare_models.py \
-  --ner_config dapt_eval_package/pre_struct/kv_ner/kv_ner_config_macbert.json \
-  --test_data $TEST_DATA \
-  --noise_bins $NOISE_BINS \
-  --output_summary runs/macbert_eval_summary.json
+python /data/ocean/DAPT/dapt_eval_package/pre_struct/kv_ner/compare_models.py \
+  --ner_config /data/ocean/DAPT/dapt_eval_package/pre_struct/kv_ner/kv_ner_config_macbert.json \
+  --test_data "/data/ocean/DAPT/biaozhu_with_ocr_noise_prepared/real_test_with_ocr.json" \
+  --noise_bins "/data/ocean/DAPT/workspace/noise_bins.json" \
+  --output_summary /data/ocean/DAPT/runs/macbert_eval_summary.json
 
-# 3.3 评测 (Task 1 & Task 3, 跳过 Task 2 因为缺失 Schema)
-# Task 1: Key Extraction
-python dapt_eval_package/MedStruct-S-Benchmark-feature-configurable-metrics/scorer.py \
-  --pred_file runs/macbert_eval_summary_preds.jsonl \
-  --gt_file runs/macbert_eval_summary_gt.jsonl \
+# 3.3 评估阶段
+# (a) 对齐数据 (Task 1 关键步骤：解决 Span 不匹配)
+python /data/ocean/DAPT/scripts/align_for_scorer.py \
+  --gt_in "/data/ocean/DAPT/biaozhu_with_ocr_noise_prepared/real_test_with_ocr.json" \
+  --pred_in "/data/ocean/DAPT/runs/macbert_eval_summary_preds.jsonl" \
+  --gt_out "/data/ocean/DAPT/runs/macbert_eval_aligned_gt.jsonl" \
+  --pred_out "/data/ocean/DAPT/runs/macbert_eval_aligned_preds.jsonl"
+
+# (b) 运行 scorer.py (使用对齐后的文件，添加 --overlap_threshold -1 忽略 span 位置)
+python /data/ocean/DAPT/dapt_eval_package/MedStruct-S-Benchmark-feature-configurable-metrics/scorer.py \
+  --pred_file "/data/ocean/DAPT/runs/macbert_eval_aligned_preds.jsonl" \
+  --gt_file "/data/ocean/DAPT/runs/macbert_eval_aligned_gt.jsonl" \
   --task_type task1 \
-  --output_file runs/macbert_eval_report_task1.json
+  --overlap_threshold -1 \
+  --output_file "/data/ocean/DAPT/runs/macbert_eval_report_task1.json"
 
-# Task 3: End-to-End QA
-python dapt_eval_package/MedStruct-S-Benchmark-feature-configurable-metrics/scorer.py \
-  --pred_file runs/macbert_eval_summary_preds.jsonl \
-  --gt_file runs/macbert_eval_summary_gt.jsonl \
+# Task 3 Optional
+python /data/ocean/DAPT/dapt_eval_package/MedStruct-S-Benchmark-feature-configurable-metrics/scorer.py \
+  --pred_file "/data/ocean/DAPT/runs/macbert_eval_aligned_preds.jsonl" \
+  --gt_file "/data/ocean/DAPT/runs/macbert_eval_aligned_gt.jsonl" \
   --task_type task3 \
-  --output_file runs/macbert_eval_report_task3.json
+  --output_file "/data/ocean/DAPT/runs/macbert_eval_report_task3.json"
 ```
 
 ---
@@ -165,31 +182,39 @@ python dapt_eval_package/MedStruct-S-Benchmark-feature-configurable-metrics/scor
 #### 实验 4: Multi-Task Learning (MTL)
 ```bash
 # 4.1 训练
-python dapt_eval_package/pre_struct/kv_ner/train_with_noise.py \
-  --config dapt_eval_package/pre_struct/kv_ner/kv_ner_config_mtl.json \
-  --noise_bins $NOISE_BINS
+python /data/ocean/DAPT/dapt_eval_package/pre_struct/kv_ner/train_with_noise.py \
+  --config /data/ocean/DAPT/dapt_eval_package/pre_struct/kv_ner/kv_ner_config_mtl.json \
+  --noise_bins "/data/ocean/DAPT/workspace/noise_bins.json"
 
 # 4.2 推理
-python dapt_eval_package/pre_struct/kv_ner/compare_models.py \
-  --ner_config dapt_eval_package/pre_struct/kv_ner/kv_ner_config_mtl.json \
-  --test_data $TEST_DATA \
-  --noise_bins $NOISE_BINS \
-  --output_summary runs/mtl_eval_summary.json
+python /data/ocean/DAPT/dapt_eval_package/pre_struct/kv_ner/compare_models.py \
+  --ner_config /data/ocean/DAPT/dapt_eval_package/pre_struct/kv_ner/kv_ner_config_mtl.json \
+  --test_data "/data/ocean/DAPT/biaozhu_with_ocr_noise_prepared/real_test_with_ocr.json" \
+  --noise_bins "/data/ocean/DAPT/workspace/noise_bins.json" \
+  --output_summary /data/ocean/DAPT/runs/mtl_eval_summary.json
 
-# 4.3 评测 (Task 1 & Task 3, 跳过 Task 2 因为缺失 Schema)
-# Task 1: Key Extraction
-python dapt_eval_package/MedStruct-S-Benchmark-feature-configurable-metrics/scorer.py \
-  --pred_file runs/mtl_eval_summary_preds.jsonl \
-  --gt_file runs/mtl_eval_summary_gt.jsonl \
+# 4.3 评估阶段
+# (a) 对齐数据 (Task 1 关键步骤：解决 Span 不匹配)
+python /data/ocean/DAPT/scripts/align_for_scorer.py \
+  --gt_in "/data/ocean/DAPT/biaozhu_with_ocr_noise_prepared/real_test_with_ocr.json" \
+  --pred_in "/data/ocean/DAPT/runs/mtl_eval_summary_preds.jsonl" \
+  --gt_out "/data/ocean/DAPT/runs/mtl_eval_aligned_gt.jsonl" \
+  --pred_out "/data/ocean/DAPT/runs/mtl_eval_aligned_preds.jsonl"
+
+# (b) 运行 scorer.py (使用对齐后的文件，添加 --overlap_threshold -1 忽略 span 位置)
+python /data/ocean/DAPT/dapt_eval_package/MedStruct-S-Benchmark-feature-configurable-metrics/scorer.py \
+  --pred_file "/data/ocean/DAPT/runs/mtl_eval_aligned_preds.jsonl" \
+  --gt_file "/data/ocean/DAPT/runs/mtl_eval_aligned_gt.jsonl" \
   --task_type task1 \
-  --output_file runs/mtl_eval_report_task1.json
+  --overlap_threshold -1 \
+  --output_file "/data/ocean/DAPT/runs/mtl_eval_report_task1.json"
 
-# Task 3: End-to-End QA
-python dapt_eval_package/MedStruct-S-Benchmark-feature-configurable-metrics/scorer.py \
-  --pred_file runs/mtl_eval_summary_preds.jsonl \
-  --gt_file runs/mtl_eval_summary_gt.jsonl \
+# Task 3 Optional
+python /data/ocean/DAPT/dapt_eval_package/MedStruct-S-Benchmark-feature-configurable-metrics/scorer.py \
+  --pred_file "/data/ocean/DAPT/runs/mtl_eval_aligned_preds.jsonl" \
+  --gt_file "/data/ocean/DAPT/runs/mtl_eval_aligned_gt.jsonl" \
   --task_type task3 \
-  --output_file runs/mtl_eval_report_task3.json
+  --output_file "/data/ocean/DAPT/runs/mtl_eval_report_task3.json"
 ```
 
 Made changes.

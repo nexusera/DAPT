@@ -519,7 +519,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--ner_config', default='pre_struct/kv_ner/kv_ner_config_comparison.json')
     parser.add_argument('--keys_file', default='data/kv_ner_comparison_prepared/keys_merged_1027_cleaned.json') 
-    parser.add_argument('--test_data', default='data/kv_ner_prepared_comparison/val_eval_titled.jsonl')
+    parser.add_argument('--test_data', default='data/kv_ner_prepared_comparison/val_eval_titled.jsonl', help='Path to test data file')
     parser.add_argument('--output_summary', default='runs/comparison_results.json')
     parser.add_argument('--noise_bins', default=None, help='Path to noise_bins.json; if provided and data has noise_values, fuse noise embeddings during inference')
     args = parser.parse_args()
