@@ -30,7 +30,7 @@ from transformers.models.bert.modeling_bert import (
     BertEmbeddings,
     BertPreTrainingHeads
 )
-from transformers.modeling_outputs import BaseModelOutputWithPoolingAndCrossAttentions
+from transformers.modeling_outputs import BaseModelOutputWithPoolingAndCrossAttentions, ModelOutput
 from torch.nn import CrossEntropyLoss
 
 # 引入本地模块
@@ -204,7 +204,7 @@ class BertModelWithNoise(BertModel):
         )
 
 @dataclass
-class OnlyNSPOutput(Any):
+class OnlyNSPOutput(ModelOutput):
     loss: Optional[torch.Tensor] = None
     logits: Optional[torch.Tensor] = None
 
