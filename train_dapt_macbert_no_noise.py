@@ -24,7 +24,6 @@ from transformers import (
     TrainingArguments,
     BertForPreTraining,
 )
-from torch.nn import CrossEntropyLoss
 
 # 引入本地模块（仅使用 KV-NSP 数据集，不再使用噪声相关模块）
 current_dir = os.path.dirname(os.path.abspath(__file__))
@@ -131,8 +130,8 @@ class MLMStageCollator:
         batch["input_ids"] = input_ids
         batch["labels"] = labels
 
-        # MLM 阶段不需要 NSP Label
-        batch["next_sentence_label"] = None
+        # 注意：MLM 阶段完全不需要 NSP 标签，直接不传该字段，
+        # 这样 BertForPreTraining 会根据 labels 自动计算 MLM loss。
 
         return batch
 
@@ -198,8 +197,8 @@ class NSPStageCollator:
             "attention_mask": enc["attention_mask"],
             "token_type_ids": enc["token_type_ids"],
             "next_sentence_label": torch.tensor(labels, dtype=torch.long),
-            # NSP 阶段不做 MLM，labels 置为 None
-            "labels": None,
+            # NSP 阶段不做 MLM：完全不传 labels 字段，
+            # 这样 BertForPreTraining 只会计算 NSP loss。
         }
 
 
