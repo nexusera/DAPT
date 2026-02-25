@@ -335,6 +335,16 @@ def load_jsonl_with_noise(path: str | Path, label_map: Dict[str, str], include_u
                      label = ann.get("label")
                      
                      normalized = _normalize_label(label, label_map)
+                     
+                     # 动态索引修补：如果缺少 start/end 但有 text，尝试在全文中搜索
+                     entity_text = ann.get("text") or ann.get("value")
+                     if (start < 0 or end < 0) and entity_text and normalized:
+                         # 简单的首次匹配策略
+                         idx = text.find(str(entity_text))
+                         if idx != -1:
+                             start = idx
+                             end = idx + len(str(entity_text))
+                     
                      # 放宽校验：如果 label 存在且 normalize 后非空，即使 text=None 也尝试添加
                      if normalized:
                          if 0 <= start < end <= len(text):
