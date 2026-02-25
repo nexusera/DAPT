@@ -21,6 +21,7 @@ import json
 import logging
 import os
 import random
+import math
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -863,7 +864,7 @@ def train(args: argparse.Namespace) -> None:
     num_epochs = int(train_block.get("num_train_epochs", 3))
     grad_accum = int(train_block.get("gradient_accumulation_steps", 1))
     max_grad_norm = float(train_block.get("max_grad_norm", 1.0))
-    total_steps = num_epochs * len(train_loader) // max(1, grad_accum)
+    total_steps = int(math.ceil((num_epochs * len(train_loader)) / max(1, grad_accum)))
     warmup_ratio = float(train_block.get("warmup_ratio", 0.1))
     warmup_steps = int(total_steps * warmup_ratio)
     scheduler = get_linear_schedule_with_warmup(
@@ -893,10 +894,13 @@ def train(args: argparse.Namespace) -> None:
         model.train()
         running_loss = 0.0
         optimizer.zero_grad(set_to_none=True)
+
+        steps_in_epoch = 0
         
         batch_pbar = tqdm(train_loader, desc=f"Epoch {epoch}/{num_epochs}", leave=False)
         
         for step, batch in enumerate(batch_pbar, start=1):
+            steps_in_epoch = step
             # Debug on first batch
             if step == 1 and epoch == 1:
                 logger.info("First batch received from DataLoader")
@@ -986,6 +990,15 @@ def train(args: argparse.Namespace) -> None:
             current_lr = scheduler.get_last_lr()[0]
             avg_batch_loss = running_loss * grad_accum / max(1, step)
             batch_pbar.set_postfix({"loss": f"{avg_batch_loss:.4f}", "lr": f"{current_lr:.2e}"})
+
+        # Handle remainder micro-batches when steps_in_epoch is not divisible by grad_accum
+        # (otherwise the last few batches' gradients would never be applied)
+        if steps_in_epoch > 0 and (steps_in_epoch % grad_accum) != 0:
+            torch.nn.utils.clip_grad_norm_(model.parameters(), max_grad_norm)
+            optimizer.step()
+            scheduler.step()
+            optimizer.zero_grad(set_to_none=True)
+            global_step += 1
 
         avg_loss = running_loss * grad_accum / max(1, len(train_loader))
         logger.info("Epoch %d/%d - train loss: %.4f", epoch, num_epochs, avg_loss)

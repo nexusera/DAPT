@@ -74,7 +74,7 @@ python /data/ocean/DAPT/dapt_eval_package/pre_struct/kv_ner/compare_models.py \
 
 # 1.3 评估阶段
 # (a) 对齐数据 (Task 1 关键步骤：解决 Span 不匹配)
-python /data/ocean/DAPT/scripts/align_for_scorer.py \
+python /data/ocean/DAPT/scripts/align_for_scorer_span.py \
   --gt_in "/data/ocean/DAPT/biaozhu_with_ocr_noise_prepared/real_test_with_ocr.json" \
   --pred_in "/data/ocean/DAPT/runs/hybrid_eval_summary_preds.jsonl" \
   --gt_out "/data/ocean/DAPT/runs/hybrid_eval_aligned_gt.jsonl" \
@@ -115,7 +115,7 @@ python /data/ocean/DAPT/dapt_eval_package/pre_struct/kv_ner/compare_models.py \
 
 # 2.3 评估阶段
 # (a) 对齐数据 (Task 1 关键步骤：解决 Span 不匹配)
-python /data/ocean/DAPT/scripts/align_for_scorer.py \
+python /data/ocean/DAPT/scripts/align_for_scorer_span.py \
   --gt_in "/data/ocean/DAPT/biaozhu_with_ocr_noise_prepared/real_test_with_ocr.json" \
   --pred_in "/data/ocean/DAPT/runs/staged_eval_summary_preds.jsonl" \
   --gt_out "/data/ocean/DAPT/runs/staged_eval_aligned_gt.jsonl" \
@@ -155,7 +155,7 @@ python /data/ocean/DAPT/dapt_eval_package/pre_struct/kv_ner/compare_models.py \
 
 # 3.3 评估阶段
 # (a) 对齐数据 (Task 1 关键步骤：解决 Span 不匹配)
-python /data/ocean/DAPT/scripts/align_for_scorer.py \
+python /data/ocean/DAPT/scripts/align_for_scorer_span.py \
   --gt_in "/data/ocean/DAPT/biaozhu_with_ocr_noise_prepared/real_test_with_ocr.json" \
   --pred_in "/data/ocean/DAPT/runs/macbert_eval_summary_preds.jsonl" \
   --gt_out "/data/ocean/DAPT/runs/macbert_eval_aligned_gt.jsonl" \
@@ -195,7 +195,7 @@ python /data/ocean/DAPT/dapt_eval_package/pre_struct/kv_ner/compare_models.py \
 
 # 4.3 评估阶段
 # (a) 对齐数据 (Task 1 关键步骤：解决 Span 不匹配)
-python /data/ocean/DAPT/scripts/align_for_scorer.py \
+python /data/ocean/DAPT/scripts/align_for_scorer_span.py \
   --gt_in "/data/ocean/DAPT/biaozhu_with_ocr_noise_prepared/real_test_with_ocr.json" \
   --pred_in "/data/ocean/DAPT/runs/mtl_eval_summary_preds.jsonl" \
   --gt_out "/data/ocean/DAPT/runs/mtl_eval_aligned_gt.jsonl" \
@@ -243,7 +243,7 @@ python /data/ocean/DAPT/dapt_eval_package/pre_struct/kv_ner/compare_models.py \
 
 # 5.3 评估阶段
 # (a) 对齐数据
-python /data/ocean/DAPT/scripts/align_for_scorer.py \
+python /data/ocean/DAPT/scripts/align_for_scorer_span.py \
   --gt_in "/data/ocean/DAPT/biaozhu_with_ocr_noise_prepared/real_test_with_ocr.json" \
   --pred_in "/data/ocean/DAPT/runs/no_nsp_eval_summary_preds.jsonl" \
   --gt_out "/data/ocean/DAPT/runs/no_nsp_eval_aligned_gt.jsonl" \
@@ -281,7 +281,7 @@ python /data/ocean/DAPT/dapt_eval_package/pre_struct/kv_ner/compare_models.py \
 
 # 6.3 评估阶段
 # (a) 对齐数据
-python /data/ocean/DAPT/scripts/align_for_scorer.py \
+python /data/ocean/DAPT/scripts/align_for_scorer_span.py \
   --gt_in "/data/ocean/DAPT/biaozhu_with_ocr_noise_prepared/real_test_with_ocr.json" \
   --pred_in "/data/ocean/DAPT/runs/no_mlm_eval_summary_preds.jsonl" \
   --gt_out "/data/ocean/DAPT/runs/no_mlm_eval_aligned_gt.jsonl" \
