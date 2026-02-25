@@ -256,6 +256,13 @@ python /data/ocean/DAPT/dapt_eval_package/MedStruct-S-Benchmark-feature-configur
   --task_type task1 \
   --overlap_threshold -1 \
   --output_file "/data/ocean/DAPT/runs/no_nsp_eval_report_task1.json"
+
+# Task 3 Optional
+python /data/ocean/DAPT/dapt_eval_package/MedStruct-S-Benchmark-feature-configurable-metrics/scorer.py \
+  --pred_file "/data/ocean/DAPT/runs/no_nsp_eval_aligned_preds.jsonl" \
+  --gt_file "/data/ocean/DAPT/runs/no_nsp_eval_aligned_gt.jsonl" \
+  --task_type task3 \
+  --output_file "/data/ocean/DAPT/runs/no_nsp_eval_report_task3.json"
 ```
 
 #### 实验 6: Ablation No MLM (NSP Only)
@@ -287,6 +294,13 @@ python /data/ocean/DAPT/dapt_eval_package/MedStruct-S-Benchmark-feature-configur
   --task_type task1 \
   --overlap_threshold -1 \
   --output_file "/data/ocean/DAPT/runs/no_mlm_eval_report_task1.json"
+
+# Task 3 Optional
+python /data/ocean/DAPT/dapt_eval_package/MedStruct-S-Benchmark-feature-configurable-metrics/scorer.py \
+  --pred_file "/data/ocean/DAPT/runs/no_mlm_eval_aligned_preds.jsonl" \
+  --gt_file "/data/ocean/DAPT/runs/no_mlm_eval_aligned_gt.jsonl" \
+  --task_type task3 \
+  --output_file "/data/ocean/DAPT/runs/no_mlm_eval_report_task3.json"
 ```
 ```
 
