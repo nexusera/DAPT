@@ -24,6 +24,7 @@ from transformers import (
     TrainingArguments,
     BertForPreTraining,
 )
+from torch.nn import CrossEntropyLoss
 
 # 引入本地模块（仅使用 KV-NSP 数据集，不再使用噪声相关模块）
 current_dir = os.path.dirname(os.path.abspath(__file__))
@@ -37,6 +38,60 @@ from dataset import KVDataset
 
 # 常量定义
 MAX_SEQ_LEN = 512
+
+
+# ===========================
+# 自定义 Trainer：显式计算 MLM / NSP loss
+# ===========================
+
+
+class PretrainingTrainer(Trainer):
+    """自定义 Trainer，用 prediction_logits / seq_relationship_logits 手动算 loss。
+
+    这样可以兼容某些版本的 BertForPreTraining 不自动返回 loss 的情况。
+    - MLM 阶段：batch 里只有 labels（token 级别），计算 MLM loss。
+    - NSP 阶段：batch 里只有 next_sentence_label，计算 NSP loss。
+    """
+
+    def compute_loss(
+        self,
+        model,
+        inputs,
+        return_outputs: bool = False,
+        num_items_in_batch: int | None = None,  # type: ignore[override]
+    ):
+        # 取出并从 inputs 中移除标签，避免传给 model
+        labels = inputs.pop("labels", None)
+        nsp_labels = inputs.pop("next_sentence_label", None)
+
+        outputs = model(**inputs)
+
+        prediction_logits = outputs["prediction_logits"]
+        seq_relationship_logits = outputs["seq_relationship_logits"]
+
+        total_loss = None
+
+        # MLM Loss（token 级别）
+        if labels is not None:
+            loss_fct = CrossEntropyLoss()
+            mlm_loss = loss_fct(
+                prediction_logits.view(-1, model.config.vocab_size),
+                labels.view(-1),
+            )
+            total_loss = mlm_loss
+
+        # NSP Loss（句对级别）
+        if nsp_labels is not None:
+            loss_fct = CrossEntropyLoss()
+            nsp_loss = loss_fct(
+                seq_relationship_logits.view(-1, 2),
+                nsp_labels.view(-1),
+            )
+            total_loss = nsp_loss if total_loss is None else total_loss + nsp_loss
+
+        if return_outputs:
+            return total_loss, outputs
+        return total_loss
 
 
 # ===========================
@@ -320,7 +375,7 @@ def main():
             run_name=f"dapt_no_noise_round_{round_idx}_mlm",
         )
 
-        trainer_mlm = Trainer(
+        trainer_mlm = PretrainingTrainer(
             model=model,
             args=training_args_mlm,
             train_dataset=mlm_dataset,
@@ -354,7 +409,7 @@ def main():
             run_name=f"dapt_no_noise_round_{round_idx}_nsp",
         )
 
-        trainer_nsp = Trainer(
+        trainer_nsp = PretrainingTrainer(
             model=model,
             args=training_args_nsp,
             train_dataset=nsp_dataset,
