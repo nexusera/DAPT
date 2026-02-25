@@ -281,27 +281,52 @@ def load_jsonl_with_noise(path: str | Path, label_map: Dict[str, str], include_u
                 if sample:
                     samples.append(sample)
                 continue
-            
-            task_id = str(obj.get("id", obj.get("record_id", "unknown")))
-            text = str(obj.get("ocr_text") or obj.get("text", "")).strip()
-            title = str(obj.get("category") or obj.get("title", ""))
+
+            if not isinstance(obj, dict):
+                continue
+
+            data_block = obj.get("data") if isinstance(obj.get("data"), dict) else {}
+
+            task_id = str(
+                obj.get("id")
+                or obj.get("record_id")
+                or data_block.get("id")
+                or data_block.get("record_id")
+                or "unknown"
+            )
+
+            text = str(
+                obj.get("ocr_text")
+                or data_block.get("ocr_text")
+                or obj.get("text")
+                or data_block.get("text")
+                or ""
+            ).strip()
+
+            title = str(
+                obj.get("category")
+                or data_block.get("category")
+                or obj.get("title")
+                or data_block.get("title")
+                or ""
+            )
 
             # 普通 JSONL 行：同样优先处理 per-word 噪声，回退到 noise_values
-            ocr_raw = obj.get("ocr_raw") or obj.get("data", {}).get("ocr_raw")
-            per_word_noise = obj.get("noise_values_per_word") or obj.get("data", {}).get("noise_values_per_word")
+            ocr_raw = obj.get("ocr_raw") or data_block.get("ocr_raw")
+            per_word_noise = obj.get("noise_values_per_word") or data_block.get("noise_values_per_word")
             
             if not text:
                 continue
 
             expanded_noise = _expand_word_noise_to_chars(ocr_raw, per_word_noise)
-            noise_values = expanded_noise or obj.get("noise_values") or obj.get("data", {}).get("noise_values")
+            noise_values = expanded_noise or obj.get("noise_values") or data_block.get("noise_values")
             noise_values = _broadcast_global_noise(noise_values, len(text))
             
             # 解析 transferred_annotations 为 Entity (兼容旧的 key_value_pairs)
             entities: List[Entity] = []
             
             # Case 1: Standard key_value_pairs
-            kv_list = obj.get("key_value_pairs", [])
+            kv_list = obj.get("key_value_pairs") or data_block.get("key_value_pairs") or []
             if isinstance(kv_list, list) and kv_list:
                 for kv in kv_list:
                     if not isinstance(kv, dict): continue
@@ -319,9 +344,39 @@ def load_jsonl_with_noise(path: str | Path, label_map: Dict[str, str], include_u
                         entities.append(Entity(start=val_start, end=val_end, label="VALUE", text=val_info.get("text")))
 
             # Case 2: transferred_annotations (New Format)
-            annos = obj.get("transferred_annotations")
+                        annos = obj.get("transferred_annotations") or data_block.get("transferred_annotations")
             if isinstance(annos, list):
                  for ann in annos:
+                     if not isinstance(ann, dict):
+                         continue
+
+                     # Format A: Label Studio result item
+                     # e.g. {"type":"labels","value":{"start":0,"end":5,"labels":["KEY"],"text":"姓名"}}
+                     if "type" in ann and "value" in ann and isinstance(ann.get("value"), dict):
+                         r_type = ann.get("type")
+                         if r_type == "labels":
+                             value = ann.get("value") or {}
+                             raw_labels = value.get("labels") or []
+                             if isinstance(raw_labels, str):
+                                 raw_labels = [raw_labels]
+                             if not raw_labels:
+                                 continue
+                             normalized = _normalize_label(str(raw_labels[0]), label_map)
+                             if not normalized:
+                                 continue
+                             start = int(value.get("start") or 0)
+                             end = int(value.get("end") or 0)
+                             if 0 <= start < end <= len(text):
+                                 entities.append(
+                                     Entity(
+                                         start=start,
+                                         end=end,
+                                         label=normalized,
+                                         text=value.get("text"),
+                                     )
+                                 )
+                         continue
+
                      # e.g. {"start": 0, "end": 5, "label": "KEY", "text": "姓名:"}
                      # 兼容两种 offset 写法，并处理可能的空值
                      s = ann.get("start")
@@ -333,6 +388,8 @@ def load_jsonl_with_noise(path: str | Path, label_map: Dict[str, str], include_u
                      end = int(e) if e is not None else -1
                      
                      label = ann.get("label")
+                     if label is None and isinstance(ann.get("labels"), list) and ann.get("labels"):
+                         label = ann.get("labels")[0]
                      
                      normalized = _normalize_label(label, label_map)
                      
@@ -357,7 +414,7 @@ def load_jsonl_with_noise(path: str | Path, label_map: Dict[str, str], include_u
 
             # Case 3: relations
             relations: List[Relation] = []
-            rels = obj.get("relations", [])
+            rels = obj.get("relations") or data_block.get("relations") or []
             if isinstance(rels, list):
                 for r in rels:
                    # e.g. {"from": 3, "to": 4, "type": "key_val_pair"} or {"from_id": "...", "to_id": "..."}
@@ -594,39 +651,107 @@ def train(args: argparse.Namespace) -> None:
     
     logger.info(f"Training set: {data_path} ({len(train_samples)} samples)")
     
-    # 加载验证集
-    val_path = train_block.get("val_data_path")
-    if val_path:
-        val_path_str = str(val_path)
-        if val_path_str.endswith(".jsonl") or val_path_str.endswith(".json"):
+    def _load_samples(path_value: str | Path) -> List[Sample]:
+        p = Path(str(path_value))
+        if not p.exists():
+            raise FileNotFoundError(f"Data path not found: {p}")
+        if str(p).endswith((".jsonl", ".json")):
             try:
-                val_pool = load_jsonl_with_noise(val_path, label_map)
+                return load_jsonl_with_noise(p, label_map)
             except Exception as e:
-                logger.warning(f"load_jsonl_with_noise failed for {val_path}, falling back to load_labelstudio_export: {e}")
-                val_pool = load_labelstudio_export(Path(val_path), label_map, include_unlabeled=False)
+                logger.warning(
+                    f"load_jsonl_with_noise failed for {p}, falling back to load_labelstudio_export: {e}"
+                )
+                return load_labelstudio_export(p, label_map, include_unlabeled=False)
+        return load_labelstudio_export(p, label_map, include_unlabeled=False)
+
+    # 加载验证集 / 测试集
+    val_path = train_block.get("val_data_path")
+    test_path = train_block.get("test_data_path")
+    seed = int(train_block.get("seed", 42))
+
+    if test_path:
+        test_pool = _load_samples(test_path)
+        logger.info(f"Test set: {test_path} ({len(test_pool)} samples)")
+        test_pool_labeled = [s for s in test_pool if s.has_labels]
+        if not test_pool_labeled:
+            raise ValueError(
+                f"Loaded 0 labeled samples from test_data_path={test_path}. "
+                "Check that each item has text (ocr_text/text or data.ocr_text/data.text) and labels "
+                "(Label Studio annotations/transferred_annotations/key_value_pairs)."
+            )
+        test_samples = test_pool_labeled
+
+        if val_path:
+            val_pool = _load_samples(val_path)
+            logger.info(f"Validation set: {val_path} ({len(val_pool)} samples)")
+            val_pool_labeled = [s for s in val_pool if s.has_labels]
+            if not val_pool_labeled:
+                raise ValueError(
+                    f"Loaded 0 labeled samples from val_data_path={val_path}. "
+                    "Check that each item has text (ocr_text/text or data.ocr_text/data.text) and labels "
+                    "(Label Studio annotations/transferred_annotations/key_value_pairs)."
+                )
+            val_samples = val_pool_labeled
         else:
-            val_pool = load_labelstudio_export(Path(val_path), label_map, include_unlabeled=False)
-        
+            # 没有单独 val_data_path：从训练集中切出一部分做验证（保持 test 独立）
+            val_ratio = float(train_block.get("val_ratio", 0.1))
+            if val_ratio <= 0 or len(train_samples) < 2:
+                val_samples = []
+                logger.warning(
+                    "val_data_path not configured and val_ratio<=0 or train too small; disabling validation"
+                )
+            else:
+                train_samples, val_samples = train_test_split(
+                    train_samples,
+                    test_size=val_ratio,
+                    random_state=seed,
+                    shuffle=True,
+                )
+                logger.info(
+                    "Split training set for validation: train=%d, val=%d (val_ratio=%.3f)",
+                    len(train_samples),
+                    len(val_samples),
+                    val_ratio,
+                )
+    elif val_path:
+        val_pool = _load_samples(val_path)
         logger.info(f"Validation set pool: {val_path} ({len(val_pool)} samples)")
-        
-        # 从验证集池划分验证集和测试集
+
+        # 从验证集池划分验证集和测试集（旧行为，向后兼容）
         test_split_ratio = float(train_block.get("test_split_ratio", 0.5))
         val_pool_labeled = [s for s in val_pool if s.has_labels]
-        
-        val_samples, test_samples = train_test_split(
-            val_pool_labeled,
-            test_size=test_split_ratio,
-            random_state=int(train_block.get("seed", 42)),
-            shuffle=True,
-        )
-        
-        logger.info(
-            "Split validation pool: val=%d (%.1f%%), test=%d (%.1f%%)",
-            len(val_samples),
-            (1 - test_split_ratio) * 100,
-            len(test_samples),
-            test_split_ratio * 100,
-        )
+
+        if not val_pool_labeled:
+            raise ValueError(
+                f"Loaded 0 labeled samples from val_data_path={val_path}. "
+                "If this file stores text under `data`, ensure it has data.ocr_text or data.text."
+            )
+
+        if not (0.0 < test_split_ratio < 1.0):
+            raise ValueError(f"test_split_ratio must be in (0,1), got {test_split_ratio}")
+
+        if len(val_pool_labeled) < 2:
+            val_samples = val_pool_labeled
+            test_samples = []
+            logger.warning(
+                "Validation pool too small to split (n=%d); using all as val and empty test",
+                len(val_pool_labeled),
+            )
+        else:
+            val_samples, test_samples = train_test_split(
+                val_pool_labeled,
+                test_size=test_split_ratio,
+                random_state=seed,
+                shuffle=True,
+            )
+            logger.info(
+                "Split validation pool: val=%d (%.1f%%), test=%d (%.1f%%)",
+                len(val_samples),
+                (1 - test_split_ratio) * 100,
+                len(test_samples),
+                test_split_ratio * 100,
+            )
     else:
         logger.warning("val_data_path not configured; will split from training data (not recommended)")
         train_ratio = float(train_block.get("train_ratio", 0.8))
@@ -635,7 +760,7 @@ def train(args: argparse.Namespace) -> None:
             train_samples,
             train_ratio=train_ratio,
             val_ratio=val_ratio,
-            seed=int(train_block.get("seed", 42)),
+            seed=seed,
         )
         logger.info(
             "Dataset split: train=%d, val=%d, test=%d",
