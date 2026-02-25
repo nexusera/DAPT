@@ -215,6 +215,79 @@ python /data/ocean/DAPT/dapt_eval_package/MedStruct-S-Benchmark-feature-configur
   --gt_file "/data/ocean/DAPT/runs/mtl_eval_aligned_gt.jsonl" \
   --task_type task3 \
   --output_file "/data/ocean/DAPT/runs/mtl_eval_report_task3.json"
+
+---
+
+### [新增] 消融实验配置生成
+为了运行实验 5 和 实验 6，首先确保对应的 KV-NER 配置文件已上传至服务器：
+- `dapt_eval_package/pre_struct/kv_ner/kv_ner_config_no_nsp.json`
+- `dapt_eval_package/pre_struct/kv_ner/kv_ner_config_no_mlm.json`
+
+这两个文件已在本地准备好，分别指向：
+- No NSP Model: `/data/ocean/DAPT/workspace/output_ablation_no_nsp/final_no_nsp_model`
+- No MLM Model: `/data/ocean/DAPT/workspace/output_ablation_no_mlm/final_no_mlm_model`
+
+#### 实验 5: Ablation No NSP (MLM Only)
+```bash
+# 5.1 训练
+python /data/ocean/DAPT/dapt_eval_package/pre_struct/kv_ner/train_with_noise.py \
+  --config /data/ocean/DAPT/dapt_eval_package/pre_struct/kv_ner/kv_ner_config_no_nsp.json \
+  --noise_bins "/data/ocean/DAPT/workspace/noise_bins.json"
+
+# 5.2 推理
+python /data/ocean/DAPT/dapt_eval_package/pre_struct/kv_ner/compare_models.py \
+  --ner_config /data/ocean/DAPT/dapt_eval_package/pre_struct/kv_ner/kv_ner_config_no_nsp.json \
+  --test_data "/data/ocean/DAPT/biaozhu_with_ocr_noise_prepared/real_test_with_ocr.json" \
+  --noise_bins "/data/ocean/DAPT/workspace/noise_bins.json" \
+  --output_summary /data/ocean/DAPT/runs/no_nsp_eval_summary.json
+
+# 5.3 评估阶段
+# (a) 对齐数据
+python /data/ocean/DAPT/scripts/align_for_scorer.py \
+  --gt_in "/data/ocean/DAPT/biaozhu_with_ocr_noise_prepared/real_test_with_ocr.json" \
+  --pred_in "/data/ocean/DAPT/runs/no_nsp_eval_summary_preds.jsonl" \
+  --gt_out "/data/ocean/DAPT/runs/no_nsp_eval_aligned_gt.jsonl" \
+  --pred_out "/data/ocean/DAPT/runs/no_nsp_eval_aligned_preds.jsonl"
+
+# (b) 运行 scorer.py
+python /data/ocean/DAPT/dapt_eval_package/MedStruct-S-Benchmark-feature-configurable-metrics/scorer.py \
+  --pred_file "/data/ocean/DAPT/runs/no_nsp_eval_aligned_preds.jsonl" \
+  --gt_file "/data/ocean/DAPT/runs/no_nsp_eval_aligned_gt.jsonl" \
+  --task_type task1 \
+  --overlap_threshold -1 \
+  --output_file "/data/ocean/DAPT/runs/no_nsp_eval_report_task1.json"
+```
+
+#### 实验 6: Ablation No MLM (NSP Only)
+```bash
+# 6.1 训练
+python /data/ocean/DAPT/dapt_eval_package/pre_struct/kv_ner/train_with_noise.py \
+  --config /data/ocean/DAPT/dapt_eval_package/pre_struct/kv_ner/kv_ner_config_no_mlm.json \
+  --noise_bins "/data/ocean/DAPT/workspace/noise_bins.json"
+
+# 6.2 推理
+python /data/ocean/DAPT/dapt_eval_package/pre_struct/kv_ner/compare_models.py \
+  --ner_config /data/ocean/DAPT/dapt_eval_package/pre_struct/kv_ner/kv_ner_config_no_mlm.json \
+  --test_data "/data/ocean/DAPT/biaozhu_with_ocr_noise_prepared/real_test_with_ocr.json" \
+  --noise_bins "/data/ocean/DAPT/workspace/noise_bins.json" \
+  --output_summary /data/ocean/DAPT/runs/no_mlm_eval_summary.json
+
+# 6.3 评估阶段
+# (a) 对齐数据
+python /data/ocean/DAPT/scripts/align_for_scorer.py \
+  --gt_in "/data/ocean/DAPT/biaozhu_with_ocr_noise_prepared/real_test_with_ocr.json" \
+  --pred_in "/data/ocean/DAPT/runs/no_mlm_eval_summary_preds.jsonl" \
+  --gt_out "/data/ocean/DAPT/runs/no_mlm_eval_aligned_gt.jsonl" \
+  --pred_out "/data/ocean/DAPT/runs/no_mlm_eval_aligned_preds.jsonl"
+
+# (b) 运行 scorer.py
+python /data/ocean/DAPT/dapt_eval_package/MedStruct-S-Benchmark-feature-configurable-metrics/scorer.py \
+  --pred_file "/data/ocean/DAPT/runs/no_mlm_eval_aligned_preds.jsonl" \
+  --gt_file "/data/ocean/DAPT/runs/no_mlm_eval_aligned_gt.jsonl" \
+  --task_type task1 \
+  --overlap_threshold -1 \
+  --output_file "/data/ocean/DAPT/runs/no_mlm_eval_report_task1.json"
+```
 ```
 
 Made changes.
