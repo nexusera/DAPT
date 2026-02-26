@@ -37,6 +37,7 @@ from dataclasses import dataclass
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
 
+
 PROB_KEYS = ["probability", "prob", "score", "scores", "confidence", "conf"]
 
 
@@ -77,6 +78,14 @@ def _normalize_for_match(s: Any) -> str:
     s = str(s)
     # remove spaces + common punctuation, keep CJK/letters/digits
     return "".join(re.findall(r"[\u4e00-\u9fa5a-zA-Z0-9]+", s)).lower()
+
+
+def _normalize_key_text(s: Any) -> str:
+    """Normalize key text for mapping (keep CJK/letters/digits, strip punctuation like ':' '：')."""
+    if s is None:
+        return ""
+    s = str(s).replace("：", "").replace(":", "").strip()
+    return _normalize_for_match(s)
 
 
 def _safe_float(x: Any) -> Optional[float]:
@@ -176,13 +185,95 @@ def _pairs_from_std_record(rec: dict) -> List[Tuple[str, str]]:
     return pairs
 
 
-def _pairs_set_normalized(rec: dict) -> set[Tuple[str, str]]:
-    out: set[Tuple[str, str]] = set()
+def _char_f1(a: str, b: str) -> float:
+    """Character-level F1, aligned with compare_models.py loose metrics."""
+    a = a or ""
+    b = b or ""
+    if not a and not b:
+        return 1.0
+    if not a or not b:
+        return 0.0
+    a_chars = list(a)
+    b_chars = list(b)
+    # multiset intersection count
+    from collections import Counter
+
+    common = Counter(a_chars) & Counter(b_chars)
+    num_same = sum(common.values())
+    if num_same == 0:
+        return 0.0
+    p = num_same / len(a_chars) if a_chars else 0.0
+    r = num_same / len(b_chars) if b_chars else 0.0
+    return (2 * p * r / (p + r)) if (p + r) > 0 else 0.0
+
+
+def _load_label_map_from_config(path: str) -> Dict[str, str]:
+    """Load label_map from kv_ner_config_*.json (or return empty)."""
+    if not path:
+        return {}
+    try:
+        obj = _read_any_json(path)
+        if isinstance(obj, dict) and isinstance(obj.get("label_map"), dict):
+            return {str(k): str(v) for k, v in obj["label_map"].items()}
+    except Exception:
+        return {}
+    return {}
+
+
+def _build_canonicalizer(label_map: Dict[str, str]):
+    """Return a function that maps key string into a canonical label space.
+
+    Strategy:
+    - If key matches a raw label in label_map (after normalization), map to its canonical.
+    - Otherwise keep normalized key.
+    """
+    if not label_map:
+        return lambda k: _normalize_key_text(k)
+
+    norm2canon: Dict[str, str] = {}
+    for raw, canon in label_map.items():
+        nr = _normalize_key_text(raw)
+        if nr:
+            norm2canon[nr] = str(canon)
+
+    def canon_key(k: Any) -> str:
+        nk = _normalize_key_text(k)
+        if not nk:
+            return ""
+        return norm2canon.get(nk, nk)
+
+    return canon_key
+
+
+def _pairs_list_canonical(rec: dict, canon_key) -> List[Tuple[str, str]]:
+    out: List[Tuple[str, str]] = []
     for k, v in _pairs_from_std_record(rec):
-        nk = _normalize_for_match(k)
+        ck = canon_key(k)
         nv = _normalize_for_match(v)
-        if nk:
-            out.add((nk, nv))
+        if ck and nv:
+            out.append((ck, nv))
+    return out
+
+
+def _record_signature(rec: dict) -> str:
+    """Stable-ish signature for aligning records across runs when ids differ."""
+    title = str(rec.get("report_title") or "").strip()
+    ocr_text = rec.get("ocr_text")
+    if ocr_text is None:
+        # some variants might store under 'ocr'
+        ocr_text = rec.get("ocr")
+    ocr_text = str(ocr_text or "").strip()
+    ocr_text = re.sub(r"\s+", " ", ocr_text)
+    payload = (title + "\n" + ocr_text).encode("utf-8", errors="ignore")
+    return hashlib.sha1(payload).hexdigest()
+
+
+def _reindex_by_signature(by_id: Dict[str, dict]) -> Dict[str, dict]:
+    out: Dict[str, dict] = {}
+    for _rid, rec in by_id.items():
+        sig = _record_signature(rec)
+        if sig and sig not in out:
+            out[sig] = rec
     return out
 
 
@@ -349,6 +440,10 @@ def mine_cases(
     source_index: Optional[dict],
     topk: int,
     min_delta: int,
+    *,
+    canon_key,
+    value_f1_threshold: float,
+    match_mode: str,
 ) -> List[dict]:
     candidates: List[dict] = []
 
@@ -358,15 +453,67 @@ def mine_cases(
         if not ours or not base:
             continue
 
-        gt_set = _pairs_set_normalized(gt)
-        ours_set = _pairs_set_normalized(ours)
-        base_set = _pairs_set_normalized(base)
+        # Build canonicalized pair lists (key canonicalized; value normalized)
+        gt_pairs = _pairs_list_canonical(gt, canon_key)
+        ours_pairs = _pairs_list_canonical(ours, canon_key)
+        base_pairs = _pairs_list_canonical(base, canon_key)
 
-        ours_correct = ours_set & gt_set
-        base_correct = base_set & gt_set
-        delta = ours_correct - base_correct
+        # If there is no GT pair, skip
+        if not gt_pairs:
+            continue
 
-        if len(delta) < min_delta:
+        def _match_hits(pred_pairs: List[Tuple[str, str]]) -> Dict[int, dict]:
+            """Return mapping: gt_index -> best match info."""
+            hits: Dict[int, dict] = {}
+            for gi, (gk, gv) in enumerate(gt_pairs):
+                best = None
+                best_score = -1.0
+                for pk, pv in pred_pairs:
+                    if match_mode in ("key_value", "key_only") and pk != gk:
+                        continue
+                    # value similarity
+                    if match_mode == "key_only":
+                        score = 1.0
+                    else:
+                        score = _char_f1(pv, gv)
+                    if score > best_score:
+                        best_score = score
+                        best = {"pred_key": pk, "pred_value": pv, "score": score}
+                if best is None:
+                    continue
+                if match_mode == "key_only":
+                    # already filtered by key
+                    hits[gi] = best
+                else:
+                    if best_score >= value_f1_threshold:
+                        hits[gi] = best
+            return hits
+
+        if match_mode == "value_only":
+            # Ignore key: a GT value is considered recovered if any pred value matches it.
+            def _value_only_hits(pred_pairs: List[Tuple[str, str]]) -> Dict[int, dict]:
+                hits: Dict[int, dict] = {}
+                pred_values = [pv for _, pv in pred_pairs]
+                for gi, (_, gv) in enumerate(gt_pairs):
+                    best_score = -1.0
+                    best_pv = None
+                    for pv in pred_values:
+                        s = _char_f1(pv, gv)
+                        if s > best_score:
+                            best_score = s
+                            best_pv = pv
+                    if best_pv is not None and best_score >= value_f1_threshold:
+                        hits[gi] = {"pred_value": best_pv, "score": best_score}
+                return hits
+
+            ours_hits = _value_only_hits(ours_pairs)
+            base_hits = _value_only_hits(base_pairs)
+        else:
+            ours_hits = _match_hits(ours_pairs)
+            base_hits = _match_hits(base_pairs)
+
+        delta_idx = sorted(list(set(ours_hits.keys()) - set(base_hits.keys())))
+        if len(delta_idx) < min_delta:
             continue
 
         ocr_text = str(gt.get("ocr_text") or ours.get("ocr_text") or base.get("ocr_text") or "")
@@ -379,37 +526,43 @@ def mine_cases(
         conf = extract_conf_summary(source_item)
         mean_conf = conf.mean_conf
 
-        # prefer cases where the corrected value is not literally present in OCR
-        delta_list = sorted(list(delta))
-        evidence = []
+        # prefer cases where the (newly recovered) GT value is not literally present in OCR
         not_found_cnt = 0
-        for nk, nv in delta_list[:5]:
-            # nv is normalized; search in normalized OCR
-            nocr = _normalize_for_match(ocr_text)
-            found = bool(nv and nv in nocr)
+        evidence = []
+        nocr = _normalize_for_match(ocr_text)
+        for gi in delta_idx[:5]:
+            gk, gv = gt_pairs[gi]
+            found = bool(gv and gv in nocr)
             if not found:
                 not_found_cnt += 1
-            evidence.append({"key": nk, "value": nv, "gt_value_in_ocr": found})
+            ev = {
+                "gt_key": gk,
+                "gt_value": gv,
+                "gt_value_in_ocr": found,
+                "ours": ours_hits.get(gi),
+                "base": base_hits.get(gi),
+            }
+            evidence.append(ev)
 
         score = 0.0
-        score += 10.0 * len(delta)
+        score += 10.0 * len(delta_idx)
         score += 3.0 * not_found_cnt
         if mean_conf is not None:
             score += 6.0 * (1.0 - max(0.0, min(1.0, mean_conf)))
 
-        # a readable snippet: try to use the (non-normalized) GT value for context when possible
-        gt_pairs = _pairs_from_std_record(gt)
+        # a readable snippet: use the first recovered GT value (best-effort, might not exist in OCR)
         chosen_span = None
-        chosen_k, chosen_v = None, None
-        if gt_pairs:
-            # pick the first delta pair and map back to original strings (best-effort)
-            d0k, d0v = delta_list[0]
-            for k, v in gt_pairs:
-                if _normalize_for_match(k) == d0k and _normalize_for_match(v) == d0v:
-                    chosen_k, chosen_v = k, v
+        if delta_idx:
+            # We only have normalized GV; try to find a close substring by using raw GT text when possible.
+            raw_gt_pairs = _pairs_from_std_record(gt)
+            target_gk, target_gv = gt_pairs[delta_idx[0]]
+            raw_target_v = None
+            for rk, rv in raw_gt_pairs:
+                if canon_key(rk) == target_gk and _normalize_for_match(rv) == target_gv:
+                    raw_target_v = str(rv)
                     break
-        if chosen_v:
-            chosen_span = _context_around(ocr_text, chosen_v)
+            if raw_target_v:
+                chosen_span = _context_around(ocr_text, raw_target_v)
 
         candidates.append(
             {
@@ -417,8 +570,13 @@ def mine_cases(
                 "report_title": report_title,
                 "score": score,
                 "delta_pairs": [
-                    {"key": k, "value": v}
-                    for (k, v) in sorted(list(delta))
+                    {
+                        "gt_key": gt_pairs[gi][0],
+                        "gt_value": gt_pairs[gi][1],
+                        "ours": ours_hits.get(gi),
+                        "base": base_hits.get(gi),
+                    }
+                    for gi in delta_idx
                 ],
                 "conf": {
                     "mean": conf.mean_conf,
@@ -434,6 +592,11 @@ def mine_cases(
                     "has_noise_values_per_word": "noise_values_per_word" in (source_item or {}),
                     "has_transferred_annotations": bool((source_item or {}).get("transferred_annotations")),
                 },
+                "match": {
+                    "mode": match_mode,
+                    "value_f1_threshold": value_f1_threshold,
+                },
+                "evidence": evidence,
             }
         )
 
@@ -466,9 +629,17 @@ def render_markdown(cases: List[dict], ours_name: str, base_name: str) -> str:
                 mean=conf.get("mean"), min=conf.get("min"), source=conf.get("source")
             )
         )
-        lines.append(f"- win_pairs (ours correct but baseline wrong): {len(c.get('delta_pairs', []))}\n")
+        m = c.get("match", {})
+        lines.append(f"- match_mode: {m.get('mode')} (value_f1_threshold={m.get('value_f1_threshold')})\\n")
+        lines.append(f"- win_pairs (ours hits but baseline misses): {len(c.get('delta_pairs', []))}\\n")
         for p in c.get("delta_pairs", [])[:6]:
-            lines.append(f"  - {p['key']} => {p['value']}\n")
+            lines.append(f"  - GT: {p.get('gt_key')} => {p.get('gt_value')}\\n")
+            ours = p.get("ours") or {}
+            base = p.get("base") or {}
+            if ours:
+                lines.append(f"    - ours_pred: {ours.get('pred_key', '')} => {ours.get('pred_value', ours.get('pred_value',''))} (score={ours.get('score')})\\n")
+            if base:
+                lines.append(f"    - base_pred: {base.get('pred_key', '')} => {base.get('pred_value', base.get('pred_value',''))} (score={base.get('score')})\\n")
 
         if c.get("context_preview"):
             lines.append("\nOCR local context (best-effort):\n\n")
@@ -502,11 +673,67 @@ def main():
     ap.add_argument("--base_name", default="baseline", help="Name string for markdown")
     ap.add_argument("--out_md", default=None, help="Write markdown summary to this path")
     ap.add_argument("--out_json", default=None, help="Write selected cases to this json path")
+    ap.add_argument(
+        "--label_map_config",
+        default=None,
+        help="Optional: path to kv_ner_config_*.json to load label_map for key canonicalization",
+    )
+    ap.add_argument(
+        "--match_mode",
+        default="key_value",
+        choices=["key_value", "value_only", "key_only"],
+        help="How to judge a GT pair is recovered by predictions",
+    )
+    ap.add_argument(
+        "--value_f1_threshold",
+        type=float,
+        default=0.90,
+        help="Char-level F1 threshold for considering value matched (used in key_value/value_only)",
+    )
+    ap.add_argument(
+        "--diagnose_only",
+        action="store_true",
+        help="Only print diagnostics about id overlap/pair counts, do not mine cases",
+    )
+    ap.add_argument(
+        "--align_by_signature",
+        action="store_true",
+        help="Align gt/ours/base by hash(report_title+ocr_text) instead of 'id' (useful if ids differ across runs)",
+    )
     args = ap.parse_args()
 
     gt_by_id = _load_std_jsonl_by_id(args.gt)
     ours_by_id = _load_std_jsonl_by_id(args.pred_ours)
     base_by_id = _load_std_jsonl_by_id(args.pred_base)
+
+    common_ids = set(gt_by_id.keys()) & set(ours_by_id.keys()) & set(base_by_id.keys())
+    print(f"[mine_case_study_kvner] ids: gt={len(gt_by_id)} ours={len(ours_by_id)} base={len(base_by_id)} common={len(common_ids)}")
+
+    if args.align_by_signature:
+        gt_by_id = _reindex_by_signature(gt_by_id)
+        ours_by_id = _reindex_by_signature(ours_by_id)
+        base_by_id = _reindex_by_signature(base_by_id)
+        common_sigs = set(gt_by_id.keys()) & set(ours_by_id.keys()) & set(base_by_id.keys())
+        print(
+            f"[mine_case_study_kvner] sigs: gt={len(gt_by_id)} ours={len(ours_by_id)} base={len(base_by_id)} common={len(common_sigs)}"
+        )
+    else:
+        if len(common_ids) == 0:
+            print(
+                "[mine_case_study_kvner] WARNING: common id == 0. "
+                "If you compared runs that used different id schemes, rerun with --align_by_signature."
+            )
+
+    if args.diagnose_only:
+        # Quick pair count stats
+        def _avg_pairs(d: Dict[str, dict], ids: Sequence[str]) -> float:
+            if not ids:
+                return 0.0
+            return sum(len((d[i].get('pairs') or [])) for i in ids) / len(ids)
+
+        some_ids = list(common_ids)[:200]
+        print(f"[mine_case_study_kvner] avg_pairs: gt={_avg_pairs(gt_by_id, some_ids):.2f} ours={_avg_pairs(ours_by_id, some_ids):.2f} base={_avg_pairs(base_by_id, some_ids):.2f}")
+        return
 
     source_index = None
     if args.source_test:
@@ -525,6 +752,9 @@ def main():
             items = []
         source_index = _index_source_records(items)
 
+    label_map = _load_label_map_from_config(args.label_map_config) if args.label_map_config else {}
+    canon_key = _build_canonicalizer(label_map)
+
     cases = mine_cases(
         gt_by_id=gt_by_id,
         ours_by_id=ours_by_id,
@@ -532,10 +762,33 @@ def main():
         source_index=source_index,
         topk=args.topk,
         min_delta=args.min_delta,
+        canon_key=canon_key,
+        value_f1_threshold=args.value_f1_threshold,
+        match_mode=args.match_mode,
     )
 
     if not cases:
-        print("No candidates found. Try lowering --min_delta or ensure preds/gt share same ids.")
+        msg = (
+            "No candidates found. Suggestions:\n"
+            "- Try: --match_mode value_only (ignores key mismatch)\n"
+            "- Try: --value_f1_threshold 0.8 (looser value match)\n"
+            "- Try providing --label_map_config /path/to/kv_ner_config_*.json\n"
+            "- Run with --diagnose_only to inspect id/pair coverage"
+        )
+        print(msg)
+        if args.out_md:
+            _write_text(
+                args.out_md,
+                "# KV-NER Case Study Mining\n\n"
+                "No candidates found with current settings.\n\n"
+                "## Suggestions\n\n"
+                + "\n".join([f"- {line.strip('- ').strip()}" for line in msg.splitlines()[1:]])
+                + "\n",
+            )
+            print(f"Wrote markdown: {args.out_md}")
+        if args.out_json:
+            _write_json(args.out_json, [])
+            print(f"Wrote json: {args.out_json}")
         return
 
     md = render_markdown(cases, ours_name=args.ours_name, base_name=args.base_name)
