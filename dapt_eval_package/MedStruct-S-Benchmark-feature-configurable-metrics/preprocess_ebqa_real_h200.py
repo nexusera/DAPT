@@ -35,12 +35,40 @@ def process_pred(p_in, p_out, h_meta):
         for it in results: f.write(json.dumps(it, ensure_ascii=False) + '\n')
 
 if __name__ == "__main__":
-    GT = "/data/ocean/medstruct_s/medstruct_s_real/sft_data/MedStruct_S_Real_test.json"
-    TAG = "real_0221"; OUT_DIR = f"./aligned_data/{TAG}"
-    os.makedirs(OUT_DIR, exist_ok=True)
-    with open(GT, 'r') as f: gt_raw = json.load(f)
-    h_meta = {get_text_hash(i.get("ocr_text", "")): {"id": str(i.get("record_id") or i.get("id", "")), "title": i.get("category", "通用病历")} for i in gt_raw}
-    process_gt(GT, f"{OUT_DIR}/gt_ebqa_aligned.jsonl")
-    PRED_DIR = "/home/ocean/semi_label/bert/predictions/medstruct-s-real/ebqa/"
-    for m in ["macbert", "mbert", "mcbert", "roberta"]:
-        process_pred(os.path.join(PRED_DIR, f"MedStruct_S_Real_{m}_test_preds.jsonl"), f"{OUT_DIR}/pred_{m}_ebqa_aligned.jsonl", h_meta)
+    import argparse
+    parser = argparse.ArgumentParser(description="Align Prediction and GT using Text Hash (Teammate's Logic)")
+    parser.add_argument("--gt_file", required=True, help="Path to Ground Truth JSON file (original format with annotations)")
+    parser.add_argument("--pred_file", required=True, help="Path to Prediction JSONL file")
+    parser.add_argument("--output_dir", default="./aligned_data", help="Directory to save aligned files")
+    args = parser.parse_args()
+
+    os.makedirs(args.output_dir, exist_ok=True)
+    
+    # 1. Load GT and Build Hash Map
+    print(f"Loading GT from {args.gt_file}...")
+    with open(args.gt_file, 'r', encoding='utf-8') as f: 
+        gt_raw = json.load(f)
+    
+    # Critical: Use teammate's hashing logic to map content -> ID/Title
+    h_meta = {}
+    for i in gt_raw:
+        # Try both 'ocr_text' (original) and 'text' as fallback
+        text_content = i.get("ocr_text") or i.get("text", "")
+        h = get_text_hash(text_content)
+        
+        rid = str(i.get("record_id") or i.get("id", ""))
+        title = i.get("category", "通用病历")
+        h_meta[h] = {"id": rid, "title": title}
+        
+    print(f"Built hash map for {len(h_meta)} documents.")
+
+    # 2. Process GT (Convert relationships to pairs)
+    gt_out = os.path.join(args.output_dir, "gt_ebqa_aligned.jsonl")
+    process_gt(args.gt_file, gt_out)
+    print(f"Saved aligned GT to {gt_out}")
+
+    # 3. Process Prediction (Align ID via Hash)
+    base_name = os.path.basename(args.pred_file)
+    pred_out = os.path.join(args.output_dir, f"aligned_{base_name}")
+    process_pred(args.pred_file, pred_out, h_meta)
+    print(f"Saved aligned Prediction to {pred_out}")
