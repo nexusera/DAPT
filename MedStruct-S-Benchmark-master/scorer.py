@@ -9,6 +9,8 @@ from collections import defaultdict
 
 # Add project root to path
 sys.path.insert(0, os.getcwd())
+# Add dapt_eval_package to path if pre_struct is inside it
+sys.path.insert(0, os.path.join(os.getcwd(), "dapt_eval_package"))
 
 from core.metrics import (
     calculate_task1_stats,
