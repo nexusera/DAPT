@@ -31,6 +31,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import inspect
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional
 
@@ -143,11 +144,19 @@ def run(args: argparse.Namespace) -> None:
             "input_ids": pad_1d(input_ids).to(device),
             "attention_mask": pad_1d(attn).to(device),
         }
-        if any(t for t in token_type):
+        
+        # Check if model accepts noise_ids
+        forward_params = inspect.signature(model.forward).parameters
+        
+        if any(t for t in token_type) and "token_type_ids" in forward_params:
             tt = [t if t else [0] * len(input_ids[i]) for i, t in enumerate(token_type)]
             model_inputs["token_type_ids"] = pad_1d(tt).to(device)
-        if any(n for n in noise):
+            
+        if any(n for n in noise) and "noise_ids" in forward_params:
             model_inputs["noise_ids"] = pad_noise(noise).to(device)
+            
+        with torch.no_grad():
+            out = model(**model_inputs)
 
         with torch.no_grad():
             out = model(**model_inputs)
