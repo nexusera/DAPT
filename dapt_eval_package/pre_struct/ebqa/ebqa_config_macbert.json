@@ -12,7 +12,7 @@
     "data_path": "/data/ocean/DAPT/data/kv_ner_prepared_comparison/ebqa_train_real.jsonl",
     "precomputed": true,
     "num_train_epochs": 6,
-    "per_device_batch_size": 8,
+    "per_device_batch_size": 32,
     "grad_accum_steps": 2,
     "length_penalty_weight": 0.05,
     "length_penalty_cap": 500,
@@ -28,6 +28,19 @@
     "eval_ratio": 0.1,
     "save_every_epochs": 1,
     "early_stopping_patience": 2,
-    "seed": 42
+    "early_stopping_min_delta": 0.02,
+    "plot_update_every": 200,
+    "metrics_filename": "metrics_history.json",
+    "seed": 42,
+    "device": "cuda",
+    "allow_tf32": true,
+    "label_smoothing": 0.08,
+    "null_margin": 0.1,
+    "null_margin_weight": 0.01,
+    "use_weighted_sampler": true,
+    "negative_downsample": 0.4,
+    "best_metric": "token_f1",
+    "short_field_weight": 2.0,
+    "short_field_boost": 0.3
   }
 }
