@@ -1,0 +1,73 @@
+以下是task2完整的操作流程，以 MacBERT (实验 3) 为例：
+
+第一步：准备数据 (Format Conversion)
+我们需要先将 KV-NER 格式的数据转换为 QA 格式。
+# 环境变量
+export PYTHONPATH=$PYTHONPATH:/data/ocean/DAPT
+SCHEMA_FILE="/data/ocean/DAPT/dapt_eval_package/MedStruct-S-Benchmark-feature-configurable-metrics/keys_merged_1027_cleaned.json"
+NOISE_BINS="/data/ocean/DAPT/workspace/noise_bins.json"
+TOKENIZER_PATH="/data/ocean/DAPT/macbert_staged_output/final_staged_model"
+
+# 1.1 转换训练集
+python /data/ocean/DAPT/dapt_eval_package/pre_struct/ebqa/convert_ebqa.py \
+  --input_file "/data/ocean/DAPT/biaozhu_with_ocr_noise_prepared/real_train_with_ocr.json" \
+  --output_file "/data/ocean/DAPT/data/kv_ner_prepared_comparison/ebqa_train_real.jsonl" \
+  --struct_path $SCHEMA_FILE \
+  --tokenizer_name $TOKENIZER_PATH \
+  --noise_bins $NOISE_BINS
+
+# 1.2 转换测试集 (用于推理)
+python /data/ocean/DAPT/dapt_eval_package/pre_struct/ebqa/convert_ebqa.py \
+  --input_file "/data/ocean/DAPT/biaozhu_with_ocr_noise_prepared/real_test_with_ocr.json" \
+  --output_file "/data/ocean/DAPT/data/kv_ner_prepared_comparison/ebqa_eval_real.jsonl" \
+  --struct_path $SCHEMA_FILE \
+  --tokenizer_name $TOKENIZER_PATH \
+  --noise_bins $NOISE_BINS
+
+第二步：微调 MacBERT EBQA 模型
+配置文件 dapt_eval_package/pre_struct/ebqa/ebqa_config_macbert.json 已经创建好了，直接运行训练脚本：
+# 2.1 启动训练
+# 输出目录: /data/ocean/DAPT/runs/ebqa_macbert
+python /data/ocean/DAPT/dapt_eval_package/pre_struct/ebqa/train_ebqa.py \
+  --config /data/ocean/DAPT/dapt_eval_package/pre_struct/ebqa/ebqa_config_macbert.json
+
+第三步：推理与评测
+训练完成后，使用最优权重 (best 目录) 进行推理，并调用 scorer.py 进行打分。
+
+# 3.1 推理 (生成预测结果)
+# 产出文件: runs/ebqa_macbert_preds.jsonl
+python /data/ocean/DAPT/dapt_eval_package/pre_struct/ebqa/predict_ebqa.py \
+  --model_dir "/data/ocean/DAPT/runs/ebqa_macbert/best" \
+  --tokenizer $TOKENIZER_PATH \
+  --data_path "/data/ocean/DAPT/data/kv_ner_prepared_comparison/ebqa_eval_real.jsonl" \
+  --output_preds "/data/ocean/DAPT/runs/ebqa_macbert_preds.jsonl"
+
+# 3.2 将 QA 级预测聚合回文档级 (关键！否则后续同事对齐脚本无法工作)
+# 输入: runs/ebqa_macbert_preds.jsonl (QA级，包含 report_index/question_key/pred_text)
+# 输出: runs/ebqa_macbert_doc_preds.jsonl (文档级，包含 text + pred_pairs)
+python /data/ocean/DAPT/dapt_eval_package/pre_struct/ebqa/aggregate_qa_preds_to_doc.py \
+  --raw_file "/data/ocean/DAPT/biaozhu_with_ocr_noise_prepared/real_test_with_ocr.json" \
+  --qa_pred_file "/data/ocean/DAPT/runs/ebqa_macbert_preds.jsonl" \
+  --output_file "/data/ocean/DAPT/runs/ebqa_macbert_doc_preds.jsonl" \
+  --prefer score
+
+# (可选) 快速自检：QA 级一般是几千行；doc 级应约等于测试集文档数(例如 355)
+wc -l /data/ocean/DAPT/runs/ebqa_macbert_preds.jsonl /data/ocean/DAPT/runs/ebqa_macbert_doc_preds.jsonl
+
+# 3.3 评测前转换数据 (Task 2, 与同事对齐：用 text_hash 将预测对齐回 GT 的 id)
+python dapt_eval_package/MedStruct-S-Benchmark-feature-configurable-metrics/preprocess_ebqa_real_h200.py \
+  --gt_file /data/ocean/DAPT/biaozhu_with_ocr_noise_prepared/real_test_with_ocr.json \
+  --pred_file /data/ocean/DAPT/runs/ebqa_macbert_doc_preds.jsonl \
+  --output_dir aligned_data
+
+# (可选) 自检：aligned_data 下 pred/gt 行数必须一致
+wc -l aligned_data/gt_ebqa_aligned.jsonl aligned_data/aligned_ebqa_macbert_doc_preds.jsonl
+
+# 3.4 运行 Scorer (Task 2)
+# 注意：这里必须使用 preprocess 输出的对齐后文件，而不是原始 pred/gt
+python /data/ocean/DAPT/dapt_eval_package/MedStruct-S-Benchmark-feature-configurable-metrics/scorer.py \
+  --pred_file "/data/ocean/DAPT/aligned_data/aligned_ebqa_macbert_doc_preds.jsonl" \
+  --gt_file "/data/ocean/DAPT/aligned_data/gt_ebqa_aligned.jsonl" \
+  --schema_file $SCHEMA_FILE \
+  --task_type task2 \
+  --output_file "/data/ocean/DAPT/runs/ebqa_macbert_report_task2.json"
