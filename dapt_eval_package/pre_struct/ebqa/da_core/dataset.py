@@ -487,6 +487,63 @@ class EnhancedQADataset(Dataset):
         self.length_priors = priors
         if self.show_progress and priors:
             print(f"[INFO] Collected length priors for {len(priors)} keys")
+
+    @staticmethod
+    def _clean_schema_key(s: str) -> str:
+        s = str(s or "").strip()
+        if not s:
+            return ""
+        s = re.sub(r"\s+", "", s)
+        s = s.replace(":", "").replace("：", "")
+        return s
+
+    def _expected_map_from_relations(self, rec: Dict, keys: List[str]) -> Dict[str, str]:
+        """Build expected_map for EBQA from KV-NER relation annotations.
+
+        Raw KV data stores key/value nodes in `transferred_annotations` + `relations`.
+        We reconstruct {schema_key: value_text} so span extraction can find positives.
+        """
+        raw_annos = rec.get("transferred_annotations", []) or rec.get("annotations", []) or []
+        if not isinstance(raw_annos, list):
+            raw_annos = []
+        annos = {}
+        for a in raw_annos:
+            if not isinstance(a, dict):
+                continue
+            aid = a.get("original_id") or a.get("id")
+            if aid is None:
+                continue
+            annos[str(aid)] = a
+
+        rels = rec.get("relations", []) or []
+        if not isinstance(rels, list):
+            rels = []
+
+        # key_text -> value_text (cleaned key)
+        kv_map: Dict[str, str] = {}
+        for rel in rels:
+            if not isinstance(rel, dict):
+                continue
+            f_node = annos.get(str(rel.get("from_id") or ""))
+            t_node = annos.get(str(rel.get("to_id") or ""))
+            if not f_node or not t_node:
+                continue
+            k_text = self._clean_schema_key(f_node.get("text", ""))
+            v_text = str(t_node.get("text", "") or "").strip()
+            if not k_text or not v_text:
+                continue
+            # keep first occurrence by default
+            kv_map.setdefault(k_text, v_text)
+
+        if not kv_map:
+            return {k: "" for k in keys}
+
+        # map back to the requested keys (also cleaned)
+        out: Dict[str, str] = {}
+        for k in keys:
+            ck = self._clean_schema_key(k)
+            out[k] = str(kv_map.get(ck, "") or "").strip()
+        return out
     
     def _length_reasonableness_score(self, key: str, actual_len: int, expected_len: int, is_short: bool) -> float:
         """计算长度合理性分数（0.1-1.0），基于先验统计或平滑函数"""
@@ -833,8 +890,14 @@ class EnhancedQADataset(Dataset):
         # 发问键集合：结构映射优先 / 或仅结构
         keys = self._question_keys_for(rec)
         if ridx < 5:
-             t = rec.get("report_title", "N/A")
-             print(f"[DEBUG] ridx={ridx} title='{t}' keys#={len(keys)} Keys[:3]={keys[:3]}")
+            t_dbg = (
+                rec.get("report_title")
+                or rec.get("report_titles")
+                or rec.get("category")
+                or rec.get("title")
+                or "N/A"
+            )
+            print(f"[DEBUG] ridx={ridx} title='{t_dbg}' keys#={len(keys)} Keys[:3]={keys[:3]}")
 
         if not keys:  # 早期返回，避免无效处理
             return []
@@ -842,18 +905,20 @@ class EnhancedQADataset(Dataset):
         # 训练时：使用记录中的值作为 gold spans
         # 推理时：让模型自主发现（不依赖预设值），除非记录确实提供了值
         if self.inference_mode:
-            # 推理模式：不提供 expected_map，让 extract_spans 返回 (-1,-1)，
-            # 这样所有样本都是 no-answer，模型会自主预测
+            # 推理模式：不提供 expected_map，让 extract_spans 返回 (-1,-1)
             expected_map = {}
         else:
-            # 训练模式：使用记录中的值
+            # 训练模式：优先使用记录顶层字段；若为空则从 relations 还原真值
             expected_map = {k: str(rec.get(k, "") or "").strip() for k in keys}
+            non_empty = sum(1 for v in expected_map.values() if isinstance(v, str) and v.strip())
+            if non_empty == 0:
+                expected_map = self._expected_map_from_relations(rec, keys)
         spans = self._extract_spans_from_report(report, keys, expected_map=expected_map)
 
         rng = random.Random(self._base_seed + int(ridx))
 
         # 批量生成并将问题 token 长度作为字典缓存
-        report_title = rec.get("report_title", "")
+        report_title = rec.get("report_title") or rec.get("category") or ""
         if self.use_question_templates:
             questions_batch = [convert_key_to_question(report_title, key) for key in keys]
         else:
@@ -865,7 +930,7 @@ class EnhancedQADataset(Dataset):
         # 预计算属性
         val_short_map = {}
         for k in keys:
-            v = str(rec.get(k, "") or "").strip()
+            v = str((expected_map or {}).get(k, "") or "").strip()
             val_short_map[k] = EnhancedQADataset._is_short_field(v, tok) if v else False
 
         # 提前获取全文分块（用于无答案时的滑动窗口，避免在循环内重复调用 line_spans）
@@ -898,7 +963,7 @@ class EnhancedQADataset(Dataset):
                 if self.inference_mode:
                     pass # 推理不采样
                 else:
-                    field_value = str(rec.get(key, "")).strip()
+                    field_value = str((expected_map or {}).get(key, "") or "").strip()
                     field_exists = bool(field_value and field_value != "")
                     
                     if not field_exists:
@@ -977,7 +1042,7 @@ class EnhancedQADataset(Dataset):
                         if sp is not None and ep is not None:
                             start_pos, end_pos = sp, ep
                             if self.dynamic_answer_length:
-                                field_value = str(rec.get(key, "")).strip()
+                                field_value = str((expected_map or {}).get(key, "") or "").strip()
                                 expected_len = self._cached_tokenize_len(field_value) if field_value else (ep - sp + 1)
                                 length_reasonableness = self._length_reasonableness_score(
                                     key=key, actual_len=(ep - sp + 1), expected_len=expected_len, is_short=val_short_map[key]
