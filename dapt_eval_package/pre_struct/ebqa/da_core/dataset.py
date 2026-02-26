@@ -616,7 +616,14 @@ class EnhancedQADataset(Dataset):
     # ---------- 所有key ----------
     def _question_keys_for(self, rec: Dict) -> List[str]:
         '''确定要提问的键'''
-        title = str(rec.get("report_title") or rec.get("report_titles") or "").strip()
+        # Raw KV-NER style records often use `category` as the report title.
+        title = str(
+            rec.get("report_title")
+            or rec.get("report_titles")
+            or rec.get("category")
+            or rec.get("title")
+            or ""
+        ).strip()
         title_keys = []
         if title and (title in self.struct_map):
             raw = self.struct_map.get(title) or []
@@ -633,13 +640,32 @@ class EnhancedQADataset(Dataset):
             seen = set()
             title_keys = [k for k in tmp_keys if not (k in seen or seen.add(k))]
 
-        # 过滤原文及 report_composed
+        # 过滤原文及 report_composed / 元字段
         record_keys = []
+        meta_keys = {
+            "record_id",
+            "id",
+            "relative_image_path",
+            "category",
+            "report",
+            "text",
+            "ocr_text",
+            "ocr_raw",
+            "transferred_annotations",
+            "annotations",
+            "relations",
+            "noise_values",
+            "noise_values_per_word",
+            "meta",
+            "report_composed",
+        }
         for k in rec.keys():
             sk = str(k).strip()
             if not sk:
                 continue
-            if k in {"report", "report_title", "report_titles", "meta", "report_composed"}:
+            if k in {"report_title", "report_titles"}:
+                continue
+            if k in meta_keys:
                 continue
             record_keys.append(k)
 
