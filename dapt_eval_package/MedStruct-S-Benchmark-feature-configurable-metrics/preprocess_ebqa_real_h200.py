@@ -61,7 +61,21 @@ def process_pred(p_in, p_out, h_meta):
             if not line.strip(): continue
             it = json.loads(line)
             m = h_meta.get(get_text_hash(it.get("text", "")), {"id": str(it.get("id", "N/A")), "title": "通用病历"})
-            raw_pairs = it.get("pred_pairs", it.get("pairs", [])) or []
+            raw_pairs = it.get("pred_pairs", it.get("pairs", []))
+
+            # Guard against wrong types: if it's a dict, iterating it yields keys,
+            # which would silently produce pairs like {"key":"record_id", ...}.
+            if isinstance(raw_pairs, dict):
+                # allow both {k: v} and {k: {"value": v}} styles
+                raw_pairs = [
+                    {"key": k, "value": (v.get("value") if isinstance(v, dict) else v)}
+                    for k, v in raw_pairs.items()
+                ]
+            elif raw_pairs is None:
+                raw_pairs = []
+            elif not isinstance(raw_pairs, list):
+                raw_pairs = []
+
             cleaned_pairs = []
             for p in raw_pairs:
                 if not isinstance(p, dict):
