@@ -62,6 +62,16 @@ def _read_any_json(path: str) -> Any:
             items.append(json.loads(line))
     return items
 
+    def _write_text(path: str, text: str) -> None:
+        os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(text)
+
+    def _write_json(path: str, obj: Any) -> None:
+        os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(obj, f, ensure_ascii=False, indent=2)
+
 
 def _iter_jsonl(path: str) -> Iterable[dict]:
     with open(path, "r", encoding="utf-8") as f:
