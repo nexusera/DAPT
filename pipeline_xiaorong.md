@@ -302,6 +302,44 @@ python /data/ocean/DAPT/dapt_eval_package/MedStruct-S-Benchmark-feature-configur
   --task_type task3 \
   --output_file "/data/ocean/DAPT/runs/no_mlm_eval_report_task3.json"
 ```
+
+#### 实验 7: No-Noise Baseline (标准 DAPT，无噪声嵌入)
+```bash
+# 7.1 训练
+python /data/ocean/DAPT/dapt_eval_package/pre_struct/kv_ner/train_with_noise.py \
+  --config /data/ocean/DAPT/dapt_eval_package/pre_struct/kv_ner/kv_ner_config_no_noise.json \
+  --noise_bins "/data/ocean/DAPT/workspace/noise_bins.json"
+
+# 7.2 推理
+python /data/ocean/DAPT/dapt_eval_package/pre_struct/kv_ner/compare_models.py \
+  --ner_config /data/ocean/DAPT/dapt_eval_package/pre_struct/kv_ner/kv_ner_config_no_noise.json \
+  --test_data "/data/ocean/DAPT/biaozhu_with_ocr_noise_prepared/real_test_with_ocr.json" \
+  --noise_bins "/data/ocean/DAPT/workspace/noise_bins.json" \
+  --output_summary /data/ocean/DAPT/runs/no_noise_eval_summary.json
+
+# 7.3 评估阶段
+# (a) 对齐数据
+python /data/ocean/DAPT/scripts/align_for_scorer_span.py \
+  --gt_in "/data/ocean/DAPT/biaozhu_with_ocr_noise_prepared/real_test_with_ocr.json" \
+  --pred_in "/data/ocean/DAPT/runs/no_noise_eval_summary_preds.jsonl" \
+  --gt_out "/data/ocean/DAPT/runs/no_noise_eval_aligned_gt.jsonl" \
+  --pred_out "/data/ocean/DAPT/runs/no_noise_eval_aligned_preds.jsonl"
+
+# (b) 运行 scorer.py - Task 1
+python /data/ocean/DAPT/dapt_eval_package/MedStruct-S-Benchmark-feature-configurable-metrics/scorer.py \
+  --pred_file "/data/ocean/DAPT/runs/no_noise_eval_aligned_preds.jsonl" \
+  --gt_file "/data/ocean/DAPT/runs/no_noise_eval_aligned_gt.jsonl" \
+  --task_type task1 \
+  --overlap_threshold -1 \
+  --output_file "/data/ocean/DAPT/runs/no_noise_eval_report_task1.json"
+
+# Task 3
+python /data/ocean/DAPT/dapt_eval_package/MedStruct-S-Benchmark-feature-configurable-metrics/scorer.py \
+  --pred_file "/data/ocean/DAPT/runs/no_noise_eval_aligned_preds.jsonl" \
+  --gt_file "/data/ocean/DAPT/runs/no_noise_eval_aligned_gt.jsonl" \
+  --task_type task3 \
+  --output_file "/data/ocean/DAPT/runs/no_noise_eval_report_task3.json"
+```
 ```
 
 Made changes.
