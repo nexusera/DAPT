@@ -5,6 +5,34 @@ def get_text_hash(text):
     clean = "".join(re.findall(r"[\u4e00-\u9fa5a-zA-Z0-9]", str(text)))[:100]
     return hashlib.md5(clean.encode()).hexdigest()
 
+def _clean_key(k):
+    # Key matching is schema-driven; remove whitespace and trailing separators.
+    s = str(k or "").strip()
+    if not s:
+        return ""
+    s = re.sub(r"\s+", "", s)
+    s = s.replace(":", "").replace("：", "")
+    s = s.strip()
+    return s
+
+def _clean_val(v):
+    # Value comparison uses NED; strip only common wrappers and trailing punctuation.
+    s = str(v or "").strip()
+    if not s:
+        return ""
+    # remove surrounding brackets repeatedly
+    while True:
+        ns = s
+        for l, r in [("[", "]"), ("（", "）"), ("(", ")"), ("【", "】"), ("<", ">"), ("《", "》")]:
+            if ns.startswith(l) and ns.endswith(r) and len(ns) >= 2:
+                ns = ns[1:-1].strip()
+        if ns == s:
+            break
+        s = ns
+    # trim trailing separators commonly attached in OCR text
+    s = re.sub(r"[，。,；;、:：\]\)）】>》]+$", "", s).strip()
+    return s
+
 def process_gt(input_path, output_path):
     print(f"正在转换 Real EBQA 真值 (GT): {os.path.basename(input_path)}")
     with open(input_path, 'r', encoding='utf-8') as f: data = json.load(f)
@@ -17,7 +45,10 @@ def process_gt(input_path, output_path):
         for rel in item.get("relations", []):
             f_node, t_node = annos.get(rel.get("from_id")), annos.get(rel.get("to_id"))
             if f_node and t_node:
-                pairs.append({"key": f_node.get("text", "").strip(), "value": t_node.get("text", "").strip()})
+                pairs.append({
+                    "key": _clean_key(f_node.get("text", "")),
+                    "value": _clean_val(t_node.get("text", "")),
+                })
         new_data.append({"id": rid, "report_title": item.get("category", "通用病历"), "pairs": pairs})
     with open(output_path, 'w') as f:
         for item in new_data: f.write(json.dumps(item, ensure_ascii=False) + '\n')
@@ -30,7 +61,17 @@ def process_pred(p_in, p_out, h_meta):
             if not line.strip(): continue
             it = json.loads(line)
             m = h_meta.get(get_text_hash(it.get("text", "")), {"id": str(it.get("id", "N/A")), "title": "通用病历"})
-            results.append({"id": m["id"], "report_title": m["title"], "pairs": it.get("pred_pairs", it.get("pairs", []))})
+            raw_pairs = it.get("pred_pairs", it.get("pairs", [])) or []
+            cleaned_pairs = []
+            for p in raw_pairs:
+                if not isinstance(p, dict):
+                    continue
+                ck = _clean_key(p.get("key"))
+                cv = _clean_val(p.get("value"))
+                if ck == "":
+                    continue
+                cleaned_pairs.append({"key": ck, "value": cv})
+            results.append({"id": m["id"], "report_title": m["title"], "pairs": cleaned_pairs})
     with open(p_out, 'w') as f:
         for it in results: f.write(json.dumps(it, ensure_ascii=False) + '\n')
 
