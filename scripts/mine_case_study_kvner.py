@@ -640,16 +640,16 @@ def render_markdown(cases: List[dict], ours_name: str, base_name: str) -> str:
             )
         )
         m = c.get("match", {})
-        lines.append(f"- match_mode: {m.get('mode')} (value_f1_threshold={m.get('value_f1_threshold')})\\n")
-        lines.append(f"- win_pairs (ours hits but baseline misses): {len(c.get('delta_pairs', []))}\\n")
+        lines.append(f"- match_mode: {m.get('mode')} (value_f1_threshold={m.get('value_f1_threshold')})\n")
+        lines.append(f"- win_pairs (ours hits but baseline misses): {len(c.get('delta_pairs', []))}\n")
         for p in c.get("delta_pairs", [])[:6]:
-            lines.append(f"  - GT: {p.get('gt_key')} => {p.get('gt_value')}\\n")
+            lines.append(f"  - GT: {p.get('gt_key')} => {p.get('gt_value')}\n")
             ours = p.get("ours") or {}
             base = p.get("base") or {}
             if ours:
-                lines.append(f"    - ours_pred: {ours.get('pred_key', '')} => {ours.get('pred_value', ours.get('pred_value',''))} (score={ours.get('score')})\\n")
+                lines.append(f"    - ours_pred: {ours.get('pred_key', '')} => {ours.get('pred_value', ours.get('pred_value',''))} (score={ours.get('score')})\n")
             if base:
-                lines.append(f"    - base_pred: {base.get('pred_key', '')} => {base.get('pred_value', base.get('pred_value',''))} (score={base.get('score')})\\n")
+                lines.append(f"    - base_pred: {base.get('pred_key', '')} => {base.get('pred_value', base.get('pred_value',''))} (score={base.get('score')})\n")
 
         if c.get("context_preview"):
             lines.append("\nOCR local context (best-effort):\n\n")
