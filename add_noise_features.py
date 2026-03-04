@@ -162,7 +162,26 @@ def main():
     processor = NoiseFeatureProcessor.load(args.bins_json)
     print(f"[add_noise_features] bins loaded: {args.bins_json}")
 
-    def add_noise(example: Dict[str, Any], idx: int):
+    # IMPORTANT:
+    # HuggingFace Dataset.map(with_indices=True) gives indices *within each split*.
+    # If the dataset is a train/test split of an OCR-only corpus, the "test" split
+    # indices will restart from 0, which would misalign OCR features.
+    # We compute a deterministic per-split global offset so (split, idx) maps to
+    # a unique global index.
+    split_order = []
+    for s in ["train", "validation", "valid", "dev", "test"]:
+        if s in dataset:
+            split_order.append(s)
+    for s in sorted(dataset.keys()):
+        if s not in split_order:
+            split_order.append(s)
+    split_offsets = {}
+    running = 0
+    for s in split_order:
+        split_offsets[s] = running
+        running += len(dataset[s])
+
+    def add_noise(example: Dict[str, Any], idx: int, *, global_idx: int):
         # word_ids 是对齐的必要条件
         word_ids = example.get("word_ids")
         if word_ids is None:
@@ -170,8 +189,8 @@ def main():
             return example
 
         # 处理 OCR 样本
-        if idx < len(ocr_list):
-            ocr_obj = ocr_list[idx]
+        if global_idx < len(ocr_list):
+            ocr_obj = ocr_list[global_idx]
             if not isinstance(ocr_obj, dict) or "words_result" not in ocr_obj:
                 nf, _ = build_zero_feats(len(word_ids))
                 example["noise_values"] = nf
@@ -246,9 +265,10 @@ def main():
     for split in dataset:
         ds = dataset[split]  # 获取当前分割的数据
         map_kwargs["desc"] = f"add_noise_features_{split}"  # 设置进度条描述
+        offset = split_offsets.get(split, 0)
         # 对当前分割的所有样本应用add_noise函数
         # map会并行处理所有样本（如果设置了num_proc）
-        new_splits[split] = ds.map(add_noise, **map_kwargs)
+        new_splits[split] = ds.map(lambda ex, i: add_noise(ex, i, global_idx=offset + i), **map_kwargs)
         print(f"[add_noise_features] split {split} done. new size: {len(new_splits[split])}")
 
     # 将所有分割重新组合成DatasetDict

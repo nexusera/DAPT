@@ -61,18 +61,25 @@ python -m pip freeze | tee -a /data/ocean/DAPT/ablation_tokenizer_env.log
 ```bash
 cd /data/ocean/DAPT/experiments/tokenizer_ablation
 
-# 复制配置模板
+# 若仓库中已包含 config.env（我们已提供远端 /data/ocean/DAPT 的默认真实路径），可直接跳过复制/编辑。
+# 如果你需要自定义输出目录或改动输入文件，再编辑 config.env。
+
+# （可选）首次初始化：仅当 config.env 不存在时才需要
 cp -n config.env.example config.env
 
-# 编辑 config.env：把 KEYS/OCR_VOCAB/TRAIN_FILE/OUT_ROOT 改成你实际路径
+# （可选）编辑 config.env：把 OUT_ROOT 等改成你需要的路径
 vim config.env
 
 # 校验必需文件是否存在，并创建输出目录
 bash 00_check_env.sh
 ```
 
-> 说明：本目录脚本会把所有输出写到 `OUT_ROOT`（你在 config.env 里配置），建议按日期分目录，例如：
-> `OUT_ROOT="/data/ocean/DAPT/ablation/tokenizer/2026-03-04"`
+> 说明：本目录脚本会把所有输出写到 `OUT_ROOT`（在 config.env 里配置）。当前默认是固定目录：`/data/ocean/DAPT/ablation/tokenizer`。
+
+另外：本次 tokenizer 消融 **会严格遵守** `pipeline_new.md` 的数据规则：
+- 非 OCR 路（纯净文本）可 shuffle。
+- OCR 路（带噪声）**必须不 shuffle**，且需要在构建后运行 `add_noise_features.py` 写入 `noise_values`，再用 `verify_noise_alignment.py` 抽检对齐。
+- 最终训练用数据集是两路合并后的 merged dataset。
 
 ### 2)（可选）生成 OCR vocab 与 LLM 过滤产物
 
@@ -131,7 +138,15 @@ cd /data/ocean/DAPT/experiments/tokenizer_ablation
 bash 30_build_datasets.sh 2>&1 | tee -a "$(pwd)/dataset_build.log"
 ```
 
-输出目录：`${OUT_ROOT}/datasets/processed_dataset_t{1,2,3,4}`
+输出目录（训练用，merged）：`${OUT_ROOT}/datasets/processed_dataset_t{1,2,3,4}`
+
+中间产物（便于排查对齐/比例问题）：
+- 非 OCR：`${OUT_ROOT}/datasets/nonocr/processed_dataset_t{1,2,3,4}`
+- OCR（含噪声）：`${OUT_ROOT}/datasets/ocr/processed_dataset_t{1,2,3,4}_with_noise`
+
+说明：
+- `config.env` 里的 `SHUFFLE_SPLIT` 只作用于**非 OCR**路；OCR 路始终强制 `--no_shuffle_split`。
+- 若 `OCR_TEXT_FILE` 不存在，脚本会先用 `export_ocr_texts.py` 从 `OCR_JSON` 自动导出（保持顺序）。
 
 ### 6) Quick-run（强烈建议先做，用小语料验证全链路可跑）
 
@@ -147,6 +162,8 @@ bash 31_make_quick_corpus.sh
 # 6.2 用小语料重建 quick datasets
 bash 32_build_datasets_quick.sh
 ```
+
+说明：quick-run 现在同样会生成 OCR JSON 的子集（取 `OCR_JSON` 前 N 条），并导出对应 OCR 文本，保证噪声对齐规则不被破坏。
 
 ### 7) 预训练 quick（每个 tokenizer 变体跑 1-round/1-epoch 做 sanity）
 
