@@ -15,6 +15,10 @@ import os
 from datasets import load_from_disk
 from transformers import AutoTokenizer
 
+
+# 与 add_noise_features.py / merge_datasets.py 保持一致：非 OCR 样本默认填充的“完美噪声”
+PERFECT_VALUES = [1.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+
 def load_ocr_list(path: str):
     """加载 OCR JSON 列表"""
     if not os.path.exists(path):
@@ -75,6 +79,57 @@ def has_noise(sample: dict) -> bool:
         if nv and any(any(v != 0.0 for v in feat) for feat in nv):
             return True
     return False
+
+
+def is_perfect_noise_sample(sample: dict) -> bool:
+    """判断样本是否为“完美噪声”（通常意味着 non-OCR 路或缺失时的占位）。
+
+    关键技巧：对 merged dataset，non-OCR 的 noise_values 会被 merge_datasets.py 填成 PERFECT_VALUES。
+    而 OCR 样本在 add_noise_features.py 中，通常 [CLS]/[SEP] 位置会保持 0 向量，
+    因此 noise_values[0] 一般 != PERFECT_VALUES。
+    """
+    nv = sample.get("noise_values") or sample.get("noise_features") or []
+    if not nv:
+        return False
+    first = nv[0]
+    return isinstance(first, list) and len(first) >= 7 and list(first[:7]) == PERFECT_VALUES
+
+
+def compute_ocr_prefix_len(split_data, *, probe_after_boundary: int = 2000) -> int:
+    """在 split 中估计 OCR 前缀块长度。
+
+    约定：未 shuffle 的 merge_datasets.py 会把 OCR split 放在前面，non-OCR 放在后面。
+    因此 split 的开头是一段 OCR 样本（non-perfect），随后是 non-OCR（perfect）。
+
+    若检测到 boundary 之后仍然出现 OCR 样本，说明 merge 时 shuffle 了或数据顺序被破坏，
+    此时无法在 merged dataset 上做 index-to-ocr_json 对齐校验。
+    """
+    n = len(split_data)
+    if n == 0:
+        return 0
+
+    # OCR 样本通常非 perfect；non-OCR 样本通常 perfect
+    def is_ocr(i: int) -> bool:
+        return not is_perfect_noise_sample(split_data[i])
+
+    # 如果第一条就是 perfect，说明 OCR 前缀长度为 0（可能 shuffle 了，或根本没有 OCR）
+    if not is_ocr(0):
+        return 0
+
+    # 找到第一个 non-OCR（perfect）的位置作为 boundary
+    boundary = n
+    for i in range(n):
+        if not is_ocr(i):
+            boundary = i
+            break
+
+    # boundary 后抽查一段：如果还有 OCR，说明被 shuffle，不可验证
+    end = min(n, boundary + probe_after_boundary)
+    for j in range(boundary, end):
+        if is_ocr(j):
+            # 返回 -1 作为“不可判定/被 shuffle”信号
+            return -1
+    return boundary
 
 def main():
     parser = argparse.ArgumentParser(description="校验 OCR 特征与 dataset 对齐")
@@ -141,14 +196,41 @@ def main():
             raise ValueError(f"dataset 中不存在 split={split_arg}，现有 splits={list(dataset.keys())}")
         splits_to_check = [split_arg]
 
-    offsets = _split_offsets(dataset)
+    # NOTE:
+    # 对 OCR-only dataset：split 的所有样本都应对应 OCR JSON 的连续片段，可用 split 内 idx + ocr_offset。
+    # 对 merged dataset：split 中 OCR 只是一个“前缀块”（若 merge 未 shuffle），其后是 non-OCR。
+    # 因此 ocr_offset 不能用 len(split)（也不能用 len(merged train)），而应该用“前一 split 的 OCR 前缀长度”。
+
+    # 先计算每个 split 的 OCR 前缀长度（-1 表示检测到 shuffle，无法校验）
+    ocr_prefix = {}
+    for s in ["train", "test"]:
+        if s in dataset:
+            ocr_prefix[s] = compute_ocr_prefix_len(dataset[s])
+
+    # 计算 OCR JSON offset：train 从 0 开始，test 的 offset 等于 train 的 OCR 前缀长度
+    ocr_offsets = {}
+    ocr_offsets["train"] = 0
+    if "test" in dataset:
+        train_prefix = ocr_prefix.get("train", 0)
+        # 若 train_prefix == -1，说明 merged 的 train 被 shuffle，无法对齐
+        ocr_offsets["test"] = train_prefix if isinstance(train_prefix, int) and train_prefix > 0 else 0
 
     for split_name in splits_to_check:
         split_data = dataset[split_name]
-        offset = offsets.get(split_name, 0)
-        check_count = min(args.check_samples, len(split_data), max(0, len(ocr_list) - offset))
 
-        print(f"\n开始检查 split={split_name} 的前 {check_count} 条样本（ocr_offset={offset}）...")
+        prefix_len = ocr_prefix.get(split_name, len(split_data))
+        if prefix_len == -1:
+            print(
+                f"\n⚠️  split={split_name} 检测到 OCR/non-OCR 混洗（OCR 不再是前缀块），无法在 merged dataset 上做 index 对齐校验。"
+            )
+            print("   建议：改为在 OCR-only 数据集（processed_dataset_ocr..._with_noise）上运行 verify。")
+            continue
+
+        # 只在 OCR 前缀块上做对齐检查；若这是 OCR-only 数据集，则 prefix_len == len(split)
+        offset = ocr_offsets.get(split_name, 0)
+        check_count = min(args.check_samples, prefix_len, max(0, len(ocr_list) - offset))
+
+        print(f"\n开始检查 split={split_name} 的前 {check_count} 条 OCR 样本（ocr_offset={offset}，ocr_prefix_len={prefix_len}）...")
         print("=" * 80)
 
         matches = 0
