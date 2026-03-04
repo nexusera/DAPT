@@ -12,6 +12,8 @@
 import argparse
 import json
 import os
+import re
+import unicodedata
 from datasets import load_from_disk
 from transformers import AutoTokenizer
 
@@ -65,6 +67,53 @@ def extract_text_from_dataset_sample(sample, tokenizer):
     # 解码 tokens，过滤特殊 token
     text = tokenizer.decode(input_ids, skip_special_tokens=True)
     return text.strip()
+
+
+_KEEP_CHARS_RE = re.compile(r"[0-9a-z\u4e00-\u9fff]+", re.IGNORECASE)
+
+
+def normalize_for_match(text: str, *, max_len: int = 200) -> str:
+    """用于对齐校验的轻量规范化。
+
+    目的不是还原原文，而是消除 tokenization/decode 与 OCR 文本在:
+    - 大小写（THEFIRST vs thefirst）
+    - 全角/半角
+    - 空格/标点/换行
+    上的差异，减少误报。
+    """
+    if not text:
+        return ""
+    text = unicodedata.normalize("NFKC", text)
+    text = text.lower()
+    # 仅保留: 数字/英文字母/中文（其余符号统一丢弃）
+    chunks = _KEEP_CHARS_RE.findall(text)
+    if not chunks:
+        return ""
+    normalized = "".join(chunks)
+    return normalized[:max_len]
+
+
+def is_text_match(dataset_text: str, ocr_text: str) -> bool:
+    """启发式匹配：足够鲁棒且便于解释。
+
+    - 优先做包含关系（前缀/子串），解决很多“同一条目但 OCR 更长/更短”的情况。
+    - 否则用字符集合交集做一个粗判。
+    """
+    a = normalize_for_match(dataset_text, max_len=200)
+    b = normalize_for_match(ocr_text, max_len=200)
+    if not a and not b:
+        return True
+    if not a or not b:
+        return False
+
+    # 包含关系：常见于 dataset 被截断、OCR 多了页眉页脚等
+    if len(a) >= 12 and a in b:
+        return True
+    if len(b) >= 12 and b in a:
+        return True
+
+    # 粗略字符重叠：避免重计算，保持脚本轻量
+    return len(set(a) & set(b)) > 8
 
 
 def has_noise(sample: dict) -> bool:
@@ -254,24 +303,15 @@ def main():
             else:
                 no_noise_cnt += 1
         
-            # 简单匹配检查（取前50字符比较）
-            dataset_preview = dataset_text[:50].replace(" ", "")
-            ocr_preview = ocr_text[:50].replace(" ", "")
-        
-            # 如果两者都有文本且相似（简单检查）
-            is_match = False
-            if dataset_preview and ocr_preview:
-                # 简单检查：是否有重叠的字符
-                if len(set(dataset_preview) & set(ocr_preview)) > 5:
-                    is_match = True
-                    matches += 1
-                else:
-                    mismatches += 1
-            elif not dataset_preview and not ocr_preview:
-                is_match = True
+            is_match = is_text_match(dataset_text, ocr_text)
+            if is_match:
                 matches += 1
             else:
                 mismatches += 1
+
+            # 展示用 preview：仍然截断，但用 normalize 结果更便于目检
+            dataset_preview = normalize_for_match(dataset_text, max_len=60)
+            ocr_preview = normalize_for_match(ocr_text, max_len=60)
         
             status = "✅ 匹配" if is_match else "❌ 不匹配"
             noise_status = "有噪声" if has_noise_feat else "无噪声"
