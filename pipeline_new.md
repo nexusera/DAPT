@@ -171,6 +171,7 @@ python verify_noise_alignment.py \
   --dataset /data/ocean/DAPT/workspace/processed_dataset_merged \
   --ocr_json /home/ocean/semi_label/ocr_rerun/char_ocr_9297.json \
   --check_samples 50 \
+  --split all
   
 ```
 ## 3. 最新的训练（KV-aware MLM + 噪声+KV-NSP）

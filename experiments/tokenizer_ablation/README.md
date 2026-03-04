@@ -1,6 +1,15 @@
 # Tokenizer Ablation Runner
 
-这套脚本用于复现/跑通 Tokenizer 相关消融（T1~T4），并尽量复用你现有 pipeline：
+这套脚本用于复现/跑通 Tokenizer 相关消融（T1~T4），并尽量复用你现有 pipeline。
+
+本文档是 **唯一入口**：从准备数据 → 构建 4 套 tokenizer/dataset → 四个变体训练（quick/full）都在这里。
+
+> 远端路径假设：仓库根目录为 `/data/ocean/DAPT`（不存在 `/data/ocean/DAPT/DAPT`）。
+
+## 你要做什么（四个全跑）
+
+- **准备数据（一次）**：`00_check_env.sh` → `10_make_tokenizers.sh` → `20_make_jieba_dicts.sh` → `30_build_datasets.sh`
+- **训练（四个全跑）**：用 `train_dapt_macbert_staged.py` 分别跑 T1/T2/T3/T4（建议先 quick，确认无误后再 full）
 - Tokenizer 生成：使用本目录的 `build_tokenizer_variant.py`（可配置，避免改动你现有脚本里硬编码的 `/data/ocean` 路径）
 - Jieba 词典生成：使用本目录的 `build_jieba_dict.py`（每个 tokenizer 变体一份，避免 confound）
 - 数据集构建：按 `pipeline_new.md` 的规则分两路构建再合并
@@ -10,38 +19,188 @@
 
 ## 快速开始
 
-1. 准备配置：
+### 0)（可选但强烈建议）记录可复现信息
 
 ```bash
-cd DAPT/experiments/tokenizer_ablation
+cd /data/ocean/DAPT
+git rev-parse HEAD | tee -a /data/ocean/DAPT/ablation_tokenizer_gitsha.log
+git status --porcelain | tee -a /data/ocean/DAPT/ablation_tokenizer_gitsha.log
+
+python -V | tee -a /data/ocean/DAPT/ablation_tokenizer_env.log
+python -m pip freeze | tee -a /data/ocean/DAPT/ablation_tokenizer_env.log
+```
+
+### 1) 准备配置（只改一次）
+
+```bash
+cd /data/ocean/DAPT/experiments/tokenizer_ablation
+
 # 若仓库已包含 config.env，可直接用；需要自定义时再修改。
 # 如果缺失，再从 example 复制：
-# cp config.env.example config.env
+cp -n config.env.example config.env
+
+# 如需修改 OUT_ROOT / 输入文件路径，请编辑 config.env
+# vim config.env
+
+# 校验必需文件是否存在，并创建输出目录
+bash 00_check_env.sh
 ```
 
-2. 生成 tokenizer 变体：
+### 2) 生成 4 个 tokenizer 变体（T1~T4）
 
 ```bash
-bash 10_make_tokenizers.sh
+cd /data/ocean/DAPT/experiments/tokenizer_ablation
+bash 10_make_tokenizers.sh 2>&1 | tee -a "$(pwd)/tokenizer_build.log"
 ```
 
-3. 生成每个变体对应的 Jieba 词典：
+### 3) 生成每个变体对应的 Jieba 词典（避免消融 confound）
 
 ```bash
-bash 20_make_jieba_dicts.sh
+cd /data/ocean/DAPT/experiments/tokenizer_ablation
+bash 20_make_jieba_dicts.sh 2>&1 | tee -a "$(pwd)/jieba_build.log"
 ```
 
-4. 为每个 tokenizer 重建数据集（non-OCR + OCR(with noise) -> merged）：
+### 4) 为每个 tokenizer 重建数据集（non-OCR + OCR(with noise) -> merged）
+
+该步骤会严格遵守 `pipeline_new.md` 的数据规则：
+
+- non-OCR 路：允许 shuffle
+- OCR 路：强制不 shuffle，构建后写入 `noise_values`，并运行 `verify_noise_alignment.py` 抽检
+- 最终使用 `merge_datasets.py` 合并成训练用的 merged dataset
 
 ```bash
-bash 30_build_datasets.sh
+cd /data/ocean/DAPT/experiments/tokenizer_ablation
+bash 30_build_datasets.sh 2>&1 | tee -a "$(pwd)/dataset_build.log"
 ```
 
-（可选）先用小语料 quick-run：
+### 5)（强烈建议）Quick 数据集（小语料）
+
+`train_dapt_macbert_staged.py` 不支持 `--max_steps`，因此 quick-run 推荐用“小语料”来缩短每个 epoch。
 
 ```bash
+cd /data/ocean/DAPT/experiments/tokenizer_ablation
 bash 31_make_quick_corpus.sh
 bash 32_build_datasets_quick.sh
+```
+
+## 训练（四个全跑）
+
+### 6) Quick 训练（四个变体都跑一遍 sanity）
+
+把下面的 `${OUT_ROOT}` 换成你 `config.env` 里的 `OUT_ROOT`（默认是 `/data/ocean/DAPT/ablation/tokenizer`）。
+
+```bash
+OUT_ROOT=/data/ocean/DAPT/ablation/tokenizer
+
+# T1 quick
+python /data/ocean/DAPT/train_dapt_macbert_staged.py \
+	--output_dir ${OUT_ROOT}/runs/t1_quick \
+	--dataset_path ${OUT_ROOT}/datasets_quick/processed_dataset_t1 \
+	--tokenizer_path ${OUT_ROOT}/tokenizers/t1_base \
+	--noise_bins_json /data/ocean/DAPT/workspace/noise_bins.json \
+	--nsp_data_dir /data/ocean/DAPT/data/pseudo_kv_labels_filtered.json \
+	--num_rounds 1 \
+	--mlm_epochs_per_round 1 \
+	--nsp_epochs_per_round 1 \
+	--learning_rate 5e-5 \
+	2>&1 | tee ${OUT_ROOT}/runs/t1_quick/train.log
+
+# T2 quick
+python /data/ocean/DAPT/train_dapt_macbert_staged.py \
+	--output_dir ${OUT_ROOT}/runs/t2_quick \
+	--dataset_path ${OUT_ROOT}/datasets_quick/processed_dataset_t2 \
+	--tokenizer_path ${OUT_ROOT}/tokenizers/t2_keys \
+	--noise_bins_json /data/ocean/DAPT/workspace/noise_bins.json \
+	--nsp_data_dir /data/ocean/DAPT/data/pseudo_kv_labels_filtered.json \
+	--num_rounds 1 \
+	--mlm_epochs_per_round 1 \
+	--nsp_epochs_per_round 1 \
+	--learning_rate 5e-5 \
+	2>&1 | tee ${OUT_ROOT}/runs/t2_quick/train.log
+
+# T3 quick（仅当你确实有 OCR raw vocab 时才会生成这个 tokenizer 目录）
+python /data/ocean/DAPT/train_dapt_macbert_staged.py \
+	--output_dir ${OUT_ROOT}/runs/t3_quick \
+	--dataset_path ${OUT_ROOT}/datasets_quick/processed_dataset_t3 \
+	--tokenizer_path ${OUT_ROOT}/tokenizers/t3_ocr_raw \
+	--noise_bins_json /data/ocean/DAPT/workspace/noise_bins.json \
+	--nsp_data_dir /data/ocean/DAPT/data/pseudo_kv_labels_filtered.json \
+	--num_rounds 1 \
+	--mlm_epochs_per_round 1 \
+	--nsp_epochs_per_round 1 \
+	--learning_rate 5e-5 \
+	2>&1 | tee ${OUT_ROOT}/runs/t3_quick/train.log
+
+# T4 quick
+python /data/ocean/DAPT/train_dapt_macbert_staged.py \
+	--output_dir ${OUT_ROOT}/runs/t4_quick \
+	--dataset_path ${OUT_ROOT}/datasets_quick/processed_dataset_t4 \
+	--tokenizer_path ${OUT_ROOT}/tokenizers/t4_ocr_llm_keys \
+	--noise_bins_json /data/ocean/DAPT/workspace/noise_bins.json \
+	--nsp_data_dir /data/ocean/DAPT/data/pseudo_kv_labels_filtered.json \
+	--num_rounds 1 \
+	--mlm_epochs_per_round 1 \
+	--nsp_epochs_per_round 1 \
+	--learning_rate 5e-5 \
+	2>&1 | tee ${OUT_ROOT}/runs/t4_quick/train.log
+```
+
+### 7) Full 训练（四个变体全量训练，1-seed）
+
+```bash
+OUT_ROOT=/data/ocean/DAPT/ablation/tokenizer
+
+# T1 full
+python /data/ocean/DAPT/train_dapt_macbert_staged.py \
+	--output_dir ${OUT_ROOT}/runs/t1_full_seed42 \
+	--dataset_path ${OUT_ROOT}/datasets/processed_dataset_t1 \
+	--tokenizer_path ${OUT_ROOT}/tokenizers/t1_base \
+	--noise_bins_json /data/ocean/DAPT/workspace/noise_bins.json \
+	--nsp_data_dir /data/ocean/DAPT/data/pseudo_kv_labels_filtered.json \
+	--num_rounds 3 \
+	--mlm_epochs_per_round 1 \
+	--nsp_epochs_per_round 3 \
+	--learning_rate 5e-5 \
+	2>&1 | tee ${OUT_ROOT}/runs/t1_full_seed42/train.log
+
+# T2 full
+python /data/ocean/DAPT/train_dapt_macbert_staged.py \
+	--output_dir ${OUT_ROOT}/runs/t2_full_seed42 \
+	--dataset_path ${OUT_ROOT}/datasets/processed_dataset_t2 \
+	--tokenizer_path ${OUT_ROOT}/tokenizers/t2_keys \
+	--noise_bins_json /data/ocean/DAPT/workspace/noise_bins.json \
+	--nsp_data_dir /data/ocean/DAPT/data/pseudo_kv_labels_filtered.json \
+	--num_rounds 3 \
+	--mlm_epochs_per_round 1 \
+	--nsp_epochs_per_round 3 \
+	--learning_rate 5e-5 \
+	2>&1 | tee ${OUT_ROOT}/runs/t2_full_seed42/train.log
+
+# T3 full（同 quick：仅当你确实生成了 t3_ocr_raw tokenizer）
+python /data/ocean/DAPT/train_dapt_macbert_staged.py \
+	--output_dir ${OUT_ROOT}/runs/t3_full_seed42 \
+	--dataset_path ${OUT_ROOT}/datasets/processed_dataset_t3 \
+	--tokenizer_path ${OUT_ROOT}/tokenizers/t3_ocr_raw \
+	--noise_bins_json /data/ocean/DAPT/workspace/noise_bins.json \
+	--nsp_data_dir /data/ocean/DAPT/data/pseudo_kv_labels_filtered.json \
+	--num_rounds 3 \
+	--mlm_epochs_per_round 1 \
+	--nsp_epochs_per_round 3 \
+	--learning_rate 5e-5 \
+	2>&1 | tee ${OUT_ROOT}/runs/t3_full_seed42/train.log
+
+# T4 full
+python /data/ocean/DAPT/train_dapt_macbert_staged.py \
+	--output_dir ${OUT_ROOT}/runs/t4_full_seed42 \
+	--dataset_path ${OUT_ROOT}/datasets/processed_dataset_t4 \
+	--tokenizer_path ${OUT_ROOT}/tokenizers/t4_ocr_llm_keys \
+	--noise_bins_json /data/ocean/DAPT/workspace/noise_bins.json \
+	--nsp_data_dir /data/ocean/DAPT/data/pseudo_kv_labels_filtered.json \
+	--num_rounds 3 \
+	--mlm_epochs_per_round 1 \
+	--nsp_epochs_per_round 3 \
+	--learning_rate 5e-5 \
+	2>&1 | tee ${OUT_ROOT}/runs/t4_full_seed42/train.log
 ```
 
 ## 输出结构（默认）
@@ -60,3 +219,8 @@ bash 32_build_datasets_quick.sh
 
 - T1 会把 base tokenizer “快照”保存到输出目录，用于保证版本可复现。
 - 若某个输入词表不存在（例如没有 OCR raw/kept），脚本会报错并退出，避免你跑到一半才发现数据缺失。
+
+## 我到底应该看哪个文件？
+
+- 只看这一份即可：`/data/ocean/DAPT/experiments/tokenizer_ablation/README.md`
+
