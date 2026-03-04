@@ -1,5 +1,5 @@
 # DAPT 全流程（含噪声对齐、去重、KV-NSP）
-
+写在最前：重要！！！当前的基座模型已经从RoBERTa换为了MacBert
 ## 0. 数据去重与清洗
 - 脚本：`extract_and_dedup_json_v2.py`
 - 作用：扫描多源 JSON/TXT，提取文本，MD5 去重。
@@ -173,7 +173,9 @@ python verify_noise_alignment.py \
   --check_samples 50 \
   
 ```
-## 3. 训练（KV-aware MLM + 噪声）
+## 3. 最新的训练（KV-aware MLM + 噪声+KV-NSP）
+训练的脚本为train_dapt_macbert_staged.py
+<!-- ## 3. 训练（KV-aware MLM + 噪声）
 1) 指向对齐后的数据集（单独 OCR 或合并后）：
 ```bash
 ln -sfn /data/ocean/DAPT/workspace/processed_dataset_merged \
@@ -206,7 +208,7 @@ python kv_nsp/run_train.py \
   --per_device_eval_batch_size 32
 ```
 - 输入格式 `[CLS] Key [SEP] Value [SEP]`，自动使用 token_type_ids 区分段。
-- 负样本：倒序 + 随机 value，比例由 `hard_negative_prob` 控制。
+- 负样本：倒序 + 随机 value，比例由 `hard_negative_prob` 控制。 -->
 
 ## 5. 下游微调 / 评估
 - 使用最新预训练模型（含噪声）做 NER/其它任务，保持同超参对比，修改配置中的 `model_name_or_path`、`tokenizer_name_or_path` 指向新的 `final_model`。

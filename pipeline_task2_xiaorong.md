@@ -71,3 +71,159 @@ python /data/ocean/DAPT/dapt_eval_package/MedStruct-S-Benchmark-feature-configur
   --schema_file $SCHEMA_FILE \
   --task_type task2 \
   --output_file "/data/ocean/DAPT/runs/ebqa_macbert_report_task2.json"
+
+---
+
+#### 实验 5: Ablation No NSP (MLM Only)
+
+# 5.1 转换训练集
+python /data/ocean/DAPT/dapt_eval_package/pre_struct/ebqa/convert_ebqa.py \
+  --input_file "/data/ocean/DAPT/biaozhu_with_ocr_noise_prepared/real_train_with_ocr.json" \
+  --output_file "/data/ocean/DAPT/data/kv_ner_prepared_comparison/ebqa_train_real.jsonl" \
+  --struct_path $SCHEMA_FILE \
+  --tokenizer_name $TOKENIZER_PATH \
+  --noise_bins $NOISE_BINS
+
+# 5.2 转换测试集
+python /data/ocean/DAPT/dapt_eval_package/pre_struct/ebqa/convert_ebqa.py \
+  --input_file "/data/ocean/DAPT/biaozhu_with_ocr_noise_prepared/real_test_with_ocr.json" \
+  --output_file "/data/ocean/DAPT/data/kv_ner_prepared_comparison/ebqa_eval_real.jsonl" \
+  --struct_path $SCHEMA_FILE \
+  --tokenizer_name $TOKENIZER_PATH \
+  --noise_bins $NOISE_BINS
+
+# 5.3 微调 No NSP EBQA 模型
+python /data/ocean/DAPT/dapt_eval_package/pre_struct/ebqa/train_ebqa.py \
+  --config /data/ocean/DAPT/dapt_eval_package/pre_struct/ebqa/ebqa_config_no_nsp.json
+
+# 5.4 推理 (生成预测结果)
+python /data/ocean/DAPT/dapt_eval_package/pre_struct/ebqa/predict_ebqa.py \
+  --model_dir "/data/ocean/DAPT/runs/ebqa_no_nsp/best" \
+  --tokenizer $TOKENIZER_PATH \
+  --data_path "/data/ocean/DAPT/data/kv_ner_prepared_comparison/ebqa_eval_real.jsonl" \
+  --output_preds "/data/ocean/DAPT/runs/ebqa_no_nsp_preds.jsonl"
+
+# 5.5 聚合 QA 级预测为文档级
+python /data/ocean/DAPT/dapt_eval_package/pre_struct/ebqa/aggregate_qa_preds_to_doc.py \
+  --raw_file "/data/ocean/DAPT/biaozhu_with_ocr_noise_prepared/real_test_with_ocr.json" \
+  --qa_pred_file "/data/ocean/DAPT/runs/ebqa_no_nsp_preds.jsonl" \
+  --output_file "/data/ocean/DAPT/runs/ebqa_no_nsp_doc_preds.jsonl" \
+  --prefer score
+
+# 5.6 评测前对齐
+python dapt_eval_package/MedStruct-S-Benchmark-feature-configurable-metrics/preprocess_ebqa_real_h200.py \
+  --gt_file /data/ocean/DAPT/biaozhu_with_ocr_noise_prepared/real_test_with_ocr.json \
+  --pred_file /data/ocean/DAPT/runs/ebqa_no_nsp_doc_preds.jsonl \
+  --output_dir aligned_data
+
+# 5.7 运行 Scorer (Task 2)
+python /data/ocean/DAPT/dapt_eval_package/MedStruct-S-Benchmark-feature-configurable-metrics/scorer.py \
+  --pred_file "/data/ocean/DAPT/aligned_data/aligned_ebqa_no_nsp_doc_preds.jsonl" \
+  --gt_file "/data/ocean/DAPT/aligned_data/gt_ebqa_aligned.jsonl" \
+  --schema_file $SCHEMA_FILE \
+  --task_type task2 \
+  --output_file "/data/ocean/DAPT/runs/ebqa_no_nsp_report_task2.json"
+
+---
+
+#### 实验 6: Ablation No MLM (NSP Only)
+
+# 6.1 转换训练集
+python /data/ocean/DAPT/dapt_eval_package/pre_struct/ebqa/convert_ebqa.py \
+  --input_file "/data/ocean/DAPT/biaozhu_with_ocr_noise_prepared/real_train_with_ocr.json" \
+  --output_file "/data/ocean/DAPT/data/kv_ner_prepared_comparison/ebqa_train_real.jsonl" \
+  --struct_path $SCHEMA_FILE \
+  --tokenizer_name $TOKENIZER_PATH \
+  --noise_bins $NOISE_BINS
+
+# 6.2 转换测试集
+python /data/ocean/DAPT/dapt_eval_package/pre_struct/ebqa/convert_ebqa.py \
+  --input_file "/data/ocean/DAPT/biaozhu_with_ocr_noise_prepared/real_test_with_ocr.json" \
+  --output_file "/data/ocean/DAPT/data/kv_ner_prepared_comparison/ebqa_eval_real.jsonl" \
+  --struct_path $SCHEMA_FILE \
+  --tokenizer_name $TOKENIZER_PATH \
+  --noise_bins $NOISE_BINS
+
+# 6.3 微调 No MLM EBQA 模型
+python /data/ocean/DAPT/dapt_eval_package/pre_struct/ebqa/train_ebqa.py \
+  --config /data/ocean/DAPT/dapt_eval_package/pre_struct/ebqa/ebqa_config_no_mlm.json
+
+# 6.4 推理 (生成预测结果)
+python /data/ocean/DAPT/dapt_eval_package/pre_struct/ebqa/predict_ebqa.py \
+  --model_dir "/data/ocean/DAPT/runs/ebqa_no_mlm/best" \
+  --tokenizer $TOKENIZER_PATH \
+  --data_path "/data/ocean/DAPT/data/kv_ner_prepared_comparison/ebqa_eval_real.jsonl" \
+  --output_preds "/data/ocean/DAPT/runs/ebqa_no_mlm_preds.jsonl"
+
+# 6.5 聚合 QA 级预测为文档级
+python /data/ocean/DAPT/dapt_eval_package/pre_struct/ebqa/aggregate_qa_preds_to_doc.py \
+  --raw_file "/data/ocean/DAPT/biaozhu_with_ocr_noise_prepared/real_test_with_ocr.json" \
+  --qa_pred_file "/data/ocean/DAPT/runs/ebqa_no_mlm_preds.jsonl" \
+  --output_file "/data/ocean/DAPT/runs/ebqa_no_mlm_doc_preds.jsonl" \
+  --prefer score
+
+# 6.6 评测前对齐
+python dapt_eval_package/MedStruct-S-Benchmark-feature-configurable-metrics/preprocess_ebqa_real_h200.py \
+  --gt_file /data/ocean/DAPT/biaozhu_with_ocr_noise_prepared/real_test_with_ocr.json \
+  --pred_file /data/ocean/DAPT/runs/ebqa_no_mlm_doc_preds.jsonl \
+  --output_dir aligned_data
+
+# 6.7 运行 Scorer (Task 2)
+python /data/ocean/DAPT/dapt_eval_package/MedStruct-S-Benchmark-feature-configurable-metrics/scorer.py \
+  --pred_file "/data/ocean/DAPT/aligned_data/aligned_ebqa_no_mlm_doc_preds.jsonl" \
+  --gt_file "/data/ocean/DAPT/aligned_data/gt_ebqa_aligned.jsonl" \
+  --schema_file $SCHEMA_FILE \
+  --task_type task2 \
+  --output_file "/data/ocean/DAPT/runs/ebqa_no_mlm_report_task2.json"
+
+---
+
+#### 实验 7: No-Noise Baseline (标准 DAPT，无噪声嵌入)
+
+# 7.1 转换训练集
+python /data/ocean/DAPT/dapt_eval_package/pre_struct/ebqa/convert_ebqa.py \
+  --input_file "/data/ocean/DAPT/biaozhu_with_ocr_noise_prepared/real_train_with_ocr.json" \
+  --output_file "/data/ocean/DAPT/data/kv_ner_prepared_comparison/ebqa_train_real.jsonl" \
+  --struct_path $SCHEMA_FILE \
+  --tokenizer_name $TOKENIZER_PATH \
+  --noise_bins $NOISE_BINS
+
+# 7.2 转换测试集
+python /data/ocean/DAPT/dapt_eval_package/pre_struct/ebqa/convert_ebqa.py \
+  --input_file "/data/ocean/DAPT/biaozhu_with_ocr_noise_prepared/real_test_with_ocr.json" \
+  --output_file "/data/ocean/DAPT/data/kv_ner_prepared_comparison/ebqa_eval_real.jsonl" \
+  --struct_path $SCHEMA_FILE \
+  --tokenizer_name $TOKENIZER_PATH \
+  --noise_bins $NOISE_BINS
+
+# 7.3 微调 No Noise EBQA 模型
+python /data/ocean/DAPT/dapt_eval_package/pre_struct/ebqa/train_ebqa.py \
+  --config /data/ocean/DAPT/dapt_eval_package/pre_struct/ebqa/ebqa_config_no_noise.json
+
+# 7.4 推理 (生成预测结果)
+python /data/ocean/DAPT/dapt_eval_package/pre_struct/ebqa/predict_ebqa.py \
+  --model_dir "/data/ocean/DAPT/runs/ebqa_no_noise/best" \
+  --tokenizer $TOKENIZER_PATH \
+  --data_path "/data/ocean/DAPT/data/kv_ner_prepared_comparison/ebqa_eval_real.jsonl" \
+  --output_preds "/data/ocean/DAPT/runs/ebqa_no_noise_preds.jsonl"
+
+# 7.5 聚合 QA 级预测为文档级
+python /data/ocean/DAPT/dapt_eval_package/pre_struct/ebqa/aggregate_qa_preds_to_doc.py \
+  --raw_file "/data/ocean/DAPT/biaozhu_with_ocr_noise_prepared/real_test_with_ocr.json" \
+  --qa_pred_file "/data/ocean/DAPT/runs/ebqa_no_noise_preds.jsonl" \
+  --output_file "/data/ocean/DAPT/runs/ebqa_no_noise_doc_preds.jsonl" \
+  --prefer score
+
+# 7.6 评测前对齐
+python dapt_eval_package/MedStruct-S-Benchmark-feature-configurable-metrics/preprocess_ebqa_real_h200.py \
+  --gt_file /data/ocean/DAPT/biaozhu_with_ocr_noise_prepared/real_test_with_ocr.json \
+  --pred_file /data/ocean/DAPT/runs/ebqa_no_noise_doc_preds.jsonl \
+  --output_dir aligned_data
+
+# 7.7 运行 Scorer (Task 2)
+python /data/ocean/DAPT/dapt_eval_package/MedStruct-S-Benchmark-feature-configurable-metrics/scorer.py \
+  --pred_file "/data/ocean/DAPT/aligned_data/aligned_ebqa_no_noise_doc_preds.jsonl" \
+  --gt_file "/data/ocean/DAPT/aligned_data/gt_ebqa_aligned.jsonl" \
+  --schema_file $SCHEMA_FILE \
+  --task_type task2 \
+  --output_file "/data/ocean/DAPT/runs/ebqa_no_noise_report_task2.json"
