@@ -26,43 +26,71 @@ Variants:
 ---
 
 ## 文件与脚本参考（来自 pipeline）
-- OCR vocab 挖掘：`DAPT/train_ocr_clean.py`
-- LLM 过滤：`DAPT/filter_vocab_with_llm.py`
-- Tokenizer 合并：`DAPT/final_merge_v9_regex_split_slim.py`
-- Jieba 词典生成：`DAPT/generate_jieba_vocab.py`
-- 数据构建：`DAPT/build_dataset_final_slim.py`（或 `retokenize_processed_dataset_with_wordids.py`）
-- 训练入口：`DAPT/train_dapt_macbert_staged.py`
+- OCR vocab 挖掘：`/data/ocean/DAPT/train_ocr_clean.py`
+- LLM 过滤：`/data/ocean/DAPT/filter_vocab_with_llm.py`
+- Tokenizer 合并（历史脚本，含硬编码路径，不建议做消融入口）：`/data/ocean/DAPT/final_merge_v9_regex_split_slim.py`
+- Jieba 词典生成（历史脚本，含硬编码路径，不建议做消融入口）：`/data/ocean/DAPT/generate_jieba_vocab.py`
+- 数据构建（word_ids 对齐）：`/data/ocean/DAPT/build_dataset_final_slim.py`
+- 训练入口（MacBERT staged, KV-MLM+KV-NSP+noise）：`/data/ocean/DAPT/train_dapt_macbert_staged.py`
+
+**本消融推荐统一入口（为可复现性、避免硬编码路径）**：
+- `/data/ocean/DAPT/experiments/tokenizer_ablation/`（本次新增的一套可配置脚本）
 
 ---
 
-## 具体流程（可复制的步骤）
+## 具体流程（远端可复制执行，统一绝对路径）
 
-1) 准备 base tokenizer（T1）
+> 重要路径约定：你的远端仓库根目录是 `/data/ocean/DAPT`，不存在 `/data/ocean/DAPT/DAPT`。
+
+### 0) 固化可复现信息（强烈建议每次实验先跑）
 
 ```bash
-# 假设已有基础 tokenizer 目录 my-medical-tokenizer/base
-# 若没有，先复制官方/公司 base tokenizer 到工作目录
-cp -r /path/to/base-tokenizer /data/ocean/DAPT/my-medical-tokenizer/base
+cd /data/ocean/DAPT
+
+# 记录代码版本
+git rev-parse HEAD | tee -a /data/ocean/DAPT/ablation_tokenizer_gitsha.log
+git status --porcelain | tee -a /data/ocean/DAPT/ablation_tokenizer_gitsha.log
+
+# 记录环境（可选）
+python -V | tee -a /data/ocean/DAPT/ablation_tokenizer_env.log
+python -m pip freeze | tee -a /data/ocean/DAPT/ablation_tokenizer_env.log
 ```
 
-2) 生成 OCR vocab（用于 T3/T4）
+### 1) 配置实验参数（只改一次）
 
 ```bash
-# 在 pipeline 中运行 OCR 词表挖掘（以 train_chunked.txt 为语料）
-python DAPT/train_ocr_clean.py \
-  --corpus /data/ocean/DAPT/workspace/train_chunked.txt \
-  --output_dir /data/ocean/DAPT/workspace/medical_vocab_ocr_only
-# 结果在 /data/ocean/DAPT/workspace/medical_vocab_ocr_only/vocab.txt
+cd /data/ocean/DAPT/experiments/tokenizer_ablation
+
+# 复制配置模板
+cp -n config.env.example config.env
+
+# 编辑 config.env：把 KEYS/OCR_VOCAB/TRAIN_FILE/OUT_ROOT 改成你实际路径
+vim config.env
+
+# 校验必需文件是否存在，并创建输出目录
+bash 00_check_env.sh
 ```
 
-3) 对 OCR vocab 做 LLM 过滤（生成 kept_vocab.txt，用于 T4）
+> 说明：本目录脚本会把所有输出写到 `OUT_ROOT`（你在 config.env 里配置），建议按日期分目录，例如：
+> `OUT_ROOT="/data/ocean/DAPT/ablation/tokenizer/2026-03-04"`
+
+### 2)（可选）生成 OCR vocab 与 LLM 过滤产物
+
+如果你已经有：
+- `/data/ocean/DAPT/workspace/medical_vocab_ocr_only/vocab.txt`
+- `/data/ocean/DAPT/workspace/kept_vocab.txt`
+
+可以跳过本节。
 
 ```bash
-# 需要本地 LLM 服务（如 pipeline 文档所述）
+# 2.1 OCR vocab 挖掘
+python /data/ocean/DAPT/train_ocr_clean.py
+
+# 2.2 LLM 过滤（需要本地 LLM 服务）
 cd /data/ocean/DAPT
 export LLF_API_BASE="http://127.0.0.1:8008/v1"
 export OPENAI_API_KEY="EMPTY"
-python filter_vocab_with_llm.py \
+python /data/ocean/DAPT/filter_vocab_with_llm.py \
   --vocab /data/ocean/DAPT/workspace/medical_vocab_ocr_only/vocab.txt \
   --kept /data/ocean/DAPT/workspace/kept_vocab.txt \
   --dropped /data/ocean/DAPT/workspace/dropped_vocab.txt \
@@ -70,71 +98,111 @@ python filter_vocab_with_llm.py \
   --topn 50000
 ```
 
-4) 生成各变体的 tokenizer（使用 `final_merge_v9_regex_split_slim.py`）
+### 3) 生成四个 tokenizer 变体（T1~T4）
 
 ```bash
-# T2: base + keys
-python DAPT/final_merge_v9_regex_split_slim.py \
-  --base_tokenizer /data/ocean/DAPT/my-medical-tokenizer/base \
-  --keys_file DAPT/biaozhu_keys_only.txt \
-  --output_dir /data/ocean/DAPT/my-medical-tokenizer/t2_keys
+cd /data/ocean/DAPT/experiments/tokenizer_ablation
 
-# T3: base + ocr_raw
-python DAPT/final_merge_v9_regex_split_slim.py \
-  --base_tokenizer /data/ocean/DAPT/my-medical-tokenizer/base \
-  --ocr_vocab /data/ocean/DAPT/workspace/medical_vocab_ocr_only/vocab.txt \
-  --output_dir /data/ocean/DAPT/my-medical-tokenizer/t3_ocr_raw
+bash 10_make_tokenizers.sh 2>&1 | tee -a "$(pwd)/tokenizer_build.log"
 
-# T4: base + ocr_llm_filtered + keys
-python DAPT/final_merge_v9_regex_split_slim.py \
-  --base_tokenizer /data/ocean/DAPT/my-medical-tokenizer/base \
-  --ocr_vocab /data/ocean/DAPT/workspace/kept_vocab.txt \
-  --keys_file DAPT/biaozhu_keys_only.txt \
-  --output_dir /data/ocean/DAPT/my-medical-tokenizer/t4_ocr_llm_keys
+# 查看各 tokenizer 的词表大小（如果保存结构包含 vocab.txt）
+find "$(grep '^OUT_ROOT=' config.env | cut -d'=' -f2 | tr -d '"')/tokenizers" -maxdepth 2 -name vocab.txt -print -exec wc -l {} \;
 ```
 
-- 运行后请记录每个 tokenizer 的 `vocab.txt` 大小（`wc -l`）并保存为日志。
+输出目录（默认）：
+- `${OUT_ROOT}/tokenizers/t1_base`
+- `${OUT_ROOT}/tokenizers/t2_keys`
+- `${OUT_ROOT}/tokenizers/t3_ocr_raw`（若 OCR_VOCAB_RAW 存在）
+- `${OUT_ROOT}/tokenizers/t4_ocr_llm_keys`（必跑）
+
+### 4) 生成每个变体对应的 Jieba 词典（避免消融 confound）
 
 ```bash
-wc -l /data/ocean/DAPT/my-medical-tokenizer/t4_ocr_llm_keys/vocab.txt
+cd /data/ocean/DAPT/experiments/tokenizer_ablation
+bash 20_make_jieba_dicts.sh 2>&1 | tee -a "$(pwd)/jieba_build.log"
 ```
 
-5) 生成对应的 Jieba 词典（若 pipeline 要求）
+输出目录：`${OUT_ROOT}/jieba/*.txt`
+
+### 5) 重建数据集（word_ids 对齐）
 
 ```bash
-# 若 final_merge 脚本已生成 vocab_for_jieba，可跳过；否则：
-python DAPT/generate_jieba_vocab.py \
-  --kept_vocab /data/ocean/DAPT/workspace/kept_vocab.txt \
-  --keys_file DAPT/biaozhu_keys_only_min5.txt \
-  --output /data/ocean/DAPT/vocab_for_jieba.txt
+cd /data/ocean/DAPT/experiments/tokenizer_ablation
+bash 30_build_datasets.sh 2>&1 | tee -a "$(pwd)/dataset_build.log"
 ```
 
-6) 为每个 tokenizer 重建/retokenize 数据集
+输出目录：`${OUT_ROOT}/datasets/processed_dataset_t{1,2,3,4}`
+
+### 6) Quick-run（强烈建议先做，用小语料验证全链路可跑）
+
+> 说明：`train_dapt_macbert_staged.py` 不支持 `--max_steps` 这类短跑参数；
+> quick-run 的推荐方式是用小语料（减少每个 epoch 的耗时）。
 
 ```bash
-# 示例：为 T4 生成 processed dataset（OCR 路或 non-ocr 路视需求）
-python DAPT/build_dataset_final_slim.py \
-  --train_file /data/ocean/DAPT/workspace/train_chunked.txt \
-  --output_path /data/ocean/DAPT/workspace/processed_dataset_t4 \
-  --tokenizer_path /data/ocean/DAPT/my-medical-tokenizer/t4_ocr_llm_keys \
-  --shuffle_split
+cd /data/ocean/DAPT/experiments/tokenizer_ablation
 
-# 对 OCR-only 数据集请使用 --no_shuffle_split 并对应 OCR 路的 train_file
+# 6.1 生成小语料
+bash 31_make_quick_corpus.sh
+
+# 6.2 用小语料重建 quick datasets
+bash 32_build_datasets_quick.sh
 ```
 
-7) 快跑验证训练（短训练或少量 steps）
+### 7) 预训练 quick（每个 tokenizer 变体跑 1-round/1-epoch 做 sanity）
+
+以下命令按 T1/T3/T4 先跑（T2 视时间再补）。把 `${OUT_ROOT}` 换成你的真实输出根目录。
 
 ```bash
-# 建议先做 short sanity run（节省算力），例如 1 epoch 或指定 steps
-MASTER_ADDR=127.0.0.1 MASTER_PORT=29505 CUDA_VISIBLE_DEVICES=0 \
-python DAPT/train_dapt_macbert_staged.py \
-  --dataset_dir /data/ocean/DAPT/workspace/processed_dataset_t4 \
-  --output_dir /data/ocean/DAPT/workspace/output_tokenizer_t4_quick \
+# 例：T4 quick
+python /data/ocean/DAPT/train_dapt_macbert_staged.py \
+  --output_dir ${OUT_ROOT}/runs/t4_quick \
+  --dataset_path ${OUT_ROOT}/datasets_quick/processed_dataset_t4 \
+  --tokenizer_path ${OUT_ROOT}/tokenizers/t4_ocr_llm_keys \
   --noise_bins_json /data/ocean/DAPT/workspace/noise_bins.json \
-  --max_steps 500 \
-  --per_device_train_batch_size 32 \
-  --logging_steps 50
+  --nsp_data_dir /data/ocean/DAPT/data/pseudo_kv_labels_filtered.json \
+  --num_rounds 1 \
+  --mlm_epochs_per_round 1 \
+  --nsp_epochs_per_round 1 \
+  --learning_rate 5e-5 \
+  2>&1 | tee ${OUT_ROOT}/runs/t4_quick/train.log
+
+# 例：T1 quick
+python /data/ocean/DAPT/train_dapt_macbert_staged.py \
+  --output_dir ${OUT_ROOT}/runs/t1_quick \
+  --dataset_path ${OUT_ROOT}/datasets_quick/processed_dataset_t1 \
+  --tokenizer_path ${OUT_ROOT}/tokenizers/t1_base \
+  --noise_bins_json /data/ocean/DAPT/workspace/noise_bins.json \
+  --nsp_data_dir /data/ocean/DAPT/data/pseudo_kv_labels_filtered.json \
+  --num_rounds 1 \
+  --mlm_epochs_per_round 1 \
+  --nsp_epochs_per_round 1 \
+  --learning_rate 5e-5 \
+  2>&1 | tee ${OUT_ROOT}/runs/t1_quick/train.log
 ```
+
+### 8) 正式跑（建议）
+
+在 quick-run 确认链路无误后，再用 full dataset 跑 1-seed：
+
+```bash
+# 例：T4 full（1-seed）
+python /data/ocean/DAPT/train_dapt_macbert_staged.py \
+  --output_dir ${OUT_ROOT}/runs/t4_full_seed42 \
+  --dataset_path ${OUT_ROOT}/datasets/processed_dataset_t4 \
+  --tokenizer_path ${OUT_ROOT}/tokenizers/t4_ocr_llm_keys \
+  --noise_bins_json /data/ocean/DAPT/workspace/noise_bins.json \
+  --nsp_data_dir /data/ocean/DAPT/data/pseudo_kv_labels_filtered.json \
+  --num_rounds 3 \
+  --mlm_epochs_per_round 1 \
+  --nsp_epochs_per_round 3 \
+  --learning_rate 5e-5 \
+  2>&1 | tee ${OUT_ROOT}/runs/t4_full_seed42/train.log
+```
+
+> 备注：脚本内部分别会创建 `round_*_mlm/round_*_nsp/` 子目录。你也可以把 `--output_dir` 设成包含 expid 的路径便于管理。
+
+> 说明：上面 0~8 节已经给出**推荐的统一可复现流程**（基于 `/data/ocean/DAPT/experiments/tokenizer_ablation/`）。
+> 本文档不再建议用旧的 `final_merge_v9_regex_split_slim.py`/`generate_jieba_vocab.py` 作为消融入口（它们有硬编码路径，容易造成不同机器不可复现）。
 
 8) 下游微调评估（用同一训练脚本/配置对比）
 
@@ -157,7 +225,7 @@ python DAPT/train_dapt_macbert_staged.py \
 ## 预算与时间建议
 - 生成 tokenizer + vocab 处理：几小时以内（磁盘+CPU）
 - 重建数据集（单次）：数小时，视数据大小与 num_proc
-- 快跑训练（max_steps=500）：数小时（单卡）
+- 快跑训练：使用 `datasets_quick`（小语料），数小时内（单卡）
 - 完整 3-seed 对比（若做预训练级别）：需要相当多资源，建议只对最终候选做 3-seed。
 
 ---
