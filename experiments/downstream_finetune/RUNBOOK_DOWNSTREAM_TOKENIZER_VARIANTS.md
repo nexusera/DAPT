@@ -49,6 +49,10 @@ export SEED=42
 # 你现在正好是 0/1/4/5 空闲，所以可以不设；想改就覆盖这个变量。
 export GPU_LIST=0,1,4,5
 
+# 可选：断点续跑（默认开启）。如果之前已经产出了某些中间文件/报告，会自动跳过这些步骤。
+# 想强制从头重跑就设为 0。
+export RESUME=1
+
 bash /data/ocean/DAPT/experiments/downstream_finetune/run_downstream_all.sh
 ```
 
