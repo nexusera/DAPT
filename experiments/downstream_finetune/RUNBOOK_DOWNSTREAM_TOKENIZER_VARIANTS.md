@@ -45,6 +45,10 @@ export REAL_TEST_JSON=/data/ocean/DAPT/biaozhu_with_ocr_noise_prepared/real_test
 # 可选：指定 seed（用于拼出 t1_full_seed42 这类目录名）
 export SEED=42
 
+# 可选：并行跑 4 个变体时，每个变体绑定一张卡（默认：0,1,4,5）
+# 你现在正好是 0/1/4/5 空闲，所以可以不设；想改就覆盖这个变量。
+export GPU_LIST=0,1,4,5
+
 bash /data/ocean/DAPT/experiments/downstream_finetune/run_downstream_all.sh
 ```
 
