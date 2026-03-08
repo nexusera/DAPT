@@ -75,6 +75,14 @@ run_variant() {
   echo "[${v}] Task1/3 (KV-NER) finetune + eval"
   echo "============================================================"
 
+  local REPORT_T1
+  local REPORT_T3
+  REPORT_T1="${DAPT_ROOT}/runs/${v}_report_task1.json"
+  REPORT_T3="${DAPT_ROOT}/runs/${v}_report_task3.json"
+  if [[ "$RESUME" == "1" && -s "$REPORT_T1" && -s "$REPORT_T3" ]]; then
+    echo "[${v}] [SKIP] Task1/3 full pipeline (found reports: $REPORT_T1, $REPORT_T3)"
+  else
+
   local KV_CFG
   local KV_OUT_SUMMARY
   KV_CFG="${GEN_DIR}/kv_ner_config_${v}.json"
@@ -125,8 +133,6 @@ run_variant() {
       2>&1 | tee "${LOG_DIR}/${v}_task13_align.gpu${gpu}.log"
   fi
 
-  local REPORT_T1
-  REPORT_T1="${DAPT_ROOT}/runs/${v}_report_task1.json"
   if [[ "$RESUME" == "1" && -s "$REPORT_T1" ]]; then
     echo "[${v}] [SKIP] Task1 score (found: $REPORT_T1)"
   else
@@ -140,8 +146,6 @@ run_variant() {
       2>&1 | tee "${LOG_DIR}/${v}_task1_score.gpu${gpu}.log"
   fi
 
-  local REPORT_T3
-  REPORT_T3="${DAPT_ROOT}/runs/${v}_report_task3.json"
   if [[ "$RESUME" == "1" && -s "$REPORT_T3" ]]; then
     echo "[${v}] [SKIP] Task3 score (found: $REPORT_T3)"
   else
@@ -153,6 +157,8 @@ run_variant() {
       --overlap_threshold -1 \
       --output_file "$REPORT_T3" \
       2>&1 | tee "${LOG_DIR}/${v}_task3_score.gpu${gpu}.log"
+  fi
+
   fi
 
   echo "============================================================"

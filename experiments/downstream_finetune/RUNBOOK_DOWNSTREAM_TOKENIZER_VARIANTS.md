@@ -33,6 +33,9 @@
 cd /data/ocean/DAPT
 conda activate medical_bert
 
+# 说明：KV-NER 的推理/对比脚本依赖 torchcrf（一般已在 medical_bert 环境里）。
+# 如果你没激活该环境，可能会报：ModuleNotFoundError: No module named 'torchcrf'
+
 # 你 tokenizer ablation 的输出根目录（与 tokenizer_ablation/README.md 一致）
 export OUT_ROOT=/data/ocean/DAPT/ablation/tokenizer
 
