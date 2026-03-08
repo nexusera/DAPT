@@ -4,7 +4,7 @@
 我们需要先将 KV-NER 格式的数据转换为 QA 格式。
 # 环境变量
 export PYTHONPATH=$PYTHONPATH:/data/ocean/DAPT
-QUERY_SET="/data/ocean/DAPT/dapt_eval_package/MedStruct-S-Benchmark-feature-configurable-metrics/keys_merged_1027_cleaned.json"
+export QUERY_SET="/data/ocean/DAPT/dapt_eval_package/MedStruct-S-Benchmark-feature-configurable-metrics/keys_merged_1027_cleaned.json"
 NOISE_BINS="/data/ocean/DAPT/workspace/noise_bins.json"
 TOKENIZER_PATH="/data/ocean/DAPT/macbert_staged_output/final_staged_model"
 
