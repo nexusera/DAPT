@@ -36,8 +36,7 @@ python -m pip freeze | tee -a /data/ocean/DAPT/ablation_tokenizer_env.log
 cd /data/ocean/DAPT/experiments/tokenizer_ablation
 
 # 若仓库已包含 config.env，可直接用；需要自定义时再修改。
-# 如果缺失，再从 example 复制：
-cp -n config.env.example config.env
+
 
 # 如需修改 OUT_ROOT / 输入文件路径，请编辑 config.env
 # vim config.env
@@ -150,7 +149,18 @@ python /data/ocean/DAPT/train_dapt_macbert_staged.py \
 ```bash
 OUT_ROOT=/data/ocean/DAPT/ablation/tokenizer
 
+# 注意：
+# - 如果你想“先写一行变量、下一行再运行 python”，必须用 export；否则 python 子进程看不到变量。
+# - 更保险的一行写法是：CUDA_VISIBLE_DEVICES=2,3 OUT_ROOT=... python ...（只对这一条命令生效）。
+# - 请避开被其他任务占满的 GPU（例如你日志里 vLLM 占用的 GPU6/7）。
+
 # T1 full
+tmux new -s t1_full
+cd /data/ocean/DAPT
+conda activate medical_bert
+
+export CUDA_VISIBLE_DEVICES=2,3
+export OUT_ROOT=/data/ocean/DAPT/ablation/tokenizer
 python /data/ocean/DAPT/train_dapt_macbert_staged.py \
 	--output_dir ${OUT_ROOT}/runs/t1_full_seed42 \
 	--dataset_path ${OUT_ROOT}/datasets/processed_dataset_t1 \
@@ -164,6 +174,10 @@ python /data/ocean/DAPT/train_dapt_macbert_staged.py \
 	2>&1 | tee ${OUT_ROOT}/runs/t1_full_seed42/train.log
 
 # T2 full
+tmux new -s t2_full
+
+export CUDA_VISIBLE_DEVICES=2,3
+export OUT_ROOT=/data/ocean/DAPT/ablation/tokenizer
 python /data/ocean/DAPT/train_dapt_macbert_staged.py \
 	--output_dir ${OUT_ROOT}/runs/t2_full_seed42 \
 	--dataset_path ${OUT_ROOT}/datasets/processed_dataset_t2 \
@@ -177,6 +191,10 @@ python /data/ocean/DAPT/train_dapt_macbert_staged.py \
 	2>&1 | tee ${OUT_ROOT}/runs/t2_full_seed42/train.log
 
 # T3 full（同 quick：仅当你确实生成了 t3_ocr_raw tokenizer）
+tmux new -s t3_full
+
+export CUDA_VISIBLE_DEVICES=4,5
+export OUT_ROOT=/data/ocean/DAPT/ablation/tokenizer
 python /data/ocean/DAPT/train_dapt_macbert_staged.py \
 	--output_dir ${OUT_ROOT}/runs/t3_full_seed42 \
 	--dataset_path ${OUT_ROOT}/datasets/processed_dataset_t3 \
@@ -190,6 +208,9 @@ python /data/ocean/DAPT/train_dapt_macbert_staged.py \
 	2>&1 | tee ${OUT_ROOT}/runs/t3_full_seed42/train.log
 
 # T4 full
+tmux new -s t4_full
+export CUDA_VISIBLE_DEVICES=0,1,4,5
+export OUT_ROOT=/data/ocean/DAPT/ablation/tokenizer
 python /data/ocean/DAPT/train_dapt_macbert_staged.py \
 	--output_dir ${OUT_ROOT}/runs/t4_full_seed42 \
 	--dataset_path ${OUT_ROOT}/datasets/processed_dataset_t4 \

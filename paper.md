@@ -262,6 +262,21 @@ In practice, the length of individual samples often exceeds the model's max leng
  The pre-training data comprises medical records processed by OCR, medical textbooks/guidelines, medical papers, Wikipedia entries, and a small amount of general Chinese text. After cleaning and deduplication, a total of 982,183 text samples were obtained (counted by lines, with one sample per line). To control domain proportions, we performed static resampling across sources, yielding 225,481 training texts. Among these, OCR-drived clinical reports accounted for 35.00\%, medical corpora for 46.96\%, and general corpora for 18.02\%. 
  After resampling, we obtained 225,481 pre-training texts (counted by lines, with one text per line). To mitigate information loss from truncation due to the maximum length of 512, we performed character-level sliding window segmentation ($\mathrm{window}=1000$, $\mathrm{stride}=500$) on long texts exceeding the threshold, splitting each long text into multiple chunks. Following sliding window segmentation, the total number of training segments increased from 225,481 to 537,721. Subsequent pre-training encoded these segmented chunks as the basic pre-training text units, truncating each to 512 tokens.
 
+\subsubsection{Fine-tuning（KV-NER）方法与数据}
+为验证预训练模型在真实业务场景中的有效性，我们在下游半结构化抽取任务上采用统一的微调流程。我们将 OCR 页面文本视作序列标注问题，预测“键名（KEY）/键值（VALUE）”两类实体的边界，再通过轻量级规则将其组装为键值对集合，用于任务1的键名发现与任务2的键值对抽取评估。
+
+数据来源与格式：下游数据来自真实医疗检验/检查报告的 OCR 结果，并在标注平台以字符级位置标注实体边界。每个样本以“单页/单条 OCR 文本”为单位，包含 OCR 文本、实体标注（起止位置与类别），以及与 OCR 质量相关的噪声特征（对应本文提出的噪声嵌入）。我们将按词或按行统计的噪声向量展开到字符级序列，使其与 OCR 文本严格对齐；若样本不含噪声元信息（或为干净文本），则使用“完美文本”的锚点向量作为缺省噪声输入。
+
+数据规模与统计：在 Real 数据集上，训练集包含 3,224 页样本，测试集包含 358 页样本。训练集与测试集的文本长度（按字符数统计）分别为：均值 735.49 和 743.25，中位数 714 和 705；第 90 百分位为 1149 和 1122，第 99 百分位为 1673 和 1571。实体标注总量（按标注实例数统计）在训练集与测试集上分别为：KEY 45,684 和 5,102，VALUE 43,432 和 4,836；此外数据中还包含辅助标签 HOSPITAL 2,242 和 239。
+
+标签体系与编码：训练时使用 BIO 序列标注体系，并通过标签映射将不同标注别名（中英文、大小写）归一到 KEY 和 VALUE。由于中文采用子词切分，我们启用“标签传播到所有子词”的策略，将同一字符跨度对应的标签同步到被切分后的所有子词 token，以减少边界信息在子词级的丢失。
+
+输入构造（含长文本切片与噪声对齐）：模型最大输入长度设为 512。对于超过最大长度的 OCR 页面文本，我们采用滑窗切片方式构造重叠片段以覆盖跨窗口实体：片段长度为 500，重叠为 50。噪声特征为 7 维向量，先通过与预训练一致的分桶边界离散化为 bin id，再通过查表得到噪声嵌入并与 token 表示相加，从而保证下游阶段的噪声建模与预训练阶段一致。
+
+微调模型与优化设置：我们在预训练骨干（MacBERT/对照模型）之上添加序列标注头，可选 BiLSTM（3 层，hidden size 为 384）用于增强局部序列建模，再接线性分类层与 CRF 解码层以建模 BIO 转移约束并输出最优标签序列。优化器为 AdamW，学习率 2e-5，warmup ratio 为 0.1，weight decay 为 0.03；训练 4 个 epoch，batch size 为 8，dropout 为 0.2。为保证对比公平，所有模型在完全一致的数据划分与超参下微调，仅替换初始化的预训练 checkpoint。
+
+推理、键值对组装与评测：推理阶段将 CRF 解码得到的实体跨度还原为 KEY/VALUE 片段，并采用“最近邻顺序配对”的轻量规则将键与其后最近的值组成键值对集合。评测时，我们输出标准化的预测结果与由测试集转换得到的标准答案，并在任务1与任务2指标计算前进行一次 span 对齐处理，以消除分词或切片带来的边界抖动对严格匹配评测的影响。
+
 \subsection{Downstream Task Definitions}
 % The semi-structured extraction (Task 3 corresponds to Key-Value Pairing) is decomposed into three sub-tasks to accommodate different real-world scenarios.
 To accommodate diverse practical scenarios, we decompose semi-structured information extraction into three tasks, where Task~3 is the end-to-end setting.
@@ -288,6 +303,10 @@ Our framework is implemented using HuggingFace Transformers. All models are trai
 % 中文注释：训练策略采用分阶段模式，先进行 KV-MLM 以稳定 Embedding，再引入 KV-NSP 进行结构化训练。
 
 \subsection{Main Results}
+为便于阅读表 1 中的指标符号，本文用下标 e 和 a 区分两种匹配判定方式：e 表示精确匹配（Exact Match），a 表示近似匹配（Approx Match）。精确匹配指在统一的文本归一化后（如去首尾空白、统一大小写）预测文本与真值文本完全一致；近似匹配则允许一定的字符扰动，采用归一化编辑距离相似度（NED，相似度越高越接近）并结合长度自适应阈值进行判定（短文本阈值更宽松、长文本更严格）。
+
+在任务 1（键名发现）中，K_e 表示按精确匹配统计得到的键名 F1，K_a 表示按近似匹配统计得到的键名 F1。
+在任务 2（键值配对）中，我们同时考察键名与键值两部分的匹配程度：K_eV_e 表示键名精确匹配且键值精确匹配；K_eV_a 表示键名精确匹配且键值近似匹配；K_aV_a 表示键名近似匹配且键值近似匹配。上述指标均基于精确/近似匹配下的 TP 数量计算精确率、召回率与 F1。
 % Table 1: Performance on KV-NER
 
 % \begin{table*}[t]

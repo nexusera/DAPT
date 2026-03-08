@@ -14,7 +14,9 @@ from torch.utils.data import Dataset
 # 0. 环境与依赖设置
 # ===========================
 os.environ["HF_ENDPOINT"] = "https://hf-mirror.com"
-os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
+# PyTorch allocator config (new name: PYTORCH_ALLOC_CONF; old name kept for compatibility)
+os.environ.setdefault("PYTORCH_ALLOC_CONF", "expandable_segments:True")
+os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", os.environ.get("PYTORCH_ALLOC_CONF", "expandable_segments:True"))
 os.environ["TOKENIZERS_PARALLELISM"] = "false" # 关键修复：防止 DataLoader 死锁
 os.environ.setdefault("TORCHINDUCTOR_BENCHMARK_KERNEL", "0")
 
@@ -479,6 +481,20 @@ def main():
     parser.add_argument("--nsp_epochs_per_round", type=int, default=3, help="每轮 NSP 训练的 epoch 数")
     
     args = parser.parse_args()
+
+    if is_main_process():
+        cvd = os.environ.get("CUDA_VISIBLE_DEVICES")
+        print(f"CUDA_VISIBLE_DEVICES={cvd}")
+        if torch.cuda.is_available():
+            try:
+                n = torch.cuda.device_count()
+                print(f"Visible CUDA device_count={n}")
+                for i in range(n):
+                    p = torch.cuda.get_device_properties(i)
+                    total_gib = p.total_memory / (1024 ** 3)
+                    print(f"  cuda:{i} {p.name} total_mem={total_gib:.1f}GiB")
+            except Exception as e:
+                print(f"(warn) failed to query cuda devices: {e}")
 
     # 1. 资源准备
     tokenizer = AutoTokenizer.from_pretrained(args.tokenizer_path)

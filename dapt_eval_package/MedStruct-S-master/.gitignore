@@ -1,0 +1,23 @@
+__pycache__/
+*.pyc
+.DS_Store
+legacy_tmp/
+.vscode/
+tests/
+legacy_evaluation/
+
+# Preprocessing and diagnostic scripts
+preprocess_*.py
+tests/preprocess_*.py
+tests/find_negatives.py
+
+# Data and models
+predictions/
+med_struct_v2.1.tar.gz
+
+# Temporary backups
+*.bak
+med_eval/evaluators/*.bak
+
+# Project documentation
+docs/
