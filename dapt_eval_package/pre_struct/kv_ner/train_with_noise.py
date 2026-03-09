@@ -345,7 +345,9 @@ def load_jsonl_with_noise(path: str | Path, label_map: Dict[str, str], include_u
                         entities.append(Entity(start=val_start, end=val_end, label="VALUE", text=val_info.get("text")))
 
             # Case 2: transferred_annotations (New Format)
-                        annos = obj.get("transferred_annotations") or data_block.get("transferred_annotations")
+            annos = obj.get("transferred_annotations") or data_block.get("transferred_annotations") or []
+            if not isinstance(annos, list):
+                annos = []
             if isinstance(annos, list):
                  for ann in annos:
                      if not isinstance(ann, dict):
