@@ -61,6 +61,16 @@ bash /data/ocean/DAPT/experiments/downstream_finetune/run_downstream_all.sh
 
 运行过程中所有日志在：`/data/ocean/DAPT/runs/downstream_logs/`。
 
+## 一键汇总 12 个 JSON 指标（生成表格）
+
+当你已经生成了 `t1~t4` 的 task1/task2/task3 报告后，可以用下面命令把关键 F1 抽出来，直接输出 Markdown 表格（可粘贴到论文/报告）：
+
+```bash
+python /data/ocean/DAPT/experiments/downstream_finetune/summarize_ablation_reports.py \
+  --runs_dir /data/ocean/DAPT/runs \
+  --variants t1 t2 t3 t4
+```
+
 ## 如果你只想看“命令清单”（不用一键脚本）
 
 一键脚本内部实际执行的命令就是：
