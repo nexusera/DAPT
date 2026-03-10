@@ -90,8 +90,46 @@ run_variant() {
 
   local KV_BEST_DIR
   KV_BEST_DIR="${DAPT_ROOT}/runs/kv_ner_finetuned_${v}/best"
+  kvner_best_matches_expected() {
+    local best_dir="$1"
+    local expected_model_dir="$2"
+    python - <<'PY'
+import json
+import os
+import sys
+
+best_dir = sys.argv[1]
+expected = sys.argv[2]
+cfg_path = os.path.join(best_dir, 'model_config.json')
+if not os.path.isfile(cfg_path):
+    sys.exit(1)
+try:
+    with open(cfg_path, 'r', encoding='utf-8') as f:
+        obj = json.load(f)
+except Exception:
+    sys.exit(1)
+
+got = obj.get('model_name_or_path')
+if not isinstance(got, str) or not got.strip():
+    sys.exit(1)
+
+def norm(p: str) -> str:
+    return os.path.normpath(p)
+
+sys.exit(0 if norm(got) == norm(expected) else 2)
+PY
+  }
+
   if [[ "$RESUME" == "1" && -d "$KV_BEST_DIR" ]]; then
-    echo "[${v}] [SKIP] KV-NER train (found: $KV_BEST_DIR)"
+    if kvner_best_matches_expected "$KV_BEST_DIR" "$MODEL_DIR"; then
+      echo "[${v}] [SKIP] KV-NER train (found matching best: $KV_BEST_DIR)"
+    else
+      echo "[${v}] [WARN] Existing KV-NER best does not match expected base model; retraining: $KV_BEST_DIR"
+      python "${DAPT_ROOT}/dapt_eval_package/pre_struct/kv_ner/train_with_noise.py" \
+        --config "$KV_CFG" \
+        --noise_bins "$NOISE_BINS" \
+        2>&1 | tee "${LOG_DIR}/${v}_kvner_train.gpu${gpu}.log"
+    fi
   else
     python "${DAPT_ROOT}/dapt_eval_package/pre_struct/kv_ner/train_with_noise.py" \
       --config "$KV_CFG" \

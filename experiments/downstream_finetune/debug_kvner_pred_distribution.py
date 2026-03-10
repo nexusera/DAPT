@@ -77,9 +77,9 @@ def main() -> None:
     train_block = config_io.ensure_block(cfg, "train")
     label_map = config_io.label_map_from(cfg)
     label_list = build_bio_label_list(label_map)
-    label2id = {label: idx for idx, label in enumerate(label_list)}
-    id2label = {idx: label for label, idx in label2id.items()}
-    o_id = label2id["O"]
+    cfg_label2id = {label: idx for idx, label in enumerate(label_list)}
+    cfg_id2label = {idx: label for label, idx in cfg_label2id.items()}
+    cfg_o_id = cfg_label2id["O"]
 
     # Tokenizer
     tokenizer_name = config_io.tokenizer_name_from(cfg)
@@ -124,7 +124,7 @@ def main() -> None:
     ds = TokenClassificationDataset(
         samples,
         tokenizer,
-        label2id,
+        cfg_label2id,
         max_seq_length=max_len,
         label_all_tokens=config_io.label_all_tokens(cfg),
         include_labels=True,
@@ -151,14 +151,45 @@ def main() -> None:
     if model_dir is None:
         raise SystemExit(f"Cannot find trained model dir. Tried: {candidates}")
 
+    # Load model-side label2id/id2label for verification
+    model_label2id_path = model_dir / "label2id.json"
+    model_cfg_path = model_dir / "model_config.json"
+    model_label2id = None
+    model_id2label = None
+    model_name_or_path_in_best = None
+    if model_label2id_path.exists():
+        try:
+            import json
+
+            model_label2id = json.loads(model_label2id_path.read_text(encoding="utf-8"))
+            if isinstance(model_label2id, dict):
+                model_id2label = {int(v): k for k, v in model_label2id.items()}
+        except Exception:
+            model_label2id = None
+            model_id2label = None
+    if model_cfg_path.exists():
+        try:
+            import json
+
+            mc = json.loads(model_cfg_path.read_text(encoding="utf-8"))
+            if isinstance(mc, dict):
+                model_name_or_path_in_best = mc.get("model_name_or_path")
+        except Exception:
+            model_name_or_path_in_best = None
+
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    model = BertCrfTokenClassifier.from_pretrained(str(model_dir), map_location=("cpu" if device.type == "cpu" else None))
+    model = BertCrfTokenClassifier.from_pretrained(
+        str(model_dir),
+        map_location=("cpu" if device.type == "cpu" else None),
+    )
     model.to(device)
     model.eval()
 
-    pred_counts = Counter()
+    pred_counts_cfg = Counter()
+    pred_counts_model = Counter() if model_id2label is not None else None
     total_active = 0
     total_non_o = 0
+    total_non_o_model = 0
 
     def _batch(iterable, n):
         buf = []
@@ -198,9 +229,22 @@ def main() -> None:
                 seq = seq[:L]
                 total_active += L
                 for y in seq:
-                    pred_counts[int(y)] += 1
-                    if int(y) != o_id:
+                    yi = int(y)
+                    pred_counts_cfg[yi] += 1
+                    if yi != cfg_o_id:
                         total_non_o += 1
+                    if pred_counts_model is not None:
+                        pred_counts_model[yi] += 1
+                        # For model-side non-O, determine o_id from model mapping if possible
+                        # Fall back to config's o_id if missing
+                        model_o_id = None
+                        if model_label2id is not None and isinstance(model_label2id, dict) and "O" in model_label2id:
+                            try:
+                                model_o_id = int(model_label2id["O"])
+                            except Exception:
+                                model_o_id = None
+                        if yi != (model_o_id if model_o_id is not None else cfg_o_id):
+                            total_non_o_model += 1
 
     print("=" * 80)
     print(f"config: {cfg_path}")
@@ -208,13 +252,25 @@ def main() -> None:
     print(f"tokenizer: {tokenizer_name}")
     print(f"tokenizer_vocab: {len(tokenizer)}")
     print(f"model_dir: {model_dir}")
+    if model_name_or_path_in_best:
+        print(f"best.model_name_or_path: {model_name_or_path_in_best}")
+    if model_label2id is not None:
+        mismatch = model_label2id != cfg_label2id
+        print(f"label2id_match_config: {not mismatch}")
+        if mismatch:
+            print("[WARN] label2id.json in best differs from config-derived mapping; results may be mis-interpreted.")
     print(f"device: {device}")
     print(f"chunks_used: {len(feats)}")
     print(f"active_tokens: {total_active}")
     print(f"pred_non_O_tokens: {total_non_o}  ratio: {total_non_o / max(1, total_active):.6f}")
-    print("pred_label_distribution (top 20):")
-    for lid, c in pred_counts.most_common(20):
-        print(f"  {lid:>3}  {id2label.get(lid, '??'):<12}  {c}")
+    print("pred_label_distribution_using_config_id2label (top 20):")
+    for lid, c in pred_counts_cfg.most_common(20):
+        print(f"  {lid:>3}  {cfg_id2label.get(lid, '??'):<12}  {c}")
+    if pred_counts_model is not None and model_id2label is not None:
+        print(f"pred_non_O_tokens(model_mapping): {total_non_o_model}  ratio: {total_non_o_model / max(1, total_active):.6f}")
+        print("pred_label_distribution_using_best_label2id (top 20):")
+        for lid, c in pred_counts_model.most_common(20):
+            print(f"  {lid:>3}  {model_id2label.get(lid, '??'):<12}  {c}")
     print("=" * 80)
 
 
