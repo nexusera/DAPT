@@ -287,6 +287,9 @@ class MLMStageCollator:
     noise_processor: NoiseFeatureProcessor
     mlm_probability: float = 0.15
     max_length: int = 512
+    # kv_wwm: use word_ids-based whole-word masking (KV-aware via jieba dict)
+    # token: standard token-level MLM masking (ignore word_ids)
+    mlm_masking: str = "kv_wwm"
 
     def __call__(self, features: List[Dict[str, Any]]) -> Dict[str, Any]:
         # 1. 提取基础数据
@@ -315,11 +318,12 @@ class MLMStageCollator:
         labels = input_ids.clone()
         probability_matrix = torch.full(labels.shape, self.mlm_probability)
         
-        # 4. WWM Masking Strategy
+        # 4. Masking Strategy
         for i in range(len(features)):
             word_ids = batch_word_ids[i]
             current_ids = input_ids[i]
-            if word_ids:
+            use_wwm = (self.mlm_masking == "kv_wwm")
+            if use_wwm and word_ids:
                 mapping = {}
                 for idx, wid in enumerate(word_ids):
                     if wid is None or idx >= len(current_ids): continue
@@ -479,6 +483,15 @@ def main():
     parser.add_argument("--num_rounds", type=int, default=3, help="交替训练的总轮数 (MLM -> NSP -> MLM -> NSP ...)")
     parser.add_argument("--mlm_epochs_per_round", type=int, default=1, help="每轮 MLM 训练的 epoch 数")
     parser.add_argument("--nsp_epochs_per_round", type=int, default=3, help="每轮 NSP 训练的 epoch 数")
+    parser.add_argument(
+        "--mlm_masking",
+        type=str,
+        default="kv_wwm",
+        choices=["kv_wwm", "token"],
+        help="MLM masking mode. kv_wwm=word_ids whole-word masking (KV-aware). token=standard token-level MLM (control ablation).",
+    )
+    parser.add_argument("--mlm_probability", type=float, default=0.15)
+    parser.add_argument("--max_length", type=int, default=512)
     
     args = parser.parse_args()
 
@@ -532,7 +545,13 @@ def main():
         model.resize_token_embeddings(len(tokenizer))
     
     # 4. 准备 Collators
-    mlm_collator = MLMStageCollator(tokenizer, noise_processor)
+    mlm_collator = MLMStageCollator(
+        tokenizer,
+        noise_processor,
+        mlm_probability=float(args.mlm_probability),
+        max_length=int(args.max_length),
+        mlm_masking=str(args.mlm_masking),
+    )
     nsp_collator = NSPStageCollator(tokenizer, noise_processor)
 
     # 5. 交替训练循环

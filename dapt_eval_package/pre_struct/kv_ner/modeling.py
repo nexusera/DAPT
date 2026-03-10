@@ -58,6 +58,8 @@ class BertCrfTokenClassifier(nn.Module):
         boundary_ce_label_smoothing: float = 0.0,
         # class weight for VALUE in token CE
         token_ce_value_class_weight: float = 3.0,
+        # class weight for KEY in token CE
+        token_ce_key_class_weight: float = 1.0,
     ) -> None:
         super().__init__()
         if "O" not in label2id:
@@ -138,6 +140,7 @@ class BertCrfTokenClassifier(nn.Module):
         self.token_ce_label_smoothing = float(token_ce_label_smoothing)
         self.boundary_ce_label_smoothing = float(boundary_ce_label_smoothing)
         self.token_ce_value_class_weight = float(token_ce_value_class_weight)
+        self.token_ce_key_class_weight = float(token_ce_key_class_weight)
 
         # Precompute which label ids correspond to boundaries we care about
         self.boundary_label_ids = self._compute_boundary_label_ids()
@@ -345,6 +348,7 @@ class BertCrfTokenClassifier(nn.Module):
             "token_ce_label_smoothing": self.token_ce_label_smoothing,
             "boundary_ce_label_smoothing": self.boundary_ce_label_smoothing,
             "token_ce_value_class_weight": self.token_ce_value_class_weight,
+            "token_ce_key_class_weight": self.token_ce_key_class_weight,
             "end_boundary_loss_weight": self.end_boundary_loss_weight,
             "end_boundary_positive_weight": self.end_boundary_positive_weight,
         }
@@ -383,6 +387,7 @@ class BertCrfTokenClassifier(nn.Module):
             token_ce_label_smoothing=model_cfg.get("token_ce_label_smoothing", 0.0),
             boundary_ce_label_smoothing=model_cfg.get("boundary_ce_label_smoothing", 0.0),
             token_ce_value_class_weight=model_cfg.get("token_ce_value_class_weight", 3.0),
+            token_ce_key_class_weight=model_cfg.get("token_ce_key_class_weight", 1.0),
             end_boundary_loss_weight=model_cfg.get("end_boundary_loss_weight", 0.0),
             end_boundary_positive_weight=model_cfg.get("end_boundary_positive_weight", 1.0),
         )
@@ -438,6 +443,8 @@ class BertCrfTokenClassifier(nn.Module):
         for idx, name in self.id2label.items():
             if name.endswith("VALUE") or name in ("B-VALUE", "I-VALUE"):
                 w[int(idx)] = max(1.0, self.token_ce_value_class_weight)
+            if name.endswith("KEY") or name in ("B-KEY", "I-KEY"):
+                w[int(idx)] = max(1.0, self.token_ce_key_class_weight)
         return torch.tensor(w, device=device, dtype=dtype)
 
     def _end_boundary_targets_from_labels(self, labels: torch.Tensor) -> torch.Tensor:

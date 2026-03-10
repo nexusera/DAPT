@@ -618,6 +618,20 @@ def train(args: argparse.Namespace) -> None:
     cfg = config_io.load_config(args.config)
     train_block = config_io.ensure_block(cfg, "train")
 
+    # Optional CLI overrides (keep default behavior when args are None)
+    if getattr(args, "learning_rate", None) is not None:
+        train_block["learning_rate"] = float(args.learning_rate)
+    if getattr(args, "num_train_epochs", None) is not None:
+        train_block["num_train_epochs"] = int(args.num_train_epochs)
+    if getattr(args, "no_bilstm", False):
+        train_block["use_bilstm"] = False
+    if getattr(args, "token_ce_loss_weight", None) is not None:
+        train_block["token_ce_loss_weight"] = float(args.token_ce_loss_weight)
+    if getattr(args, "token_ce_value_class_weight", None) is not None:
+        train_block["token_ce_value_class_weight"] = float(args.token_ce_value_class_weight)
+    if getattr(args, "token_ce_key_class_weight", None) is not None:
+        train_block["token_ce_key_class_weight"] = float(args.token_ce_key_class_weight)
+
     label_map = config_io.label_map_from(cfg)
     label_list = build_bio_label_list(label_map)
     label2id = {label: idx for idx, label in enumerate(label_list)}
@@ -825,6 +839,7 @@ def train(args: argparse.Namespace) -> None:
         token_ce_label_smoothing=float(train_block.get("token_ce_label_smoothing", 0.0)),
         boundary_ce_label_smoothing=float(train_block.get("boundary_ce_label_smoothing", 0.0)),
         token_ce_value_class_weight=float(train_block.get("token_ce_value_class_weight", 3.0)),
+        token_ce_key_class_weight=float(train_block.get("token_ce_key_class_weight", 1.0)),
         end_boundary_loss_weight=float(train_block.get("end_boundary_loss_weight", 0.0)),
         end_boundary_positive_weight=float(train_block.get("end_boundary_positive_weight", 1.0)),
     ).to(device)
@@ -1070,6 +1085,14 @@ def parse_args() -> argparse.Namespace:
         default=None,
         help="Path to pretrained model (e.g., /data/ocean/DAPT/workspace/output_medical_bert_v2_8gpu_noise_v2/final_model)",
     )
+
+    # Optional overrides to avoid editing JSON configs (useful for ablations / debugging)
+    parser.add_argument("--learning_rate", type=float, default=None, help="Override train.learning_rate")
+    parser.add_argument("--num_train_epochs", type=int, default=None, help="Override train.num_train_epochs")
+    parser.add_argument("--no_bilstm", action="store_true", help="Force disable BiLSTM head (train.use_bilstm=false)")
+    parser.add_argument("--token_ce_loss_weight", type=float, default=None, help="Override train.token_ce_loss_weight")
+    parser.add_argument("--token_ce_value_class_weight", type=float, default=None, help="Override train.token_ce_value_class_weight")
+    parser.add_argument("--token_ce_key_class_weight", type=float, default=None, help="Override train.token_ce_key_class_weight")
     return parser.parse_args()
 
 

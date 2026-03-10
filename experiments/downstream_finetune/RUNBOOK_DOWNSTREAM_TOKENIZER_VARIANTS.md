@@ -94,6 +94,16 @@ python /data/ocean/DAPT/dapt_eval_package/pre_struct/kv_ner/train_with_noise.py 
   --noise_bins ${NOISE_BINS}
 ```
 
+可选：如果某个变体出现训练塌缩（例如 `val/test F1=0` 且预测几乎不出 KEY/VALUE），可在上面命令后追加这些覆盖参数（无需改 JSON config）：
+
+```bash
+  --token_ce_loss_weight 0.1 \
+  --token_ce_key_class_weight 3.0 \
+  --token_ce_value_class_weight 3.0 \
+  --no_bilstm \
+  --learning_rate 1e-5
+```
+
 3) 推理（产出统一格式 preds/gt）：
 ```bash
 python /data/ocean/DAPT/dapt_eval_package/pre_struct/kv_ner/compare_models.py \

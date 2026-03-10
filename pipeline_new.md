@@ -176,6 +176,59 @@ python verify_noise_alignment.py \
 ```
 ## 3. 最新的训练（KV-aware MLM + 噪声+KV-NSP）
 训练的脚本为train_dapt_macbert_staged.py
+
+### 3.1 KV-MLM 消融：普通 MLM（不使用 KV 全词掩码）作为对照
+
+说明：当前的 KV-aware MLM 通过 `build_dataset_final_slim.py` 产出的 `word_ids`（由 jieba + keys 词典引导）实现“全词掩码”。
+为了做消融对照，我们新增了一个开关：
+- `--mlm_masking kv_wwm`：使用 `word_ids` 的全词掩码（现有默认行为，KV-MLM）
+- `--mlm_masking token`：普通 MLM（按 token 随机掩码，忽略 `word_ids`）
+
+两组实验除 `--mlm_masking` 外保持完全一致（同一数据、同一 tokenizer、同一超参、同一轮次/epoch 配置），以保证可比性。
+
+#### A) KV-MLM（现有默认，KV 全词掩码）
+```bash
+cd /data/ocean/DAPT
+
+python /data/ocean/DAPT/train_dapt_macbert_staged.py \
+  --output_dir /data/ocean/DAPT/workspace/output_macbert_kvmlm_staged \
+  --dataset_path /data/ocean/DAPT/workspace/processed_dataset \
+  --nsp_data_dir /data/ocean/DAPT/data/pseudo_kv_labels_filtered.json \
+  --tokenizer_path /data/ocean/DAPT/my-medical-tokenizer \
+  --noise_bins_json /data/ocean/DAPT/workspace/noise_bins.json \
+  --learning_rate 5e-5 \
+  --num_rounds 3 \
+  --mlm_epochs_per_round 1 \
+  --nsp_epochs_per_round 3 \
+  --mlm_probability 0.15 \
+  --max_length 512 \
+  --mlm_masking kv_wwm \
+  2>&1 | tee /data/ocean/DAPT/workspace/output_macbert_kvmlm_staged/train.log
+```
+
+#### B) 普通 MLM 对照（不使用 KV 全词掩码）
+```bash
+cd /data/ocean/DAPT
+
+python /data/ocean/DAPT/train_dapt_macbert_staged.py \
+  --output_dir /data/ocean/DAPT/workspace/output_macbert_plainmlm_staged \
+  --dataset_path /data/ocean/DAPT/workspace/processed_dataset \
+  --nsp_data_dir /data/ocean/DAPT/data/pseudo_kv_labels_filtered.json \
+  --tokenizer_path /data/ocean/DAPT/my-medical-tokenizer \
+  --noise_bins_json /data/ocean/DAPT/workspace/noise_bins.json \
+  --learning_rate 5e-5 \
+  --num_rounds 3 \
+  --mlm_epochs_per_round 1 \
+  --nsp_epochs_per_round 3 \
+  --mlm_probability 0.15 \
+  --max_length 512 \
+  --mlm_masking token \
+  2>&1 | tee /data/ocean/DAPT/workspace/output_macbert_plainmlm_staged/train.log
+```
+
+产物目录结构与原 staged 训练一致：
+- `.../round_{k}_mlm/`、`.../round_{k}_nsp/`
+- 最终模型：`.../final_staged_model/`
 <!-- ## 3. 训练（KV-aware MLM + 噪声）
 1) 指向对齐后的数据集（单独 OCR 或合并后）：
 ```bash
