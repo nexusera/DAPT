@@ -192,7 +192,7 @@ def main():
 
     # 1. 加载 Tokenizer
     print(f"加载 Tokenizer: {args.tokenizer_path}")
-    tokenizer = AutoTokenizer.from_pretrained(args.tokenizer_path)
+    tokenizer = AutoTokenizer.from_pretrained(args.tokenizer_path, use_fast=False)
 
     # 2. 初始化 Jieba
     init_jieba(args.keys_file, args.vocab_for_jieba)

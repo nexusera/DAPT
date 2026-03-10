@@ -510,7 +510,7 @@ def main():
                 print(f"(warn) failed to query cuda devices: {e}")
 
     # 1. 资源准备
-    tokenizer = AutoTokenizer.from_pretrained(args.tokenizer_path)
+    tokenizer = AutoTokenizer.from_pretrained(args.tokenizer_path, use_fast=False)
     
     noise_processor = NoiseFeatureProcessor()
     if os.path.exists(args.noise_bins_json):
