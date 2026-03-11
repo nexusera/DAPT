@@ -117,6 +117,33 @@ def _export_fast_tokenizer_if_possible(tokenizer_dir: str, probe_text: str = "�
     except Exception as e:
         print(f"(warn) failed to export fast tokenizer for {tokenizer_dir}: {e}")
 
+
+def _looks_like_tokenizer(obj: Any) -> bool:
+    return hasattr(obj, "tokenize") and hasattr(obj, "convert_tokens_to_ids")
+
+
+def _load_tokenizer_with_fallback(tokenizer_path: str):
+    """Load tokenizer robustly.
+
+    Preferred for pretraining is slow tokenizer (use_fast=False) for stability.
+    However, some environments may behave unexpectedly (e.g. returning a non-tokenizer object).
+    In that case, fall back to a fast tokenizer.
+    """
+    try:
+        tok = AutoTokenizer.from_pretrained(tokenizer_path, use_fast=False)
+        if not isinstance(tok, bool) and _looks_like_tokenizer(tok):
+            return tok
+        print(
+            f"(warn) slow tokenizer load returned {type(tok).__name__}; falling back to fast tokenizer: {tokenizer_path}"
+        )
+    except Exception as e:
+        print(f"(warn) failed to load slow tokenizer ({e}); falling back to fast tokenizer: {tokenizer_path}")
+
+    tok_fast = AutoTokenizer.from_pretrained(tokenizer_path, use_fast=True)
+    if not _looks_like_tokenizer(tok_fast):
+        raise TypeError(f"Failed to load a usable tokenizer from: {tokenizer_path}")
+    return tok_fast
+
 def is_main_process():
     return int(os.environ.get("LOCAL_RANK", -1)) in [-1, 0]
 
@@ -591,7 +618,7 @@ def main():
                 print(f"(warn) failed to query cuda devices: {e}")
 
     # 1. 资源准备
-    tokenizer = AutoTokenizer.from_pretrained(args.tokenizer_path, use_fast=False)
+    tokenizer = _load_tokenizer_with_fallback(args.tokenizer_path)
     
     noise_processor = NoiseFeatureProcessor()
     if os.path.exists(args.noise_bins_json):

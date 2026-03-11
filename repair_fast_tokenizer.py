@@ -55,6 +55,17 @@ def _is_probably_broken_fast(tokenizer, test_strings: List[str]) -> List[str]:
         failures.append("Loaded tokenizer is not fast (is_fast=False).")
         return failures
 
+    # Special tokens must be part of the *base vocab* (not added tokens),
+    # otherwise ids can be >= vocab_size and break MLM/NSP input building.
+    try:
+        base_vocab_size = int(getattr(tokenizer, "vocab_size", 0) or 0)
+    except Exception:
+        base_vocab_size = 0
+    for name in ["unk_token_id", "mask_token_id", "cls_token_id", "sep_token_id", "pad_token_id"]:
+        tid = getattr(tokenizer, name, None)
+        if isinstance(tid, int) and base_vocab_size > 0 and tid >= base_vocab_size:
+            failures.append(f"{name}={tid} is outside base vocab_size={base_vocab_size} (token treated as added token).")
+
     for s in test_strings:
         try:
             pieces = tokenizer.tokenize(s)
@@ -101,6 +112,24 @@ def _read_json(path: Path) -> Dict[str, Any]:
         return {}
 
 
+def _extract_token_str(value: Any, default: str) -> str:
+    """Extract special token string from HF json.
+
+    In some repos, special_tokens_map.json stores AddedToken-like dicts:
+      {"unk_token": {"content": "[UNK]", "lstrip": false, ...}}
+    We must use the `content` field instead of `str(dict)`.
+    """
+    if value is None:
+        return default
+    if isinstance(value, str):
+        return value
+    if isinstance(value, dict):
+        content = value.get("content")
+        if isinstance(content, str) and content:
+            return content
+    return default
+
+
 def _diagnose_transformers() -> Dict[str, Any]:
     info: Dict[str, Any] = {
         "transformers_file": getattr(transformers, "__file__", None),
@@ -139,6 +168,18 @@ def _build_fast_backend_from_vocab(
             tokens.append(t)
 
     vocab = {t: i for i, t in enumerate(tokens)}
+
+    # Ensure required special tokens exist in vocab.
+    # If they are missing, the fast tokenizer will treat them as *added tokens*
+    # with ids >= vocab_size, which can break MLM (mask_token_id out of range).
+    required = [unk_token, cls_token, sep_token, pad_token, mask_token]
+    missing = [t for t in required if t not in vocab]
+    if missing:
+        raise RuntimeError(
+            "Missing required special tokens in vocab.txt: "
+            + ", ".join(repr(t) for t in missing)
+            + ". Please ensure vocab.txt contains standard BERT tokens like [PAD]/[UNK]/[CLS]/[SEP]/[MASK]."
+        )
 
     model = WordPiece(vocab=vocab, unk_token=unk_token, continuing_subword_prefix="##")
     backend = Tokenizer(model)
@@ -234,11 +275,11 @@ def main() -> None:
                 return v
         return default
 
-    unk_token = str(sp_map.get("unk_token", _fallback_special("unk_token", "[UNK]")))
-    cls_token = str(sp_map.get("cls_token", _fallback_special("cls_token", "[CLS]")))
-    sep_token = str(sp_map.get("sep_token", _fallback_special("sep_token", "[SEP]")))
-    pad_token = str(sp_map.get("pad_token", _fallback_special("pad_token", "[PAD]")))
-    mask_token = str(sp_map.get("mask_token", _fallback_special("mask_token", "[MASK]")))
+    unk_token = _extract_token_str(sp_map.get("unk_token"), _fallback_special("unk_token", "[UNK]"))
+    cls_token = _extract_token_str(sp_map.get("cls_token"), _fallback_special("cls_token", "[CLS]"))
+    sep_token = _extract_token_str(sp_map.get("sep_token"), _fallback_special("sep_token", "[SEP]"))
+    pad_token = _extract_token_str(sp_map.get("pad_token"), _fallback_special("pad_token", "[PAD]"))
+    mask_token = _extract_token_str(sp_map.get("mask_token"), _fallback_special("mask_token", "[MASK]"))
 
     if old_json.exists() and not args.keep_old_json:
         if not args.no_backup:
