@@ -398,6 +398,17 @@ class DynamicNSPDataset(Dataset):
             if random.random() < self.ds.hard_negative_prob:
                 # Hard negative: swap
                 key_text, value_text = value_text, key_text
+                # 避免“交换后仍是有效正样本”导致的 False Negative（标签噪声会让 loss 长期卡在 0.693 附近）
+                if (key_text, value_text) in self.valid_pairs_set:
+                    # 回退到 easy negative：随机采一个不在 ground truth 的 value
+                    max_retries = 10
+                    for _ in range(max_retries):
+                        candidate_value = random.choice(self.ds.value_pool)
+                        if (key_text, candidate_value) not in self.valid_pairs_set:
+                            value_text = candidate_value
+                            break
+                    else:
+                        value_text = candidate_value
             else:
                 # Easy negative: random value
                 # Fix: Avoid False Negatives by ensuring the random (Key, Value) pair is not a valid ground truth pair

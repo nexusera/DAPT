@@ -209,6 +209,14 @@ python /data/ocean/DAPT/train_dapt_macbert_staged.py \
 #### B) 普通 MLM 对照（不使用 KV 全词掩码）
 ```bash
 cd /data/ocean/DAPT
+# 可选：用 tmux 保持后台训练不断线
+# tmux new -s mlm   # 或：tmux attach -t mlm
+
+# 建议显式指定可见 GPU（避免被 vLLM/其它进程占用导致 OOM）
+export CUDA_VISIBLE_DEVICES=4,5
+
+# 建议禁用 fast tokenizer（历史上 t3/t4 出现过中文切分退化为大量 UNK）
+export TRANSFORMERS_NO_FAST_TOKENIZER=1
 
 python /data/ocean/DAPT/train_dapt_macbert_staged.py \
   --output_dir /data/ocean/DAPT/workspace/output_macbert_plainmlm_staged \
