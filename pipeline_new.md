@@ -53,6 +53,17 @@ python chunk_long_lines.py \
 ```bash
 python train_ocr_clean.py
 ```
+
+### 1.x 关于 Normalizer（文本清洗/空格处理）的说明（重要）
+- 本 pipeline 目前**没有单独新增**“去除空格/统一空白符/Unicode 归一化”等文本 Normalizer 步骤的显式说明。
+- 对 BERT/WordPiece 来说，文本规范化通常由 tokenizer 内置的 normalizer 完成（常见项：`clean_text`、`strip_accents`、`lowercase`、`tokenize_chinese_chars/handle_chinese_chars` 等）。
+- **不要为了修复 fast tokenizer 的 all-UNK 现象而在数据侧“全局去空格”**：
+  - fast 全 UNK 更常见根因是 **fast backend（`tokenizer.json`）构建/配置与 `vocab.txt` 不一致** 或误用了非 WordPiece 的分词器配置，而不是“缺少去空格”。
+  - OCR 路的数据还涉及 `noise_values` 与 `word_ids` 的对齐；对原文本做不可逆的空白改写，容易引入对齐偏差，影响 `verify_noise_alignment.py` 的匹配率与下游 offsets 的可解释性。
+- 如果确实要做空白规范化（例如 OCR 文本存在大量随机空格），必须满足：
+  - **同一规则全链路一致**（数据构建、预训练、下游微调/推理、评测完全一致），并且通常需要重建 dataset；
+  - 建议优先做“空白折叠”（将连续空白折叠为单空格）而不是“删除所有空格”，避免英文/数字串边界被破坏（如 `BRCA1 基因`）。
+  - 任何规范化改动都应在消融实验中保持一致，否则会引入额外变量。
 2) （可选）LLM 过滤（需本地 LLM 服务，保留医学相关词）
 ```bash
 cd /data/ocean/DAPT
@@ -209,16 +220,10 @@ python /data/ocean/DAPT/train_dapt_macbert_staged.py \
 #### B) 普通 MLM 对照（不使用 KV 全词掩码）
 ```bash
 cd /data/ocean/DAPT
-# 可选：用 tmux 保持后台训练不断线
-# tmux new -s mlm   # 或：tmux attach -t mlm
+CUDA_VISIBLE_DEVICES=4,5
+tmux attach -t mlm
 
-# 建议显式指定可见 GPU（避免被 vLLM/其它进程占用导致 OOM）
-export CUDA_VISIBLE_DEVICES=4,5
-
-# 建议禁用 fast tokenizer（历史上 t3/t4 出现过中文切分退化为大量 UNK）
-export TRANSFORMERS_NO_FAST_TOKENIZER=1
-
-python /data/ocean/DAPT/train_dapt_macbert_staged.py \
+CUDA_VISIBLE_DEVICES=4,5 python /data/ocean/DAPT/train_dapt_macbert_staged.py \
   --output_dir /data/ocean/DAPT/workspace/output_macbert_plainmlm_staged \
   --dataset_path /data/ocean/DAPT/workspace/processed_dataset \
   --nsp_data_dir /data/ocean/DAPT/data/pseudo_kv_labels_filtered.json \
@@ -279,4 +284,6 @@ python kv_nsp/run_train.py \
 - 噪声错配：先跑 `verify_noise_alignment.py`，匹配率低说明 OCR 与 dataset 顺序不一致，必须按 OCR-only 路重建并再合并。
 - token 越界 / NaN：用当前 tokenizer 重建数据；确保无样本 token_id >= vocab size；噪声特征无 NaN/Inf；必要时关闭 bf16 做短程验证。
 - 端口冲突：显式 `--master_port`（如 29505），不要用默认 29500。
+
+- fast tokenizer 异常（中文变成“带空格的大 token”且 token id 映射为 UNK）：优先检查 `vocab.txt` 与 `tokenizer.json` 是否一致，并用修复脚本重建 fast backend；不要首先通过“去空格”来规避。
 

@@ -23,12 +23,23 @@ from __future__ import annotations
 
 import argparse
 import datetime as _dt
+import json
 import os
 import shutil
 from pathlib import Path
-from typing import List
+from typing import Any, Dict, List, Optional
 
-from transformers import AutoTokenizer
+from transformers import AutoTokenizer, PreTrainedTokenizerFast
+
+try:
+    from tokenizers import Tokenizer
+    from tokenizers.decoders import WordPiece as WordPieceDecoder
+    from tokenizers.models import WordPiece
+    from tokenizers.normalizers import BertNormalizer
+    from tokenizers.pre_tokenizers import BertPreTokenizer
+    from tokenizers.processors import BertProcessing
+except Exception:  # pragma: no cover
+    Tokenizer = None  # type: ignore
 
 
 def _now_tag() -> str:
@@ -54,9 +65,19 @@ def _is_probably_broken_fast(tokenizer, test_strings: List[str]) -> List[str]:
             failures.append(f"tokenize() produced 0 pieces for {s!r}")
             continue
 
-        # Strong red flag we previously observed: a whole Chinese phrase -> single [UNK]
-        if len(pieces) == 1 and pieces[0] == tokenizer.unk_token:
-            failures.append(f"Single UNK piece for {s!r} (pieces={pieces}).")
+        # Strong red flags:
+        # 1) all pieces map to unk_id (even if token strings are not literally '[UNK]')
+        # 2) a whole phrase collapses to a single unknown token
+        try:
+            ids = tokenizer.convert_tokens_to_ids(pieces)
+            unk_id = tokenizer.unk_token_id
+            unk_cnt = sum(1 for i in ids if i == unk_id)
+            if unk_cnt == len(pieces):
+                failures.append(f"All pieces are UNK for {s!r} (pieces={pieces}).")
+            if len(pieces) == 1 and unk_cnt == 1:
+                failures.append(f"Single-UNK tokenization for {s!r} (pieces={pieces}).")
+        except Exception as e:
+            failures.append(f"convert_tokens_to_ids failed for {s!r}: {e}")
 
         # Ensure offsets_mapping works (required by downstream NER/QA)
         try:
@@ -68,6 +89,71 @@ def _is_probably_broken_fast(tokenizer, test_strings: List[str]) -> List[str]:
             failures.append(f"return_offsets_mapping failed for {s!r}: {e}")
 
     return failures
+
+
+def _read_json(path: Path) -> Dict[str, Any]:
+    try:
+        with path.open("r", encoding="utf-8") as f:
+            obj = json.load(f)
+        return obj if isinstance(obj, dict) else {}
+    except Exception:
+        return {}
+
+
+def _build_fast_backend_from_vocab(
+    tok_dir: Path,
+    *,
+    do_lower_case: bool,
+    tokenize_chinese_chars: bool,
+    strip_accents: Optional[bool],
+    unk_token: str,
+    cls_token: str,
+    sep_token: str,
+    pad_token: str,
+    mask_token: str,
+) -> PreTrainedTokenizerFast:
+    if Tokenizer is None:
+        raise RuntimeError("tokenizers is not available; cannot build fast tokenizer backend")
+
+    vocab_path = tok_dir / "vocab.txt"
+    tokens: List[str] = []
+    with vocab_path.open("r", encoding="utf-8") as f:
+        for line in f:
+            # Keep internal spaces if any; only strip newlines.
+            t = line.rstrip("\n")
+            tokens.append(t)
+
+    vocab = {t: i for i, t in enumerate(tokens)}
+
+    model = WordPiece(vocab=vocab, unk_token=unk_token, continuing_subword_prefix="##")
+    backend = Tokenizer(model)
+    backend.normalizer = BertNormalizer(
+        lowercase=bool(do_lower_case),
+        clean_text=True,
+        handle_chinese_chars=bool(tokenize_chinese_chars),
+        strip_accents=strip_accents,
+    )
+    backend.pre_tokenizer = BertPreTokenizer()
+    backend.decoder = WordPieceDecoder(prefix="##")
+
+    # Add [CLS]/[SEP] in a BERT-compatible way
+    cls_id = vocab.get(cls_token, 101)
+    sep_id = vocab.get(sep_token, 102)
+    backend.post_processor = BertProcessing(
+        (sep_token, sep_id),
+        (cls_token, cls_id),
+    )
+
+    fast = PreTrainedTokenizerFast(
+        tokenizer_object=backend,
+        unk_token=unk_token,
+        cls_token=cls_token,
+        sep_token=sep_token,
+        pad_token=pad_token,
+        mask_token=mask_token,
+        do_lower_case=bool(do_lower_case),
+    )
+    return fast
 
 
 def main() -> None:
@@ -106,6 +192,21 @@ def main() -> None:
     slow_tok = AutoTokenizer.from_pretrained(str(tok_dir), use_fast=False)
     print(f"  slow tokenizer class={slow_tok.__class__.__name__}")
 
+    # Read config hints (if present) so fast matches slow behavior
+    tok_cfg = _read_json(tok_dir / "tokenizer_config.json")
+    sp_map = _read_json(tok_dir / "special_tokens_map.json")
+    do_lower_case = bool(tok_cfg.get("do_lower_case", getattr(slow_tok, "do_lower_case", True)))
+    tokenize_chinese_chars = bool(tok_cfg.get("tokenize_chinese_chars", True))
+    strip_accents = tok_cfg.get("strip_accents", None)
+    if strip_accents not in (None, True, False):
+        strip_accents = None
+
+    unk_token = str(sp_map.get("unk_token", slow_tok.unk_token or "[UNK]"))
+    cls_token = str(sp_map.get("cls_token", slow_tok.cls_token or "[CLS]"))
+    sep_token = str(sp_map.get("sep_token", slow_tok.sep_token or "[SEP]"))
+    pad_token = str(sp_map.get("pad_token", slow_tok.pad_token or "[PAD]"))
+    mask_token = str(sp_map.get("mask_token", slow_tok.mask_token or "[MASK]"))
+
     if old_json.exists() and not args.keep_old_json:
         if not args.no_backup:
             backup = tok_dir / f"tokenizer.json.bak.{_now_tag()}"
@@ -116,8 +217,18 @@ def main() -> None:
     else:
         print(f"[2/4] No tokenizer.json removal (exists={old_json.exists()}, keep_old_json={args.keep_old_json})")
 
-    print(f"[3/4] Building fast tokenizer from directory assets...")
-    fast_tok = AutoTokenizer.from_pretrained(str(tok_dir), use_fast=True)
+    print(f"[3/4] Building fast tokenizer backend from vocab.txt (deterministic WordPiece)...")
+    fast_tok = _build_fast_backend_from_vocab(
+        tok_dir,
+        do_lower_case=do_lower_case,
+        tokenize_chinese_chars=tokenize_chinese_chars,
+        strip_accents=strip_accents,
+        unk_token=unk_token,
+        cls_token=cls_token,
+        sep_token=sep_token,
+        pad_token=pad_token,
+        mask_token=mask_token,
+    )
     print(f"  fast tokenizer class={fast_tok.__class__.__name__} is_fast={getattr(fast_tok, 'is_fast', False)}")
 
     print(f"[3/4] Saving fast tokenizer back to: {tok_dir}")
