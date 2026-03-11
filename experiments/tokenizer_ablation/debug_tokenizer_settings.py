@@ -52,6 +52,13 @@ def main():
     ap = argparse.ArgumentParser(description="Debug tokenizer settings and tokenization behavior")
     ap.add_argument("--tokenizer_path", type=str, required=True)
     ap.add_argument(
+        "--use_fast",
+        type=str,
+        default="auto",
+        choices=["auto", "true", "false"],
+        help="Force loading fast/slow tokenizer. auto=default AutoTokenizer behavior.",
+    )
+    ap.add_argument(
         "--samples",
         type=str,
         nargs="*",
@@ -67,7 +74,16 @@ def main():
 
     args = ap.parse_args()
 
-    tok = AutoTokenizer.from_pretrained(args.tokenizer_path)
+    use_fast = None
+    if args.use_fast == "true":
+        use_fast = True
+    elif args.use_fast == "false":
+        use_fast = False
+
+    if use_fast is None:
+        tok = AutoTokenizer.from_pretrained(args.tokenizer_path)
+    else:
+        tok = AutoTokenizer.from_pretrained(args.tokenizer_path, use_fast=use_fast)
     info = _try_dump_tokenizer_config(tok)
 
     print("=" * 80)

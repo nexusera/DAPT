@@ -193,6 +193,21 @@ def train(args: argparse.Namespace) -> None:
     tokenizer_name = config_io.tokenizer_name_from(cfg)
     tokenizer = AutoTokenizer.from_pretrained(tokenizer_name, use_fast=True)
 
+    # Fast tokenizer sanity-check: training pipeline relies on offset_mapping.
+    if not getattr(tokenizer, "is_fast", False):
+        raise RuntimeError(
+            "Expected a fast tokenizer (is_fast=False). "
+            "KV-NER requires return_offsets_mapping; please provide a fast tokenizer backend."
+        )
+    _probe = "肿瘤标志物"
+    _pieces = tokenizer.tokenize(_probe)
+    if len(_pieces) == 1 and _pieces[0] == tokenizer.unk_token:
+        raise RuntimeError(
+            "Fast tokenizer appears misconfigured (probe tokenizes to a single [UNK]). "
+            "If vocab.txt was edited, regenerate tokenizer.json: "
+            "python DAPT/repair_fast_tokenizer.py --tokenizer_dir <TOKENIZER_DIR>"
+        )
+
     train_samples = load_labelstudio_export(data_path, label_map, include_unlabeled=False)
     logger.info(f"训练集: {data_path} ({len(train_samples)} 条)")
     

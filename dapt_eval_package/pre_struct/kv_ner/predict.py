@@ -272,6 +272,19 @@ def predict(args: argparse.Namespace) -> None:
     else:
         tokenizer = AutoTokenizer.from_pretrained(config_io.tokenizer_name_from(cfg), use_fast=True)
 
+    if not getattr(tokenizer, "is_fast", False):
+        raise RuntimeError(
+            "Expected a fast tokenizer (is_fast=False). "
+            "KV-NER prediction/alignment requires return_offsets_mapping."
+        )
+    _probe = "肿瘤标志物"
+    _pieces = tokenizer.tokenize(_probe)
+    if len(_pieces) == 1 and _pieces[0] == tokenizer.unk_token:
+        raise RuntimeError(
+            "Fast tokenizer appears misconfigured (probe tokenizes to a single [UNK]). "
+            "Regenerate tokenizer.json: python DAPT/repair_fast_tokenizer.py --tokenizer_dir <TOKENIZER_DIR>"
+        )
+
     samples = load_labelstudio_export(
         input_path,
         label_map,

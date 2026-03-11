@@ -9,6 +9,7 @@
 ## 你要做什么（四个全跑）
 
 - **准备数据（一次）**：`00_check_env.sh` → `10_make_tokenizers.sh` → `20_make_jieba_dicts.sh` → `30_build_datasets.sh`
+- **关键修复（一次）**：`15_repair_fast_tokenizers.sh`（为每个 tokenizer 变体重建 `tokenizer.json`，保证下游 Fast Tokenizer 的 `return_offsets_mapping` 可用）
 - **训练（四个全跑）**：用 `train_dapt_macbert_staged.py` 分别跑 T1/T2/T3/T4（建议先 quick，确认无误后再 full）
 - Tokenizer 生成：使用本目录的 `build_tokenizer_variant.py`（可配置，避免改动你现有脚本里硬编码的 `/data/ocean` 路径）
 - Jieba 词典生成：使用本目录的 `build_jieba_dict.py`（每个 tokenizer 变体一份，避免 confound）
@@ -51,6 +52,22 @@ bash 00_check_env.sh
 cd /data/ocean/DAPT/experiments/tokenizer_ablation
 bash 10_make_tokenizers.sh 2>&1 | tee -a "$(pwd)/tokenizer_build.log"
 ```
+
+### 2.5)（强烈建议）修复/生成 Fast Tokenizer 配置（tokenizer.json）
+
+背景：我们在消融中会合并/扩充 `vocab.txt`。如果目录里残留了旧的 `tokenizer.json`（Fast backend 配置），
+`use_fast=True` 可能加载到不匹配的后端，导致中文短语被切成单个 `[UNK]`。
+
+下游 KV-NER/EBQA 依赖 `return_offsets_mapping=True`（通常需要 Fast tokenizer），所以必须保证 fast/slow 行为一致。
+
+```bash
+cd /data/ocean/DAPT/experiments/tokenizer_ablation
+bash 15_repair_fast_tokenizers.sh 2>&1 | tee -a "$(pwd)/tokenizer_repair.log"
+```
+
+这一步会对每个变体：
+- 备份并重建 `tokenizer.json`
+- 运行快速自检（同一目录分别用 fast/slow tokenize 一组中文 probe）
 
 ### 3) 生成每个变体对应的 Jieba 词典（避免消融 confound）
 

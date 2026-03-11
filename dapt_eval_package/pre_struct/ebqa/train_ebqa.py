@@ -1194,7 +1194,18 @@ def train_loop(cfg: TrainConfig):
     # 加载 tokenizer 以获取真实 pad 值（使用 AutoTokenizer 支持各种模型）
     try:
         from transformers import AutoTokenizer
-        tokenizer = AutoTokenizer.from_pretrained(cfg.tokenizer_name_or_path)
+        tokenizer = AutoTokenizer.from_pretrained(cfg.tokenizer_name_or_path, use_fast=True)
+        if not getattr(tokenizer, "is_fast", False):
+            raise RuntimeError(
+                "Expected a fast tokenizer (is_fast=False). EBQA requires return_offsets_mapping."
+            )
+        _probe = "肿瘤标志物"
+        _pieces = tokenizer.tokenize(_probe)
+        if len(_pieces) == 1 and _pieces[0] == tokenizer.unk_token:
+            raise RuntimeError(
+                "Fast tokenizer appears misconfigured (probe tokenizes to a single [UNK]). "
+                "Regenerate tokenizer.json: python DAPT/repair_fast_tokenizer.py --tokenizer_dir <TOKENIZER_DIR>"
+            )
         
         # ✅ 兼容性检查：验证数据与模型的词表是否匹配
         if tokenizer:
@@ -1559,7 +1570,11 @@ def train_loop(cfg: TrainConfig):
             try:
                 from transformers import AutoTokenizer
 
-                tok = AutoTokenizer.from_pretrained(cfg.tokenizer_name_or_path)
+                tok = AutoTokenizer.from_pretrained(cfg.tokenizer_name_or_path, use_fast=True)
+                if not getattr(tok, "is_fast", False):
+                    raise RuntimeError(
+                        "Expected a fast tokenizer (is_fast=False). EBQA requires return_offsets_mapping."
+                    )
                 m_char = _eval_char_metrics_via_decoder(
                     model,
                     dl_eval,

@@ -181,7 +181,18 @@ def convert_labelstudio_project_to_clean_records(
     if tokenizer_name:
         try:
             from transformers import AutoTokenizer
-            tokenizer = AutoTokenizer.from_pretrained(tokenizer_name)
+            tokenizer = AutoTokenizer.from_pretrained(tokenizer_name, use_fast=True)
+            if not getattr(tokenizer, "is_fast", False):
+                raise RuntimeError(
+                    "Expected a fast tokenizer (is_fast=False). EBQA requires return_offsets_mapping."
+                )
+            _probe = "肿瘤标志物"
+            _pieces = tokenizer.tokenize(_probe)
+            if len(_pieces) == 1 and _pieces[0] == tokenizer.unk_token:
+                raise RuntimeError(
+                    "Fast tokenizer appears misconfigured (probe tokenizes to a single [UNK]). "
+                    "Regenerate tokenizer.json: python DAPT/repair_fast_tokenizer.py --tokenizer_dir <TOKENIZER_DIR>"
+                )
         except Exception:
             pass
     

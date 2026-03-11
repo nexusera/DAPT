@@ -33,6 +33,14 @@
 cd /data/ocean/DAPT
 conda activate medical_bert
 
+# 重要：下游 KV-NER/EBQA 依赖 Fast Tokenizer 的 return_offsets_mapping。
+# 如果你合并/扩充过 vocab.txt，但 tokenizer.json 没同步更新，fast 可能会退化（中文短语 -> 单个 [UNK]）。
+# 建议在跑下游前，对每个 final_staged_model 目录生成/修复 tokenizer.json：
+python /data/ocean/DAPT/repair_fast_tokenizer.py --tokenizer_dir ${OUT_ROOT}/runs/t1_full_seed42/final_staged_model
+python /data/ocean/DAPT/repair_fast_tokenizer.py --tokenizer_dir ${OUT_ROOT}/runs/t2_full_seed42/final_staged_model
+python /data/ocean/DAPT/repair_fast_tokenizer.py --tokenizer_dir ${OUT_ROOT}/runs/t3_full_seed42/final_staged_model
+python /data/ocean/DAPT/repair_fast_tokenizer.py --tokenizer_dir ${OUT_ROOT}/runs/t4_full_seed42/final_staged_model
+
 # 说明：KV-NER 的推理/对比脚本依赖 torchcrf（一般已在 medical_bert 环境里）。
 # 如果你没激活该环境，可能会报：ModuleNotFoundError: No module named 'torchcrf'
 

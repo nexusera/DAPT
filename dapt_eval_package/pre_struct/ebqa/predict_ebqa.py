@@ -119,7 +119,18 @@ def run(args: argparse.Namespace) -> None:
     model.eval()
 
     print(f"[INFO] Loading tokenizer from {args.tokenizer}")
-    tokenizer = AutoTokenizer.from_pretrained(args.tokenizer)
+    tokenizer = AutoTokenizer.from_pretrained(args.tokenizer, use_fast=True)
+    if not getattr(tokenizer, "is_fast", False):
+        raise RuntimeError(
+            "Expected a fast tokenizer (is_fast=False). EBQA requires return_offsets_mapping."
+        )
+    _probe = "肿瘤标志物"
+    _pieces = tokenizer.tokenize(_probe)
+    if len(_pieces) == 1 and _pieces[0] == tokenizer.unk_token:
+        raise RuntimeError(
+            "Fast tokenizer appears misconfigured (probe tokenizes to a single [UNK]). "
+            "Regenerate tokenizer.json: python DAPT/repair_fast_tokenizer.py --tokenizer_dir <TOKENIZER_DIR>"
+        )
 
     decoder = EBQADecoder(
         tokenizer,

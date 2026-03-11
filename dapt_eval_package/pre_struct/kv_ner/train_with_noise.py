@@ -650,6 +650,35 @@ def train(args: argparse.Namespace) -> None:
     tokenizer = AutoTokenizer.from_pretrained(tokenizer_name, use_fast=True)
     logger.info(f"Tokenizer vocab size: {len(tokenizer)}")
 
+    # Fast tokenizer sanity-check: downstream NER relies on offset_mapping.
+    # If vocab.txt was edited but tokenizer.json is stale/mismatched, fast tokenization may degenerate
+    # (e.g., a whole Chinese phrase becomes a single [UNK]), silently breaking training/eval.
+    if not getattr(tokenizer, "is_fast", False):
+        raise RuntimeError(
+            "Expected a fast tokenizer (is_fast=False). "
+            "KV-NER requires return_offsets_mapping. Please provide a tokenizer with fast backend."
+        )
+    try:
+        _probe = "肿瘤标志物"
+        _pieces = tokenizer.tokenize(_probe)
+        if len(_pieces) == 1 and _pieces[0] == tokenizer.unk_token:
+            raise RuntimeError(
+                "Fast tokenizer appears misconfigured: a Chinese probe string tokenizes to a single [UNK]. "
+                "This often happens when vocab.txt was modified but tokenizer.json wasn't regenerated. "
+                "Run: python DAPT/repair_fast_tokenizer.py --tokenizer_dir <TOKENIZER_DIR>"
+            )
+        _enc = tokenizer(_probe, add_special_tokens=False, return_offsets_mapping=True)
+        if not _enc.get("offset_mapping"):
+            raise RuntimeError(
+                "Fast tokenizer did not return offset_mapping. "
+                "Please ensure you're using a fast tokenizer and that tokenizer.json is valid."
+            )
+    except Exception as e:
+        raise RuntimeError(
+            f"Fast tokenizer sanity-check failed: {e}. "
+            "If you edited vocab.txt, regenerate tokenizer.json with DAPT/repair_fast_tokenizer.py"
+        )
+
     # 加载数据
     data_path = Path(train_block.get("data_path"))
     if not data_path.exists():

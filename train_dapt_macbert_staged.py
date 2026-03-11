@@ -5,6 +5,7 @@ import sys
 import random
 import argparse
 import numpy as np
+from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Tuple, Union
 from pathlib import Path
@@ -59,6 +60,62 @@ from dataset import KVDataset
 # 常量定义
 PERFECT_VALUES = [1.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0]
 MAX_SEQ_LEN = 512
+
+
+@contextmanager
+def _temporarily_unset_env(name: str):
+    old = os.environ.get(name)
+    if name in os.environ:
+        os.environ.pop(name, None)
+    try:
+        yield
+    finally:
+        if old is not None:
+            os.environ[name] = old
+
+
+def _export_fast_tokenizer_if_possible(tokenizer_dir: str, probe_text: str = "肿瘤标志物") -> None:
+    """Generate tokenizer.json for downstream offset_mapping.
+
+    We pretrain with slow tokenizers (use_fast=False) for stability.
+    Downstream KV-NER/EBQA uses fast tokenizers for return_offsets_mapping.
+    This function tries to ensure the saved model directory contains a healthy fast backend.
+
+    Never raises: on failure, prints a warning and continues.
+    """
+    try:
+        with _temporarily_unset_env("TRANSFORMERS_NO_FAST_TOKENIZER"):
+            tok_fast = AutoTokenizer.from_pretrained(tokenizer_dir, use_fast=True)
+
+        if not getattr(tok_fast, "is_fast", False):
+            print(f"(warn) fast tokenizer export skipped: is_fast=False for {tokenizer_dir}")
+            return
+
+        pieces = tok_fast.tokenize(probe_text)
+        if len(pieces) == 1 and pieces[0] == tok_fast.unk_token:
+            print(
+                f"(warn) fast tokenizer looks broken for {tokenizer_dir}: "
+                f"probe={probe_text!r} -> {pieces}. tokenizer.json not written."
+            )
+            return
+
+        # Ensure offset_mapping is available
+        try:
+            enc = tok_fast(probe_text, add_special_tokens=False, return_offsets_mapping=True)
+            if not enc.get("offset_mapping"):
+                print(
+                    f"(warn) fast tokenizer missing offset_mapping for {tokenizer_dir}; "
+                    "tokenizer.json not written."
+                )
+                return
+        except Exception as e:
+            print(f"(warn) fast tokenizer return_offsets_mapping failed for {tokenizer_dir}: {e}")
+            return
+
+        tok_fast.save_pretrained(tokenizer_dir)
+        print(f"Exported fast tokenizer.json to: {tokenizer_dir}")
+    except Exception as e:
+        print(f"(warn) failed to export fast tokenizer for {tokenizer_dir}: {e}")
 
 def is_main_process():
     return int(os.environ.get("LOCAL_RANK", -1)) in [-1, 0]
@@ -503,8 +560,21 @@ def main():
     )
     parser.add_argument("--mlm_probability", type=float, default=0.15)
     parser.add_argument("--max_length", type=int, default=512)
+    parser.add_argument(
+        "--export_fast_tokenizer",
+        action="store_true",
+        help="After saving checkpoints, also generate tokenizer.json (fast backend) in the output dirs for downstream offset_mapping.",
+    )
+    parser.add_argument(
+        "--no_export_fast_tokenizer",
+        action="store_true",
+        help="Disable fast-tokenizer export even if downstream needs it.",
+    )
     
     args = parser.parse_args()
+
+    # Default behavior: export fast tokenizer unless explicitly disabled.
+    export_fast_tokenizer = bool(args.export_fast_tokenizer) or not bool(args.no_export_fast_tokenizer)
 
     if is_main_process():
         cvd = os.environ.get("CUDA_VISIBLE_DEVICES")
@@ -604,6 +674,8 @@ def main():
         # 保存 Phase A 结果作为中间态
         trainer_mlm.save_model(mlm_output_dir)
         tokenizer.save_pretrained(mlm_output_dir)
+        if export_fast_tokenizer:
+            _export_fast_tokenizer_if_possible(mlm_output_dir)
         
         # --- Phase B: NSP Training ---
         print(f"--- [Round {round_idx}] Phase B: NSP Training ---")
@@ -639,6 +711,8 @@ def main():
         # 保存 Phase B 结果
         trainer_nsp.save_model(nsp_output_dir)
         tokenizer.save_pretrained(nsp_output_dir)
+        if export_fast_tokenizer:
+            _export_fast_tokenizer_if_possible(nsp_output_dir)
         
         print(f"Round {round_idx} completed. Checkpoint saved at {nsp_output_dir}")
 
@@ -647,6 +721,8 @@ def main():
     print(f"All rounds finished. Saving final model to {final_output_dir}...")
     trainer_nsp.save_model(final_output_dir)
     tokenizer.save_pretrained(final_output_dir)
+    if export_fast_tokenizer:
+        _export_fast_tokenizer_if_possible(final_output_dir)
 
 if __name__ == "__main__":
     main()

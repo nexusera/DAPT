@@ -559,6 +559,19 @@ def main():
     
     tokenizer_name = ner_config_io.tokenizer_name_from(ner_cfg)
     tokenizer = AutoTokenizer.from_pretrained(tokenizer_name, use_fast=True)
+
+    if not getattr(tokenizer, "is_fast", False):
+        raise RuntimeError(
+            "Expected a fast tokenizer (is_fast=False). "
+            "compare_models relies on offset_mapping for alignment."
+        )
+    _probe = "肿瘤标志物"
+    _pieces = tokenizer.tokenize(_probe)
+    if len(_pieces) == 1 and _pieces[0] == tokenizer.unk_token:
+        raise RuntimeError(
+            "Fast tokenizer appears misconfigured (probe tokenizes to a single [UNK]). "
+            "Regenerate tokenizer.json: python DAPT/repair_fast_tokenizer.py --tokenizer_dir <TOKENIZER_DIR>"
+        )
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     ner_model = BertCrfTokenClassifier.from_pretrained(ner_model_dir).to(device)
     ner_model.eval()
