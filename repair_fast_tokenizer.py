@@ -29,6 +29,7 @@ import shutil
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+import transformers
 from transformers import AutoTokenizer, PreTrainedTokenizerFast
 
 try:
@@ -98,6 +99,20 @@ def _read_json(path: Path) -> Dict[str, Any]:
         return obj if isinstance(obj, dict) else {}
     except Exception:
         return {}
+
+
+def _diagnose_transformers() -> Dict[str, Any]:
+    info: Dict[str, Any] = {
+        "transformers_file": getattr(transformers, "__file__", None),
+        "transformers_version": getattr(transformers, "__version__", None),
+        "AutoTokenizer_type": type(AutoTokenizer).__name__,
+        "AutoTokenizer_repr": repr(AutoTokenizer),
+    }
+    return info
+
+
+def _looks_like_tokenizer(obj: Any) -> bool:
+    return hasattr(obj, "tokenize") and hasattr(obj, "convert_tokens_to_ids")
 
 
 def _build_fast_backend_from_vocab(
@@ -189,23 +204,41 @@ def main() -> None:
     old_json = tok_dir / "tokenizer.json"
 
     print(f"[1/4] Loading slow tokenizer from: {tok_dir}")
-    slow_tok = AutoTokenizer.from_pretrained(str(tok_dir), use_fast=False)
-    print(f"  slow tokenizer class={slow_tok.__class__.__name__}")
+    slow_tok: Optional[Any] = None
+    try:
+        candidate = AutoTokenizer.from_pretrained(str(tok_dir), use_fast=False)
+        if _looks_like_tokenizer(candidate) and not isinstance(candidate, bool):
+            slow_tok = candidate
+            print(f"  slow tokenizer class={slow_tok.__class__.__name__}")
+        else:
+            print(f"  slow tokenizer class={type(candidate).__name__}")
+            print("  WARNING: slow tokenizer did not load correctly; falling back to config-only mode")
+            print("  diagnose=" + json.dumps(_diagnose_transformers(), ensure_ascii=False))
+    except Exception as e:
+        print(f"  WARNING: failed to load slow tokenizer: {e}")
+        print("  diagnose=" + json.dumps(_diagnose_transformers(), ensure_ascii=False))
 
     # Read config hints (if present) so fast matches slow behavior
     tok_cfg = _read_json(tok_dir / "tokenizer_config.json")
     sp_map = _read_json(tok_dir / "special_tokens_map.json")
-    do_lower_case = bool(tok_cfg.get("do_lower_case", getattr(slow_tok, "do_lower_case", True)))
+    do_lower_case = bool(tok_cfg.get("do_lower_case", getattr(slow_tok, "do_lower_case", True) if slow_tok is not None else True))
     tokenize_chinese_chars = bool(tok_cfg.get("tokenize_chinese_chars", True))
     strip_accents = tok_cfg.get("strip_accents", None)
     if strip_accents not in (None, True, False):
         strip_accents = None
 
-    unk_token = str(sp_map.get("unk_token", slow_tok.unk_token or "[UNK]"))
-    cls_token = str(sp_map.get("cls_token", slow_tok.cls_token or "[CLS]"))
-    sep_token = str(sp_map.get("sep_token", slow_tok.sep_token or "[SEP]"))
-    pad_token = str(sp_map.get("pad_token", slow_tok.pad_token or "[PAD]"))
-    mask_token = str(sp_map.get("mask_token", slow_tok.mask_token or "[MASK]"))
+    def _fallback_special(name: str, default: str) -> str:
+        if slow_tok is not None:
+            v = getattr(slow_tok, name, None)
+            if isinstance(v, str) and v:
+                return v
+        return default
+
+    unk_token = str(sp_map.get("unk_token", _fallback_special("unk_token", "[UNK]")))
+    cls_token = str(sp_map.get("cls_token", _fallback_special("cls_token", "[CLS]")))
+    sep_token = str(sp_map.get("sep_token", _fallback_special("sep_token", "[SEP]")))
+    pad_token = str(sp_map.get("pad_token", _fallback_special("pad_token", "[PAD]")))
+    mask_token = str(sp_map.get("mask_token", _fallback_special("mask_token", "[MASK]")))
 
     if old_json.exists() and not args.keep_old_json:
         if not args.no_backup:
