@@ -17,13 +17,76 @@ from __future__ import annotations
 
 import argparse
 import os
+import sys
 from typing import List, Optional
 
 from datasets import DatasetDict, load_from_disk
+import transformers
 from transformers import AutoTokenizer
 
 
-def _tokenize_words_batch(examples, tokenizer, max_len: int) -> dict:
+_TOKENIZER_CACHE = {}
+
+
+def _looks_like_tokenizer(obj) -> bool:
+    return hasattr(obj, "tokenize") and hasattr(obj, "convert_tokens_to_ids")
+
+
+def _diagnose_env(tokenizer_path: str) -> str:
+    info = {
+        "tokenizer_path": tokenizer_path,
+        "python_executable": sys.executable,
+        "python_version": sys.version,
+        "cwd": os.getcwd(),
+        "sys_path_0": sys.path[0] if sys.path else None,
+        "transformers_file": getattr(transformers, "__file__", None),
+        "transformers_version": getattr(transformers, "__version__", None),
+        "AutoTokenizer_repr": repr(AutoTokenizer),
+    }
+    import json
+
+    return json.dumps(info, ensure_ascii=False)
+
+
+def _get_tokenizer(tokenizer_path: str, use_fast: bool):
+    key = (tokenizer_path, bool(use_fast))
+    if key in _TOKENIZER_CACHE:
+        return _TOKENIZER_CACHE[key]
+
+    tok = None
+    if use_fast:
+        # Prefer fast backend for downstream needs; here mainly for parity/debug.
+        tok = AutoTokenizer.from_pretrained(tokenizer_path, use_fast=True)
+        if not _looks_like_tokenizer(tok) or isinstance(tok, bool):
+            # Fallback to explicit fast class.
+            try:
+                from transformers import PreTrainedTokenizerFast
+
+                tok = PreTrainedTokenizerFast.from_pretrained(tokenizer_path)
+            except Exception:
+                pass
+    else:
+        # Prefer slow BertTokenizer to avoid env-specific AutoTokenizer(use_fast=False) oddities.
+        try:
+            from transformers import BertTokenizer
+
+            tok = BertTokenizer.from_pretrained(tokenizer_path)
+        except Exception:
+            tok = AutoTokenizer.from_pretrained(tokenizer_path, use_fast=False)
+
+    if not _looks_like_tokenizer(tok) or isinstance(tok, bool):
+        raise TypeError(
+            "Failed to load a valid tokenizer object. "
+            f"type={type(tok).__name__}, value={tok!r}. "
+            "Diagnose=" + _diagnose_env(tokenizer_path)
+        )
+
+    _TOKENIZER_CACHE[key] = tok
+    return tok
+
+
+def _tokenize_words_batch(examples, tokenizer_path: str, use_fast: bool, max_len: int) -> dict:
+    tokenizer = _get_tokenizer(tokenizer_path, use_fast)
     batch_input_ids: List[List[int]] = []
     batch_word_ids: List[List[Optional[int]]] = []
 
@@ -109,14 +172,15 @@ def main() -> None:
     print(f"加载 words dataset: {args.words_dataset}")
     words_dd: DatasetDict = load_from_disk(args.words_dataset)
 
-    print(f"加载 tokenizer: {args.tokenizer_path} (use_fast={args.use_fast})")
-    tokenizer = AutoTokenizer.from_pretrained(args.tokenizer_path, use_fast=args.use_fast)
+    # NOTE: do not pass tokenizer object into datasets.map with num_proc>1.
+    # It can break multiprocessing serialization and result in weird objects (e.g., bool) in workers.
+    print(f"Tokenizer path: {args.tokenizer_path} (use_fast={args.use_fast})")
 
     map_kwargs = {
         "batched": True,
         "batch_size": args.batch_size,
         "remove_columns": ["words"],
-        "fn_kwargs": {"tokenizer": tokenizer, "max_len": args.max_len},
+        "fn_kwargs": {"tokenizer_path": args.tokenizer_path, "use_fast": bool(args.use_fast), "max_len": args.max_len},
     }
     if args.num_proc and args.num_proc > 1:
         map_kwargs["num_proc"] = args.num_proc
