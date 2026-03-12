@@ -43,6 +43,7 @@
     "boundary_loss_weight": 0.0,
     "token_ce_loss_weight": 0.0,
     "end_boundary_loss_weight": 0.0,
+    "noise_mode": "bucket",
 
     "output_dir": "runs/kv_ner_finetuned_prepared"
   }

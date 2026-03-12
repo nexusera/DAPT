@@ -21,6 +21,13 @@ from transformers import AutoTokenizer
 import torch
 # Noise support
 from pre_struct.kv_ner.noise_utils import NoiseFeatureProcessor, PERFECT_VALUES
+try:
+    from noise_fusion import aggregate_token_noise_values, uses_bucket_noise, uses_continuous_noise
+except Exception:  # pragma: no cover
+    _REPO_ROOT = Path(__file__).resolve().parents[3]
+    if str(_REPO_ROOT) not in sys.path:
+        sys.path.insert(0, str(_REPO_ROOT))
+    from noise_fusion import aggregate_token_noise_values, uses_bucket_noise, uses_continuous_noise
 # Removed EBQA imports
 
 # Setup logging
@@ -249,36 +256,19 @@ def predict_ner_text(text, model, tokenizer, max_len, device, id2label, o_id):
     pairs_list = _assemble_pairs(entities, text)
     return entities, pairs_list
 
-def _build_noise_ids(offset_mapping, noise_values, processor):
-    """根据offset_mapping与noise_values生成每个token的noise_ids（长度7）。"""
-    if noise_values is None:
-        noise_values = []
-    # 如果仅有全局7维向量，则为所有token复用同一桶ID
-    if (
-        isinstance(noise_values, list)
-        and len(noise_values) == 7
-        and all(not isinstance(v, (list, tuple)) for v in noise_values)
-    ):
-        global_ids = processor.values_to_bin_ids(noise_values)
-        return torch.tensor([global_ids for _ in offset_mapping], dtype=torch.long)
-    ids = []
-    for s, e in offset_mapping:
-        s = int(s); e = int(e)
-        if e <= s:
-            ids.append(processor.values_to_bin_ids(PERFECT_VALUES))
-            continue
-        vecs = []
-        for ci in range(s, e):
-            if 0 <= ci < len(noise_values):
-                v = noise_values[ci]
-                if isinstance(v, (list, tuple)) and len(v) == 7:
-                    vecs.append(v)
-        if vecs:
-            avg = [sum(col) / len(col) for col in zip(*vecs)]
-            ids.append(processor.values_to_bin_ids(avg))
-        else:
-            ids.append(processor.values_to_bin_ids(PERFECT_VALUES))
-    return torch.tensor(ids, dtype=torch.long)
+def _build_noise_features(offset_mapping, noise_values, processor, noise_mode):
+    token_noise_values = aggregate_token_noise_values(
+        offset_mapping,
+        noise_values,
+        chunk_char_start=0,
+        perfect_values=PERFECT_VALUES,
+    )
+    if uses_bucket_noise(noise_mode):
+        ids = [processor.values_to_bin_ids(row) for row in token_noise_values]
+        return {"noise_ids": torch.tensor(ids, dtype=torch.long)}
+    if uses_continuous_noise(noise_mode):
+        return {"noise_values": torch.tensor(token_noise_values, dtype=torch.float32)}
+    return {}
 
 
 def predict_ner_sliding_window(text, model, tokenizer, max_len, device, id2label, o_id, stride=400, noise_values=None, noise_processor=None):
@@ -327,10 +317,13 @@ def predict_ner_sliding_window(text, model, tokenizer, max_len, device, id2label
             "attention_mask": attention_mask,
             "token_type_ids": token_type_ids,
         }
-        if noise_processor is not None:
-            noise_ids = _build_noise_ids(offset_mapping, noise_values, noise_processor).unsqueeze(0).to(device)
-            kwargs["noise_ids"] = noise_ids
-            if getattr(model, "use_noise", False) and getattr(model, "noise_embeddings", None):
+        noise_mode = str(getattr(model, "noise_mode", "bucket") or "bucket").lower()
+        if noise_processor is not None or uses_continuous_noise(noise_mode):
+            noise_kwargs = _build_noise_features(offset_mapping, noise_values, noise_processor, noise_mode)
+            for k, v in noise_kwargs.items():
+                kwargs[k] = v.unsqueeze(0).to(device)
+            if "noise_ids" in noise_kwargs and getattr(model, "use_noise", False) and getattr(model, "noise_embeddings", None):
+                noise_ids = kwargs["noise_ids"]
                 with torch.no_grad():
                     for fi, emb in enumerate(model.noise_embeddings):
                         max_id = int(torch.max(noise_ids[:, :, fi]).item())

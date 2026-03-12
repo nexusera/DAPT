@@ -44,6 +44,7 @@ kv_nsp_dir = os.path.join(current_dir, "kv_nsp")
 if os.path.isdir(kv_nsp_dir):
     sys.path.append(kv_nsp_dir)
 from dataset import KVDataset
+from negative_sampling import format_negative_sampling_summary
 
 PERFECT_VALUES = [1.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0]
 
@@ -241,21 +242,10 @@ class BertForDaptNoMLM(BertPreTrainedModel):
 class DynamicNSPDataset(Dataset):
     def __init__(self, raw_kv_dataset: KVDataset):
         self.ds = raw_kv_dataset
-        self.valid_pairs_set = set(self.ds.pairs)
+        self.valid_pairs_set = getattr(self.ds, "valid_pairs_set", set(self.ds.pairs))
     def __len__(self): return len(self.ds.pairs)
     def __getitem__(self, idx):
-        key_text, value_text = self.ds.pairs[idx]
-        label = 1 
-        if random.random() < self.ds.negative_prob:
-            label = 0
-            if random.random() < self.ds.hard_negative_prob:
-                key_text, value_text = value_text, key_text
-            else:
-                for _ in range(10):
-                    candidate = random.choice(self.ds.value_pool)
-                    if (key_text, candidate) not in self.valid_pairs_set:
-                        value_text = candidate; break
-                else: value_text = candidate
+        key_text, value_text, label, _ = self.ds.sample_text_pair(idx, valid_pairs_set=self.valid_pairs_set)
         return {"text_a": key_text, "text_b": value_text, "label": label}
 
 @dataclass
@@ -299,6 +289,10 @@ def main():
     
     parser.add_argument("--learning_rate", type=float, default=5e-5)
     parser.add_argument("--num_epochs", type=int, default=5, help="NSP 训练的总轮数")
+    parser.add_argument("--nsp_negative_prob", type=float, default=0.5, help="KV-NSP 中把正样本改造成负样本的总概率。")
+    parser.add_argument("--nsp_reverse_negative_ratio", type=float, default=1.0, help="KV-NSP 负样本里 reverse 倒序策略的权重。")
+    parser.add_argument("--nsp_random_negative_ratio", type=float, default=1.0, help="KV-NSP 负样本里 random 随机 value 策略的权重。")
+    parser.add_argument("--nsp_max_easy_retries", type=int, default=10, help="构造 random 负样本时避免真实正例的最大重试次数。")
     
     args = parser.parse_args()
 
@@ -310,8 +304,16 @@ def main():
     print(f"Loading NSP Dataset from {args.nsp_data_dir}...")
     p = Path(args.nsp_data_dir)
     nsp_files = [p] if p.is_file() else [p / f for f in os.listdir(p) if f.endswith(".json")]
-    raw_kv_dataset = KVDataset(nsp_files, tokenizer)
+    raw_kv_dataset = KVDataset(
+        nsp_files,
+        tokenizer,
+        negative_prob=args.nsp_negative_prob,
+        reverse_negative_ratio=args.nsp_reverse_negative_ratio,
+        random_negative_ratio=args.nsp_random_negative_ratio,
+        max_easy_retries=args.nsp_max_easy_retries,
+    )
     nsp_dataset = DynamicNSPDataset(raw_kv_dataset)
+    print(f"NSP negative sampling: {format_negative_sampling_summary(raw_kv_dataset.sampling_config)}")
     print(f"NSP Samples: {len(nsp_dataset)}")
 
     model_path = "hfl/chinese-macbert-base"

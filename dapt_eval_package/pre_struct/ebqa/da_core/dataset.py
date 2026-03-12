@@ -208,6 +208,23 @@ class QACollator:
                     )
             out["noise_ids"] = noise_pad
 
+        if any("noise_values" in b for b in batch):
+            max_len = out["input_ids"].size(1)
+            noise_pad = self.torch.zeros((len(batch), max_len, 7), dtype=self.torch.float32)
+            for bi, b in enumerate(batch):
+                seq = b.get("noise_values")
+                if isinstance(seq, self.torch.Tensor):
+                    seq = seq.tolist()
+                seq = seq or []
+                seq_len = len(input_ids[bi]) if bi < len(input_ids) else 0
+                for ti in range(min(seq_len, max_len, len(seq))):
+                    vals = seq[ti]
+                    if isinstance(vals, self.torch.Tensor):
+                        vals = vals.tolist()
+                    if isinstance(vals, (list, tuple)) and len(vals) >= 7:
+                        noise_pad[bi, ti, :] = self.torch.tensor(list(vals[:7]), dtype=self.torch.float32)
+            out["noise_values"] = noise_pad
+
         if self.keep_debug_fields:
             dbg_keys = (
                 "question_key",
@@ -390,6 +407,8 @@ class EnhancedQADataset(Dataset):
         }
         if "noise_ids" in item:
             out["noise_ids"] = item.get("noise_ids")
+        if "noise_values" in item:
+            out["noise_values"] = item.get("noise_values")
         if self.keep_debug_fields:
             for k in (
                 "question_key",

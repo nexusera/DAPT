@@ -15,7 +15,7 @@ import argparse
 import os
 import re
 from pathlib import Path
-from typing import Iterable, List, Optional, Set
+from typing import Any, Iterable, List, Optional, Set
 
 from transformers import AutoTokenizer
 
@@ -55,6 +55,53 @@ def iter_vocab_lines(path: str) -> Iterable[str]:
             if not tok:
                 continue
             yield tok
+
+
+def ordered_vocab_tokens(tokenizer: Any) -> List[str]:
+    """Return vocab tokens ordered by token id.
+
+    This is important because WordPiece `vocab.txt` order defines token ids.
+    """
+    vocab = tokenizer.get_vocab()
+    return [tok for tok, _ in sorted(vocab.items(), key=lambda kv: kv[1])]
+
+
+def write_merged_wordpiece_tokenizer(tokenizer: Any, output_dir: Path, new_tokens: List[str]) -> None:
+    """Save config files then overwrite vocab.txt with a clean merged vocab.
+
+    Rationale:
+    - `tokenizer.add_tokens()` writes runtime added tokens into added_tokens.json.
+    - Our ablation wants new tokens to be part of the base WordPiece vocab (vocab.txt)
+      so that slow/fast backends can be rebuilt deterministically from vocab.txt.
+    """
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    # Save config/special tokens files first.
+    tokenizer.save_pretrained(str(output_dir))
+
+    base_ordered = ordered_vocab_tokens(tokenizer)
+    seen = set(base_ordered)
+    appended = 0
+    for tok in sorted(new_tokens):
+        if tok in seen:
+            continue
+        base_ordered.append(tok)
+        seen.add(tok)
+        appended += 1
+
+    vocab_txt = output_dir / "vocab.txt"
+    with open(vocab_txt, "w", encoding="utf-8") as f:
+        for tok in base_ordered:
+            f.write(tok + "\n")
+
+    # These describe runtime added-tokens behavior and/or stale fast backend.
+    # For ablation we want a clean vocab-only tokenizer directory.
+    for stale_name in ("added_tokens.json", "tokenizer.json"):
+        stale_path = output_dir / stale_name
+        if stale_path.exists():
+            stale_path.unlink()
+
+    print(f"[save] merged WordPiece vocab -> {vocab_txt} (appended={appended})")
 
 
 def load_candidates(
@@ -146,10 +193,7 @@ def main():
     print(f"[stats] candidates={len(candidates)} base_vocab={len(base_vocab)}")
     print(f"[stats] new_tokens={len(new_tokens)}")
 
-    if new_tokens:
-        tokenizer.add_tokens(sorted(new_tokens))
-
-    tokenizer.save_pretrained(str(output_dir))
+    write_merged_wordpiece_tokenizer(tokenizer, output_dir, new_tokens)
     print(f"[save] {output_dir}")
 
     # 尝试输出 vocab size（不同 tokenizer 保存结构可能不一样）

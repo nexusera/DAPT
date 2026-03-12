@@ -16,6 +16,14 @@ from transformers import (
     TrainingArguments,
     Trainer,
 )
+try:  # pragma: no cover
+    from noise_fusion import ContinuousNoiseProjector, build_feature_ranges, uses_bucket_noise, uses_continuous_noise
+except Exception:  # pragma: no cover
+    import sys
+    _ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
+    if _ROOT not in sys.path:
+        sys.path.insert(0, _ROOT)
+    from noise_fusion import ContinuousNoiseProjector, build_feature_ranges, uses_bucket_noise, uses_continuous_noise
 
 # noise feature meta（7维，与 kv_ner/noise_utils 一致）
 try:  # pragma: no cover - optional dependency
@@ -111,11 +119,12 @@ def _resolve_tokenizer_path(
 
 
 def _supports_noise_forward(model: Any) -> bool:
-    """Return True if model.forward accepts noise_ids."""
+    """Return True if model.forward accepts noise inputs."""
     import inspect
 
     try:
-        return "noise_ids" in inspect.signature(model.forward).parameters
+        params = inspect.signature(model.forward).parameters
+        return ("noise_ids" in params) or ("noise_values" in params)
     except Exception:
         return False
 
@@ -131,15 +140,32 @@ class NoiseAwareBertForQuestionAnswering(BertForQuestionAnswering):
         super().__init__(config)
         self.use_noise = bool(getattr(config, "use_noise", use_noise))
         self.noise_embed_dim = int(getattr(config, "noise_embed_dim", noise_embed_dim))
+        self.noise_mode = str(getattr(config, "noise_mode", "bucket") or "bucket").lower()
+        self.noise_mlp_hidden_dim = int(getattr(config, "noise_mlp_hidden_dim", 0) or 0) or None
+        self.noise_projector = None
 
         if self.use_noise:
-            emb_layers = []
-            for feat in _NOISE_FEATURES:
-                nbin = int(_NOISE_NUM_BINS.get(feat, 0))
-                emb_layers.append(nn.Embedding(num_embeddings=nbin + 1, embedding_dim=self.noise_embed_dim))
-            self.noise_embeddings = nn.ModuleList(emb_layers)
-            self.noise_proj = nn.Linear(len(_NOISE_FEATURES) * self.noise_embed_dim, config.hidden_size)
-            self.noise_dropout = nn.Dropout(config.hidden_dropout_prob)
+            if uses_bucket_noise(self.noise_mode):
+                emb_layers = []
+                for feat in _NOISE_FEATURES:
+                    nbin = int(_NOISE_NUM_BINS.get(feat, 0))
+                    emb_layers.append(nn.Embedding(num_embeddings=nbin + 1, embedding_dim=self.noise_embed_dim))
+                self.noise_embeddings = nn.ModuleList(emb_layers)
+                self.noise_proj = nn.Linear(len(_NOISE_FEATURES) * self.noise_embed_dim, config.hidden_size)
+                self.noise_dropout = nn.Dropout(config.hidden_dropout_prob)
+            elif uses_continuous_noise(self.noise_mode):
+                self.noise_embeddings = None
+                self.noise_proj = None
+                self.noise_dropout = None
+                self.noise_projector = ContinuousNoiseProjector(
+                    config.hidden_size,
+                    mode=self.noise_mode,
+                    dropout=config.hidden_dropout_prob,
+                    mlp_hidden_dim=self.noise_mlp_hidden_dim,
+                    feature_ranges=build_feature_ranges(getattr(config, "noise_bin_edges", None)),
+                )
+            else:
+                raise ValueError(f"Unsupported noise_mode: {self.noise_mode}")
         else:
             self.noise_embeddings = None
             self.noise_proj = None
@@ -147,6 +173,8 @@ class NoiseAwareBertForQuestionAnswering(BertForQuestionAnswering):
 
         self.config.use_noise = self.use_noise
         self.config.noise_embed_dim = self.noise_embed_dim
+        self.config.noise_mode = self.noise_mode
+        self.config.noise_mlp_hidden_dim = self.noise_mlp_hidden_dim
 
     def forward(
         self,
@@ -162,6 +190,7 @@ class NoiseAwareBertForQuestionAnswering(BertForQuestionAnswering):
         output_hidden_states=None,
         return_dict=None,
         noise_ids=None,
+        noise_values=None,
         **kwargs,
     ):
         outputs = self.bert(
@@ -177,26 +206,31 @@ class NoiseAwareBertForQuestionAnswering(BertForQuestionAnswering):
         )
         sequence_output = outputs[0]
 
-        if self.use_noise and (noise_ids is not None) and self.noise_embeddings is not None:
-            if noise_ids.dim() == 2:
-                noise_ids = noise_ids.unsqueeze(-1)
-            while noise_ids.dim() < 3:
-                noise_ids = noise_ids.unsqueeze(-1)
+        if self.use_noise:
+            if uses_bucket_noise(self.noise_mode) and (noise_ids is not None) and self.noise_embeddings is not None:
+                if noise_ids.dim() == 2:
+                    noise_ids = noise_ids.unsqueeze(-1)
+                while noise_ids.dim() < 3:
+                    noise_ids = noise_ids.unsqueeze(-1)
 
-            noise_vecs = []
-            for idx, emb in enumerate(self.noise_embeddings):
-                if noise_ids.size(-1) <= idx:
-                    ids_i = noise_ids[..., -1]
-                else:
-                    ids_i = noise_ids[..., idx]
-                ids_i = ids_i.clamp(min=0, max=emb.num_embeddings - 1)
-                noise_vecs.append(emb(ids_i))
+                noise_vecs = []
+                for idx, emb in enumerate(self.noise_embeddings):
+                    if noise_ids.size(-1) <= idx:
+                        ids_i = noise_ids[..., -1]
+                    else:
+                        ids_i = noise_ids[..., idx]
+                    ids_i = ids_i.clamp(min=0, max=emb.num_embeddings - 1)
+                    noise_vecs.append(emb(ids_i))
 
-            if noise_vecs:
-                noise_cat = torch.cat(noise_vecs, dim=-1)
-                noise_h = self.noise_proj(noise_cat)
-                noise_h = self.noise_dropout(noise_h)
-                sequence_output = sequence_output + noise_h
+                if noise_vecs:
+                    noise_cat = torch.cat(noise_vecs, dim=-1)
+                    noise_h = self.noise_proj(noise_cat)
+                    noise_h = self.noise_dropout(noise_h)
+                    sequence_output = sequence_output + noise_h
+            elif uses_continuous_noise(self.noise_mode) and (noise_values is not None) and self.noise_projector is not None:
+                if noise_values.dim() == 2:
+                    noise_values = noise_values.unsqueeze(0)
+                sequence_output = sequence_output + self.noise_projector(noise_values.to(sequence_output.device, dtype=torch.float32))
 
         logits = self.qa_outputs(sequence_output)
         start_logits, end_logits = logits.split(1, dim=-1)
@@ -585,6 +619,8 @@ class EBQAModel:
         tokenizer: Optional[BertTokenizerFast] = None,
         use_noise: bool = False,
         noise_embed_dim: int = 16,
+        noise_mode: str = "bucket",
+        noise_mlp_hidden_dim: Optional[int] = None,
     ) -> None:
         if model_name_or_path is None:
             if _DEF_MODEL:
@@ -608,10 +644,14 @@ class EBQAModel:
 
         self.use_noise = bool(use_noise)
         self.noise_embed_dim = int(noise_embed_dim)
+        self.noise_mode = str(noise_mode or "bucket").lower()
+        self.noise_mlp_hidden_dim = int(noise_mlp_hidden_dim or 0) or None
 
         config = AutoConfig.from_pretrained(model_name_or_path)
         config.use_noise = self.use_noise
         config.noise_embed_dim = self.noise_embed_dim
+        config.noise_mode = self.noise_mode
+        config.noise_mlp_hidden_dim = self.noise_mlp_hidden_dim
 
         # model & args
         model_cls = NoiseAwareBertForQuestionAnswering if self.use_noise else BertForQuestionAnswering
@@ -780,9 +820,12 @@ class EBQAModel:
                 token_type_ids.to(device) if token_type_ids is not None else None
             )
             noise_ids = batch.get("noise_ids")
+            noise_values = batch.get("noise_values")
             kwargs = {}
             if noise_ids is not None and _supports_noise_forward(self.model):
                 kwargs["noise_ids"] = noise_ids.to(device)
+            if noise_values is not None and _supports_noise_forward(self.model):
+                kwargs["noise_values"] = noise_values.to(device, dtype=torch.float32)
 
             outputs = self.model(
                 input_ids=input_ids,

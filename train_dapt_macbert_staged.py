@@ -56,6 +56,7 @@ kv_nsp_dir = os.path.join(current_dir, "kv_nsp")
 if os.path.isdir(kv_nsp_dir):
     sys.path.append(kv_nsp_dir)
 from dataset import KVDataset
+from negative_sampling import format_negative_sampling_summary
 
 # 常量定义
 PERFECT_VALUES = [1.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0]
@@ -355,6 +356,9 @@ class BertForDaptMTL(BertPreTrainedModel):
             output = (prediction_scores, seq_relationship_score) + outputs[2:]
             return ((total_loss,) + output) if total_loss is not None else output
 
+        if total_loss is not None and (not torch.isfinite(total_loss)):
+            raise ValueError(f"Non-finite loss detected: {total_loss}")
+
         return MultiTaskOutput(
             loss=total_loss, mlm_loss=mlm_loss, nsp_loss=nsp_loss, logits=prediction_scores,
             hidden_states=outputs.hidden_states, attentions=outputs.attentions,
@@ -430,6 +434,17 @@ class MLMStageCollator:
             mask_indices.masked_fill_(special_tokens_mask, value=False)
             if self.tokenizer.pad_token_id is not None:
                 mask_indices.masked_fill_(current_ids == self.tokenizer.pad_token_id, value=False)
+
+            # Ensure at least one token is masked per sample; otherwise labels become all -100 and loss becomes 0.
+            if not bool(mask_indices.any()):
+                candidate = ~special_tokens_mask
+                if self.tokenizer.pad_token_id is not None:
+                    candidate = candidate & (current_ids != self.tokenizer.pad_token_id)
+                cand_idx = torch.nonzero(candidate, as_tuple=False).view(-1)
+                if cand_idx.numel() > 0:
+                    j = int(cand_idx[torch.randint(0, cand_idx.numel(), (1,)).item()].item())
+                    mask_indices[j] = True
+
             probability_matrix[i, :] = 0.0
             probability_matrix[i, mask_indices] = 1.0
 
@@ -467,44 +482,13 @@ class DynamicNSPDataset(Dataset):
     def __init__(self, raw_kv_dataset: KVDataset):
         self.ds = raw_kv_dataset
         # Optimize: Pre-build a set for fast lookup of valid pairs to avoid False Negatives
-        self.valid_pairs_set = set(self.ds.pairs)
+        self.valid_pairs_set = getattr(self.ds, "valid_pairs_set", set(self.ds.pairs))
     
     def __len__(self):
         return len(self.ds.pairs)
     
     def __getitem__(self, idx):
-        # 动态负采样逻辑
-        key_text, value_text = self.ds.pairs[idx]
-        label = 1 # Positive
-
-        if random.random() < self.ds.negative_prob:
-            label = 0
-            if random.random() < self.ds.hard_negative_prob:
-                # Hard negative: swap
-                key_text, value_text = value_text, key_text
-                # 避免“交换后仍是有效正样本”导致的 False Negative（标签噪声会让 loss 长期卡在 0.693 附近）
-                if (key_text, value_text) in self.valid_pairs_set:
-                    # 回退到 easy negative：随机采一个不在 ground truth 的 value
-                    max_retries = 10
-                    for _ in range(max_retries):
-                        candidate_value = random.choice(self.ds.value_pool)
-                        if (key_text, candidate_value) not in self.valid_pairs_set:
-                            value_text = candidate_value
-                            break
-                    else:
-                        value_text = candidate_value
-            else:
-                # Easy negative: random value
-                # Fix: Avoid False Negatives by ensuring the random (Key, Value) pair is not a valid ground truth pair
-                max_retries = 10
-                for _ in range(max_retries):
-                    candidate_value = random.choice(self.ds.value_pool)
-                    if (key_text, candidate_value) not in self.valid_pairs_set:
-                        value_text = candidate_value
-                        break
-                else:
-                    # If we failed to find a negative after retries, just use the last candidate
-                    value_text = candidate_value
+        key_text, value_text, label, _ = self.ds.sample_text_pair(idx, valid_pairs_set=self.valid_pairs_set)
         
         return {
             "text_a": key_text,
@@ -570,6 +554,14 @@ def main():
     parser.add_argument("--dataset_path", type=str, default="/data/ocean/DAPT/workspace/processed_dataset")
     parser.add_argument("--nsp_data_dir", type=str, default="/data/ocean/DAPT/data/pseudo_kv_labels_filtered.json")
     parser.add_argument("--tokenizer_path", type=str, default="/data/ocean/DAPT/my-medical-tokenizer")
+    parser.add_argument(
+        "--pretrain_use_fast_tokenizer",
+        action="store_true",
+        help=(
+            "Force using a fast tokenizer (use_fast=True) during pretraining. "
+            "Default behavior prefers slow (use_fast=False) for stability, with an automatic fallback to fast if slow loading is broken."
+        ),
+    )
     parser.add_argument("--noise_bins_json", type=str, default="/data/ocean/DAPT/workspace/noise_bins.json")
     parser.add_argument("--resume_from_checkpoint", type=str, default=None)
     
@@ -587,6 +579,10 @@ def main():
     )
     parser.add_argument("--mlm_probability", type=float, default=0.15)
     parser.add_argument("--max_length", type=int, default=512)
+    parser.add_argument("--nsp_negative_prob", type=float, default=0.5, help="KV-NSP 中把正样本改造成负样本的总概率。")
+    parser.add_argument("--nsp_reverse_negative_ratio", type=float, default=1.0, help="KV-NSP 负样本里 reverse 倒序策略的权重，例如 3:1。")
+    parser.add_argument("--nsp_random_negative_ratio", type=float, default=1.0, help="KV-NSP 负样本里 random 随机 value 策略的权重，例如 1:3。")
+    parser.add_argument("--nsp_max_easy_retries", type=int, default=10, help="构造 random 负样本时避免真实正例的最大重试次数。")
     parser.add_argument(
         "--export_fast_tokenizer",
         action="store_true",
@@ -618,7 +614,16 @@ def main():
                 print(f"(warn) failed to query cuda devices: {e}")
 
     # 1. 资源准备
-    tokenizer = _load_tokenizer_with_fallback(args.tokenizer_path)
+    if bool(args.pretrain_use_fast_tokenizer):
+        tokenizer = AutoTokenizer.from_pretrained(args.tokenizer_path, use_fast=True)
+        if isinstance(tokenizer, bool) or not _looks_like_tokenizer(tokenizer):
+            raise TypeError(
+                f"--pretrain_use_fast_tokenizer was set, but failed to load a usable fast tokenizer from: {args.tokenizer_path}"
+            )
+        print(f"[tokenizer] pretrain_use_fast_tokenizer=True loaded={type(tokenizer).__name__} is_fast={getattr(tokenizer, 'is_fast', None)}")
+    else:
+        tokenizer = _load_tokenizer_with_fallback(args.tokenizer_path)
+        print(f"[tokenizer] pretrain_use_fast_tokenizer=False loaded={type(tokenizer).__name__} is_fast={getattr(tokenizer, 'is_fast', None)}")
     
     noise_processor = NoiseFeatureProcessor()
     if os.path.exists(args.noise_bins_json):
@@ -633,8 +638,16 @@ def main():
     # 兼容单个文件或目录
     p = Path(args.nsp_data_dir)
     nsp_files = [p] if p.is_file() else [p / f for f in os.listdir(p) if f.endswith(".json")]
-    raw_kv_dataset = KVDataset(nsp_files, tokenizer)
+    raw_kv_dataset = KVDataset(
+        nsp_files,
+        tokenizer,
+        negative_prob=args.nsp_negative_prob,
+        reverse_negative_ratio=args.nsp_reverse_negative_ratio,
+        random_negative_ratio=args.nsp_random_negative_ratio,
+        max_easy_retries=args.nsp_max_easy_retries,
+    )
     nsp_dataset = DynamicNSPDataset(raw_kv_dataset) # 包装成 torch Dataset
+    print(f"NSP negative sampling: {format_negative_sampling_summary(raw_kv_dataset.sampling_config)}")
     
     print(f"MLM Samples: {len(mlm_dataset)}, NSP Samples: {len(nsp_dataset)}")
 

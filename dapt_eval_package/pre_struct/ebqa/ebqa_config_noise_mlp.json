@@ -1,18 +1,18 @@
 {
-  "report_struct_path": "data/kv_ner_prepared_comparison/keys_v2.json",
-  "model_name_or_path": "/data/ocean/DAPT/workspace/output_medical_bert_v2_8gpu_noise_v2/final_model",
-  "tokenizer_name_or_path": "/data/ocean/DAPT/my-medical-tokenizer",
-  "output_dir": "runs/ebqa_dapt_noise",
-  "model_dir": "runs/ebqa_dapt_noise/best",
+  "report_struct_path": "/data/ocean/DAPT/dapt_eval_package/MedStruct-S-Benchmark-feature-configurable-metrics/keys_merged_1027_cleaned.json",
+  "model_name_or_path": "/data/ocean/DAPT/workspace/output_ablation_noise_mlp/final_staged_model",
+  "tokenizer_name_or_path": "/data/ocean/DAPT/workspace/output_ablation_noise_mlp/final_staged_model",
+  "output_dir": "/data/ocean/DAPT/runs/ebqa_noise_mlp",
+  "model_dir": "/data/ocean/DAPT/runs/ebqa_noise_mlp/best",
   "max_seq_len": 512,
   "max_tokens_ctx": 500,
   "max_answer_len": 512,
   "chunk_mode": "budget",
   "train": {
-    "data_path": "data/kv_ner_prepared_comparison/ebqa_train.jsonl",
+    "data_path": "/data/ocean/DAPT/data/kv_ner_prepared_comparison/ebqa_train_real.jsonl",
     "precomputed": true,
     "num_train_epochs": 6,
-    "per_device_batch_size": 8,
+    "per_device_batch_size": 32,
     "grad_accum_steps": 2,
     "length_penalty_weight": 0.05,
     "length_penalty_cap": 500,
@@ -44,7 +44,8 @@
     "short_field_boost": 0.3,
     "use_noise": true,
     "noise_embed_dim": 16,
-    "noise_mode": "bucket"
+    "noise_mode": "mlp",
+    "noise_mlp_hidden_dim": 128
   },
   "predict": {
     "batch_size": 1,
@@ -52,6 +53,6 @@
     "null_threshold": 0.5,
     "null_agg": "max",
     "use_question_templates": true,
-    "input_file": "data/kv_ner_prepared_comparison/val_eval.jsonl"
+    "input_file": "/data/ocean/DAPT/data/kv_ner_prepared_comparison/ebqa_eval_real.jsonl"
   }
 }

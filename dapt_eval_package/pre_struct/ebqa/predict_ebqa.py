@@ -36,7 +36,7 @@ from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional
 
 import torch
-from transformers import AutoModelForQuestionAnswering, AutoTokenizer
+from transformers import AutoConfig, AutoModelForQuestionAnswering, AutoTokenizer
 
 # Ensure package roots are visible
 _HERE = Path(__file__).resolve().parent
@@ -45,7 +45,7 @@ for _p in (_HERE, _PKG_ROOT, Path.cwd()):
     if str(_p) not in os.sys.path:
         os.sys.path.append(str(_p))
 
-from pre_struct.ebqa.model_ebqa import EBQADecoder  # type: ignore
+from pre_struct.ebqa.model_ebqa import EBQADecoder, NoiseAwareBertForQuestionAnswering  # type: ignore
 
 
 def load_jsonl(path: str) -> Iterable[Dict[str, Any]]:
@@ -75,6 +75,17 @@ def pad_noise(seqs: List[List[List[int]]]) -> torch.Tensor:
             s = s + [[0] * 7] * (max_len - len(s))
         out.append(s)
     return torch.tensor(out, dtype=torch.long)
+
+
+def pad_noise_values(seqs: List[List[List[float]]]) -> torch.Tensor:
+    max_len = max(len(s) for s in seqs) if seqs else 0
+    out = []
+    for s in seqs:
+        s = s or []
+        if len(s) < max_len:
+            s = s + [[0.0] * 7] * (max_len - len(s))
+        out.append(s)
+    return torch.tensor(out, dtype=torch.float32)
 
 
 def batch_iter(data: List[Dict[str, Any]], batch_size: int) -> Iterable[List[Dict[str, Any]]]:
@@ -115,7 +126,11 @@ def run(args: argparse.Namespace) -> None:
     device = torch.device(args.device)
 
     print(f"[INFO] Loading model from {args.model_dir}")
-    model = AutoModelForQuestionAnswering.from_pretrained(args.model_dir).to(device)
+    config = AutoConfig.from_pretrained(args.model_dir)
+    if getattr(config, "use_noise", False):
+        model = NoiseAwareBertForQuestionAnswering.from_pretrained(args.model_dir, config=config).to(device)
+    else:
+        model = AutoModelForQuestionAnswering.from_pretrained(args.model_dir, config=config).to(device)
     model.eval()
 
     print(f"[INFO] Loading tokenizer from {args.tokenizer}")
@@ -150,6 +165,7 @@ def run(args: argparse.Namespace) -> None:
         attn = [b["attention_mask"] for b in batch]
         token_type = [b.get("token_type_ids") for b in batch]
         noise = [b.get("noise_ids") for b in batch]
+        noise_values = [b.get("noise_values") for b in batch]
 
         model_inputs: Dict[str, torch.Tensor] = {
             "input_ids": pad_1d(input_ids).to(device),
@@ -165,6 +181,8 @@ def run(args: argparse.Namespace) -> None:
             
         if any(n for n in noise) and "noise_ids" in forward_params:
             model_inputs["noise_ids"] = pad_noise(noise).to(device)
+        if any(n for n in noise_values) and "noise_values" in forward_params:
+            model_inputs["noise_values"] = pad_noise_values(noise_values).to(device)
             
         with torch.no_grad():
             out = model(**model_inputs)

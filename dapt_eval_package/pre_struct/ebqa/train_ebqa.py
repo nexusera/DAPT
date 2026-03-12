@@ -119,7 +119,8 @@ def _is_eval_sample(sample: dict, eval_ratio: float) -> bool:
 
 def _model_supports_noise(model: Any) -> bool:
     try:
-        return "noise_ids" in inspect.signature(model.forward).parameters
+        params = inspect.signature(model.forward).parameters
+        return ("noise_ids" in params) or ("noise_values" in params)
     except Exception:
         return False
 
@@ -233,7 +234,7 @@ def _count_stream_split(jsonl_path: str, eval_ratio: float) -> tuple[int, int, b
 
 
 def _dataset_has_noise(ds, data_path: Optional[str] = None, sample_limit: int = 50) -> bool:
-    """Lightweight probe for noise_ids in dataset or backing jsonl."""
+    """Lightweight probe for noise_ids/noise_values in dataset or backing jsonl."""
     try:
         if getattr(ds, "is_stream", False):
             path = data_path or getattr(ds, "jsonl_path", None)
@@ -249,17 +250,28 @@ def _dataset_has_noise(ds, data_path: Optional[str] = None, sample_limit: int = 
                             sample = json.loads(line)
                         except Exception:
                             continue
-                        if isinstance(sample, dict) and "noise_ids" in sample:
+                        if isinstance(sample, dict) and (("noise_ids" in sample) or ("noise_values" in sample)):
                             return True
             return False
 
         if hasattr(ds, "samples") and ds.samples:
             for sample in ds.samples[: min(sample_limit, len(ds.samples))]:
-                if isinstance(sample, dict) and "noise_ids" in sample:
+                if isinstance(sample, dict) and (("noise_ids" in sample) or ("noise_values" in sample)):
                     return True
     except Exception:
         return False
     return False
+
+
+def _noise_kwargs_from_batch(batch: Dict[str, Any], device: str, supports_noise: bool) -> Dict[str, torch.Tensor]:
+    if not supports_noise:
+        return {}
+    kwargs: Dict[str, torch.Tensor] = {}
+    if "noise_ids" in batch:
+        kwargs["noise_ids"] = batch["noise_ids"].to(device, non_blocking=True)
+    if "noise_values" in batch:
+        kwargs["noise_values"] = batch["noise_values"].to(device, dtype=torch.float32, non_blocking=True)
+    return kwargs
 
 
 @dataclass
@@ -326,6 +338,8 @@ class TrainConfig:
     #  噪声特征
     use_noise: bool = False
     noise_embed_dim: int = 16
+    noise_mode: str = "bucket"
+    noise_mlp_hidden_dim: int = 128
 
 
 def load_datasets(cfg: TrainConfig):
@@ -550,6 +564,8 @@ def build_model(cfg: TrainConfig):
         if cfg.use_noise:
             config.use_noise = True
             config.noise_embed_dim = cfg.noise_embed_dim
+            config.noise_mode = cfg.noise_mode
+            config.noise_mlp_hidden_dim = cfg.noise_mlp_hidden_dim
             try:
                 model = NoiseAwareBertForQuestionAnswering.from_pretrained(
                     cfg.model_name_or_path, config=config
@@ -576,6 +592,8 @@ def build_model(cfg: TrainConfig):
             max_answer_len=cfg.max_answer_len,
             use_noise=cfg.use_noise,
             noise_embed_dim=cfg.noise_embed_dim,
+            noise_mode=cfg.noise_mode,
+            noise_mlp_hidden_dim=cfg.noise_mlp_hidden_dim,
         )
         model = ebqa.model
         print("[INFO] Model loaded via EBQAModel (BertForQuestionAnswering inside).")
@@ -807,9 +825,7 @@ def _eval_token_metrics(model, dl_eval, device, supports_noise: bool = False) ->
             "end_positions",
         ):
             batch[k] = batch[k].to(device, non_blocking=True)
-        kwargs = {}
-        if supports_noise and ("noise_ids" in batch):
-            kwargs["noise_ids"] = batch["noise_ids"].to(device, non_blocking=True)
+        kwargs = _noise_kwargs_from_batch(batch, device, supports_noise)
 
         out = model(
             input_ids=batch["input_ids"],
@@ -919,9 +935,7 @@ def _eval_char_metrics_via_decoder(
         bs = len(batch["offset_mapping"])
         for k in ("input_ids","attention_mask","token_type_ids"):
             batch[k] = batch[k].to(device, non_blocking=True)
-        kwargs = {}
-        if supports_noise and ("noise_ids" in batch):
-            kwargs["noise_ids"] = batch["noise_ids"].to(device, non_blocking=True)
+        kwargs = _noise_kwargs_from_batch(batch, device, supports_noise)
         out = hf_model(
             input_ids=batch["input_ids"],
             attention_mask=batch["attention_mask"],
@@ -1033,6 +1047,8 @@ def reevaluate_and_select_best(cfg: TrainConfig, dl_eval, tokenizer=None):
             if getattr(ckpt_config, "use_noise", False) or cfg.use_noise:
                 ckpt_config.use_noise = True
                 ckpt_config.noise_embed_dim = cfg.noise_embed_dim
+                ckpt_config.noise_mode = cfg.noise_mode
+                ckpt_config.noise_mlp_hidden_dim = cfg.noise_mlp_hidden_dim
                 try:
                     ckpt_model = NoiseAwareBertForQuestionAnswering.from_pretrained(
                         ckpt_path, config=ckpt_config
@@ -1336,10 +1352,7 @@ def train_loop(cfg: TrainConfig):
                 if k_opt in batch and torch.is_tensor(batch[k_opt]):
                     batch[k_opt] = batch[k_opt].to(cfg.device, non_blocking=True)
 
-            noise_on_device = None
-            if supports_noise and ("noise_ids" in batch):
-                noise_on_device = batch["noise_ids"].to(cfg.device, non_blocking=True)
-            model_kwargs = {"noise_ids": noise_on_device} if noise_on_device is not None else {}
+            model_kwargs = _noise_kwargs_from_batch(batch, cfg.device, supports_noise)
 
             with (
                 torch.autocast(device_type="cuda", dtype=amp_dtype)
@@ -1535,10 +1548,7 @@ def train_loop(cfg: TrainConfig):
                     "end_positions",
                 ):
                     batch[k] = batch[k].to(cfg.device, non_blocking=True)
-                noise_on_device = None
-                if supports_noise and ("noise_ids" in batch):
-                    noise_on_device = batch["noise_ids"].to(cfg.device, non_blocking=True)
-                model_kwargs = {"noise_ids": noise_on_device} if noise_on_device is not None else {}
+                model_kwargs = _noise_kwargs_from_batch(batch, cfg.device, supports_noise)
                 out = model(
                     input_ids=batch["input_ids"],
                     attention_mask=batch["attention_mask"],
@@ -1623,6 +1633,8 @@ def train_loop(cfg: TrainConfig):
                         "chunk_mode": cfg.chunk_mode,              # 新增
                         "use_noise": cfg.use_noise,
                         "noise_embed_dim": cfg.noise_embed_dim,
+                        "noise_mode": cfg.noise_mode,
+                        "noise_mlp_hidden_dim": cfg.noise_mlp_hidden_dim,
                     },
                     ensure_ascii=False,
                     indent=2,
@@ -1645,6 +1657,8 @@ def train_loop(cfg: TrainConfig):
                         "chunk_mode": cfg.chunk_mode,              # 新增
                         "use_noise": cfg.use_noise,
                         "noise_embed_dim": cfg.noise_embed_dim,
+                        "noise_mode": cfg.noise_mode,
+                        "noise_mlp_hidden_dim": cfg.noise_mlp_hidden_dim,
                     },
                     ensure_ascii=False,
                     indent=2,
@@ -1673,6 +1687,8 @@ def train_loop(cfg: TrainConfig):
                 "chunk_mode": cfg.chunk_mode,              # 新增
                 "use_noise": cfg.use_noise,
                 "noise_embed_dim": cfg.noise_embed_dim,
+                "noise_mode": cfg.noise_mode,
+                "noise_mlp_hidden_dim": cfg.noise_mlp_hidden_dim,
             },
             ensure_ascii=False,
             indent=2,
@@ -1713,6 +1729,8 @@ def build_ebqa_predictor(cfg: TrainConfig, trained_model) -> Optional[Any]:
             max_answer_len=cfg.max_answer_len,  # 使用训练时的答案长度上限，避免长答案被截断
             use_noise=cfg.use_noise,
             noise_embed_dim=cfg.noise_embed_dim,
+            noise_mode=cfg.noise_mode,
+            noise_mlp_hidden_dim=cfg.noise_mlp_hidden_dim,
         )
         predictor.model = trained_model
         return predictor
@@ -1790,6 +1808,8 @@ if __name__ == "__main__":
         short_field_boost=float(tb.get("short_field_boost", 0.0)),
         use_noise=bool(tb.get("use_noise", False)),
         noise_embed_dim=int(tb.get("noise_embed_dim", 16)),
+        noise_mode=str(tb.get("noise_mode", "bucket")),
+        noise_mlp_hidden_dim=int(tb.get("noise_mlp_hidden_dim", 128)),
     )
 
     print(
@@ -1798,7 +1818,7 @@ if __name__ == "__main__":
     print(f"[INFO] Data: {cfg.data_path} | precomputed={cfg.precomputed}")
     print(f"[INFO] Model: {cfg.model_name_or_path}")
     print(f"[INFO] Tokenizer: {cfg.tokenizer_name_or_path}")
-    print(f"[INFO] use_noise={cfg.use_noise}, noise_embed_dim={cfg.noise_embed_dim}")
+    print(f"[INFO] use_noise={cfg.use_noise}, noise_embed_dim={cfg.noise_embed_dim}, noise_mode={cfg.noise_mode}, noise_mlp_hidden_dim={cfg.noise_mlp_hidden_dim}")
     print(f"[INFO] chunk_mode={cfg.chunk_mode}, max_answer_len={cfg.max_answer_len}")
     print(
         f"[INFO] length_penalty: w={cfg.length_penalty_weight}, cap={cfg.length_penalty_cap}, margin={cfg.length_penalty_margin}"

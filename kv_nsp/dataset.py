@@ -11,11 +11,13 @@ KV-NSP 数据集定义
 import json
 import random
 from pathlib import Path
-from typing import Dict, Iterable, List, Sequence, Tuple
+from typing import Dict, Iterable, List, Optional, Sequence, Set, Tuple
 
 import torch
 from torch.utils.data import Dataset
 from transformers import PreTrainedTokenizerBase
+
+from negative_sampling import build_negative_sampling_config, sample_kv_nsp_text_pair
 
 
 class KVDataset(Dataset):
@@ -43,12 +45,25 @@ class KVDataset(Dataset):
         max_length: int = 256,
         negative_prob: float = 0.5,
         hard_negative_prob: float = 0.5,
+        reverse_negative_ratio: Optional[float] = None,
+        random_negative_ratio: Optional[float] = None,
+        max_easy_retries: int = 10,
         seed: int = 42,
     ) -> None:
         self.tokenizer = tokenizer
         self.max_length = max_length
-        self.negative_prob = negative_prob
-        self.hard_negative_prob = hard_negative_prob
+        self.sampling_config = build_negative_sampling_config(
+            negative_prob=negative_prob,
+            hard_negative_prob=hard_negative_prob,
+            reverse_negative_ratio=reverse_negative_ratio,
+            random_negative_ratio=random_negative_ratio,
+            max_easy_retries=max_easy_retries,
+        )
+        self.negative_prob = self.sampling_config.negative_prob
+        self.hard_negative_prob = self.sampling_config.reverse_negative_prob
+        self.reverse_negative_ratio = self.sampling_config.reverse_negative_ratio
+        self.random_negative_ratio = self.sampling_config.random_negative_ratio
+        self.max_easy_retries = self.sampling_config.max_easy_retries
 
         random.seed(seed)
 
@@ -56,6 +71,7 @@ class KVDataset(Dataset):
         self.value_pool: List[str] = []  # 仅存储 value 文本，用于 easy negative
 
         self._load_all_files(data_files)
+        self.valid_pairs_set: Set[Tuple[str, str]] = set(self.pairs)
         if not self.pairs:
             print(f"Warning: 未能在数据文件中找到任何键值对 (Data files: {data_files})。数据集将为空。")
             # 允许空数据集，避免 Dummy 初始化时报错
@@ -134,6 +150,23 @@ class KVDataset(Dataset):
     def __len__(self) -> int:
         return len(self.pairs)
 
+    def sample_text_pair(
+        self,
+        idx: int,
+        valid_pairs_set: Optional[Set[Tuple[str, str]]] = None,
+    ) -> Tuple[str, str, int, str]:
+        key_text, value_text = self.pairs[idx]
+        if valid_pairs_set is None:
+            valid_pairs_set = self.valid_pairs_set
+        return sample_kv_nsp_text_pair(
+            key_text=key_text,
+            value_text=value_text,
+            value_pool=self.value_pool,
+            valid_pairs_set=valid_pairs_set,
+            config=self.sampling_config,
+            rng=random,
+        )
+
     def __getitem__(self, idx: int) -> Dict[str, torch.Tensor]:
         """
         动态构造一条训练样本：
@@ -142,23 +175,7 @@ class KVDataset(Dataset):
             * hard negative：Key/Value 位置互换。
             * easy negative：Key 保持，Value 随机替换为无关值。
         """
-        key_text, value_text = self.pairs[idx]
-        label = 1
-
-        if random.random() < self.negative_prob:
-            label = 0
-            if random.random() < self.hard_negative_prob:
-                # 倒序：Value 放前面，Key 放后面
-                key_text, value_text = value_text, key_text
-            else:
-                # 随机替换 Value，若多次抽样仍与原值相同则直接使用抽到的值
-                for _ in range(5):
-                    random_value = random.choice(self.value_pool)
-                    if random_value != value_text:
-                        value_text = random_value
-                        break
-                else:
-                    value_text = random.choice(self.value_pool)
+        key_text, value_text, label, _ = self.sample_text_pair(idx)
 
         encoding = self.tokenizer(
             key_text,

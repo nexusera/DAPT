@@ -231,3 +231,53 @@ python scorer.py \
   --query_set $QUERY_SET \
   --task_type task2 \
   --output_file "/data/ocean/DAPT/runs/ebqa_no_noise_report_task2.json"
+
+---
+
+#### 实验 8: Noise Ablation - Bucket / Linear / MLP
+
+新增配置文件：
+- `dapt_eval_package/pre_struct/ebqa/ebqa_config_noise_bucket.json`
+- `dapt_eval_package/pre_struct/ebqa/ebqa_config_noise_linear.json`
+- `dapt_eval_package/pre_struct/ebqa/ebqa_config_noise_mlp.json`
+
+三组配置分别指向：
+- Bucket: `/data/ocean/DAPT/workspace/output_ablation_noise_bucket/final_staged_model`
+- Linear: `/data/ocean/DAPT/workspace/output_ablation_noise_linear/final_staged_model`
+- MLP: `/data/ocean/DAPT/workspace/output_ablation_noise_mlp/final_staged_model`
+
+训练前的数据转换命令不变；`convert_ebqa.py` 现在会同时写出 `noise_ids` 和 `noise_values`，因此三种模式可复用同一份预处理数据。
+
+```bash
+# 8.1 Bucket
+python /data/ocean/DAPT/dapt_eval_package/pre_struct/ebqa/train_ebqa.py \
+  --config /data/ocean/DAPT/dapt_eval_package/pre_struct/ebqa/ebqa_config_noise_bucket.json
+
+python /data/ocean/DAPT/dapt_eval_package/pre_struct/ebqa/predict_ebqa.py \
+  --model_dir "/data/ocean/DAPT/runs/ebqa_noise_bucket/best" \
+  --tokenizer $TOKENIZER_PATH \
+  --data_path "/data/ocean/DAPT/data/kv_ner_prepared_comparison/ebqa_eval_real.jsonl" \
+  --output_preds "/data/ocean/DAPT/runs/ebqa_noise_bucket_preds.jsonl"
+
+# 8.2 Linear
+python /data/ocean/DAPT/dapt_eval_package/pre_struct/ebqa/train_ebqa.py \
+  --config /data/ocean/DAPT/dapt_eval_package/pre_struct/ebqa/ebqa_config_noise_linear.json
+
+python /data/ocean/DAPT/dapt_eval_package/pre_struct/ebqa/predict_ebqa.py \
+  --model_dir "/data/ocean/DAPT/runs/ebqa_noise_linear/best" \
+  --tokenizer $TOKENIZER_PATH \
+  --data_path "/data/ocean/DAPT/data/kv_ner_prepared_comparison/ebqa_eval_real.jsonl" \
+  --output_preds "/data/ocean/DAPT/runs/ebqa_noise_linear_preds.jsonl"
+
+# 8.3 MLP
+python /data/ocean/DAPT/dapt_eval_package/pre_struct/ebqa/train_ebqa.py \
+  --config /data/ocean/DAPT/dapt_eval_package/pre_struct/ebqa/ebqa_config_noise_mlp.json
+
+python /data/ocean/DAPT/dapt_eval_package/pre_struct/ebqa/predict_ebqa.py \
+  --model_dir "/data/ocean/DAPT/runs/ebqa_noise_mlp/best" \
+  --tokenizer $TOKENIZER_PATH \
+  --data_path "/data/ocean/DAPT/data/kv_ner_prepared_comparison/ebqa_eval_real.jsonl" \
+  --output_preds "/data/ocean/DAPT/runs/ebqa_noise_mlp_preds.jsonl"
+```
+
+后续 `aggregate_qa_preds_to_doc.py`、`preprocess_ebqa_real_h200.py` 与 `scorer.py` 的流程保持不变，只需把输出前缀替换为 `ebqa_noise_bucket` / `ebqa_noise_linear` / `ebqa_noise_mlp`。

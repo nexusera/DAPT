@@ -11,6 +11,15 @@ from transformers import PreTrainedTokenizerBase
 from .data_utils import Entity, Relation, Sample, generate_char_labels
 from .chunking import chunk_text_by_tokens
 from .noise_utils import NoiseFeatureProcessor, PERFECT_VALUES
+try:
+    from noise_fusion import aggregate_token_noise_values, uses_bucket_noise, uses_continuous_noise
+except Exception:  # pragma: no cover
+    import sys
+    from pathlib import Path
+    _ROOT = Path(__file__).resolve().parents[3]
+    if str(_ROOT) not in sys.path:
+        sys.path.insert(0, str(_ROOT))
+    from noise_fusion import aggregate_token_noise_values, uses_bucket_noise, uses_continuous_noise
 
 
 @dataclass
@@ -29,6 +38,7 @@ class Batch:
     chunk_indices: List[int]
     chunk_spans: List[Tuple[int, int]]
     noise_ids: Optional[torch.Tensor] = None
+    noise_values: Optional[torch.Tensor] = None
 
 
 class TokenClassificationDataset(Dataset):
@@ -45,6 +55,7 @@ class TokenClassificationDataset(Dataset):
         chunk_overlap: Optional[int] = None,
         enable_chunking: bool = False,
         noise_processor: Optional[NoiseFeatureProcessor] = None,
+        noise_mode: str = "bucket",
     ) -> None:
         self.samples = list(samples)
         self.tokenizer = tokenizer
@@ -54,6 +65,7 @@ class TokenClassificationDataset(Dataset):
         self.include_labels = bool(include_labels)
         self.enable_chunking = bool(enable_chunking)
         self.noise_processor = noise_processor
+        self.noise_mode = str(noise_mode or "bucket").lower()
         if self.enable_chunking:
             self.chunk_size = int(chunk_size or self.max_seq_length)
             self.chunk_overlap = int(chunk_overlap or 0)
@@ -124,34 +136,28 @@ class TokenClassificationDataset(Dataset):
                     "chunk_span": (char_start, char_end),
                 }
                 # 生成每个token的noise_ids（如果提供了noise_processor且样本含有noise_values）
-                if self.noise_processor is not None and getattr(sample, "noise_values", None):
+                if getattr(sample, "noise_values", None):
                     try:
                         nv = sample.noise_values or []
                         if not isinstance(nv, list):
                             nv = []
-                        noise_ids_per_token: List[List[int]] = []
-                        for token_idx, (s, e) in enumerate(offset_mapping):
-                            s = int(s); e = int(e)
-                            if e <= s:
-                                noise_ids_per_token.append(self.noise_processor.values_to_bin_ids(PERFECT_VALUES))
-                                continue
-                            vecs = []
-                            abs_s = char_start + s
-                            abs_e = char_start + e
-                            for ci in range(abs_s, abs_e):
-                                if 0 <= ci < len(nv):
-                                    v = nv[ci]
-                                    if isinstance(v, (list, tuple)) and len(v) == 7:
-                                        vecs.append(v)
-                            if vecs:
-                                avg = [sum(col) / len(col) for col in zip(*vecs)]
-                                noise_ids_per_token.append(self.noise_processor.values_to_bin_ids(avg))
-                            else:
-                                noise_ids_per_token.append(self.noise_processor.values_to_bin_ids(PERFECT_VALUES))
-                        feature["noise_ids"] = torch.tensor(noise_ids_per_token, dtype=torch.long)
+                        token_noise_values = aggregate_token_noise_values(
+                            offset_mapping,
+                            nv,
+                            chunk_char_start=char_start,
+                            perfect_values=PERFECT_VALUES,
+                        )
+                        if uses_continuous_noise(self.noise_mode):
+                            feature["noise_values"] = torch.tensor(token_noise_values, dtype=torch.float32)
+                        if uses_bucket_noise(self.noise_mode) and self.noise_processor is not None:
+                            noise_ids_per_token = [
+                                self.noise_processor.values_to_bin_ids(row)
+                                for row in token_noise_values
+                            ]
+                            feature["noise_ids"] = torch.tensor(noise_ids_per_token, dtype=torch.long)
                     except Exception as e:
                         import logging
-                        logging.getLogger(__name__).warning(f"Failed to generate noise_ids for sample {sample.task_id}: {e}; skipping noise")
+                        logging.getLogger(__name__).warning(f"Failed to generate noise features for sample {sample.task_id}: {e}; skipping noise")
                         pass
                 self._features.append(feature)
 
@@ -280,6 +286,9 @@ def collate_batch(batch: Sequence[dict]) -> Batch:
     noise_ids = None
     if "noise_ids" in batch[0]:
         noise_ids = torch.stack([item["noise_ids"] for item in batch], dim=0)
+    noise_values = None
+    if "noise_values" in batch[0]:
+        noise_values = torch.stack([item["noise_values"] for item in batch], dim=0)
     return Batch(
         input_ids=input_ids,
         attention_mask=attention_mask,
@@ -295,4 +304,5 @@ def collate_batch(batch: Sequence[dict]) -> Batch:
         chunk_indices=chunk_indices,
         chunk_spans=chunk_spans,
         noise_ids=noise_ids,
+        noise_values=noise_values,
     )

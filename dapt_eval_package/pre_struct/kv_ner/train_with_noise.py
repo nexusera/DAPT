@@ -32,6 +32,15 @@ from torch.optim import AdamW
 from torch.utils.data import DataLoader, Dataset
 from tqdm import tqdm
 from transformers import AutoTokenizer, get_linear_schedule_with_warmup
+try:
+    from noise_fusion import uses_bucket_noise, uses_continuous_noise
+except Exception:  # pragma: no cover
+    import sys
+    from pathlib import Path as _Path
+    _ROOT = _Path(__file__).resolve().parents[3]
+    if str(_ROOT) not in sys.path:
+        sys.path.insert(0, str(_ROOT))
+    from noise_fusion import uses_bucket_noise, uses_continuous_noise
 
 if __package__ in (None, ""):
     _PACKAGE_ROOT = Path(__file__).resolve().parents[2]
@@ -451,6 +460,7 @@ def _prepare_dataloaders_with_noise(
     val_samples: List[Sample],
     test_samples: List[Sample],
     noise_processor: Optional[NoiseFeatureProcessor] = None,
+    noise_mode: str = "bucket",
 ) -> Tuple[DataLoader, DataLoader, DataLoader]:
     """
     准备数据加载器，支持 noise_ids
@@ -476,6 +486,7 @@ def _prepare_dataloaders_with_noise(
         chunk_overlap=chunk_overlap,
         enable_chunking=True,
         noise_processor=noise_processor,
+        noise_mode=noise_mode,
     )
     logger.info(f"[_prepare_dataloaders] Train dataset created with {len(train_dataset)} features")
     
@@ -491,6 +502,7 @@ def _prepare_dataloaders_with_noise(
         chunk_overlap=chunk_overlap,
         enable_chunking=True,
         noise_processor=noise_processor,
+        noise_mode=noise_mode,
     )
     logger.info(f"[_prepare_dataloaders] Val dataset created with {len(val_dataset)} features")
     
@@ -506,6 +518,7 @@ def _prepare_dataloaders_with_noise(
         chunk_overlap=chunk_overlap,
         enable_chunking=True,
         noise_processor=noise_processor,
+        noise_mode=noise_mode,
     )
     logger.info(f"[_prepare_dataloaders] Test dataset created with {len(test_dataset)} features")
     
@@ -552,6 +565,7 @@ def _evaluate_model(
     device: torch.device,
     id2label: Dict[int, str],
     use_noise: bool = False,
+    noise_mode: str = "bucket",
 ) -> Dict[str, Dict[str, float]]:
     """
     评估模型，可选支持 noise_ids
@@ -578,18 +592,24 @@ def _evaluate_model(
             }
             
             # 如果有noise_ids且模型支持，传入（允许样本缺噪声时跳过）
-            if use_noise and "noise_ids" in (batch if isinstance(batch, dict) else batch.__dict__):
-                raw_noise = batch.get("noise_ids") if isinstance(batch, dict) else batch.noise_ids
-                noise_ids = raw_noise.to(device) if raw_noise is not None else None
-                if noise_ids is not None and model.use_noise and model.noise_embeddings:
-                    with torch.no_grad():
-                        for fi, emb in enumerate(model.noise_embeddings):
-                            max_id = int(torch.max(noise_ids[:, :, fi]).item())
-                            if max_id >= emb.num_embeddings:
-                                raise ValueError(
-                                    f"noise_ids feature {fi} has max id {max_id} >= num_embeddings {emb.num_embeddings}"
-                                )
-                    kwargs["noise_ids"] = noise_ids
+            if use_noise:
+                if uses_bucket_noise(noise_mode) and "noise_ids" in (batch if isinstance(batch, dict) else batch.__dict__):
+                    raw_noise = batch.get("noise_ids") if isinstance(batch, dict) else batch.noise_ids
+                    noise_ids = raw_noise.to(device) if raw_noise is not None else None
+                    if noise_ids is not None and model.use_noise and model.noise_embeddings:
+                        with torch.no_grad():
+                            for fi, emb in enumerate(model.noise_embeddings):
+                                max_id = int(torch.max(noise_ids[:, :, fi]).item())
+                                if max_id >= emb.num_embeddings:
+                                    raise ValueError(
+                                        f"noise_ids feature {fi} has max id {max_id} >= num_embeddings {emb.num_embeddings}"
+                                    )
+                        kwargs["noise_ids"] = noise_ids
+                elif uses_continuous_noise(noise_mode) and "noise_values" in (batch if isinstance(batch, dict) else batch.__dict__):
+                    raw_noise = batch.get("noise_values") if isinstance(batch, dict) else batch.noise_values
+                    noise_values = raw_noise.to(device, dtype=torch.float32) if raw_noise is not None else None
+                    if noise_values is not None:
+                        kwargs["noise_values"] = noise_values
 
             decoded = model.predict(**kwargs)
 
@@ -631,6 +651,10 @@ def train(args: argparse.Namespace) -> None:
         train_block["token_ce_value_class_weight"] = float(args.token_ce_value_class_weight)
     if getattr(args, "token_ce_key_class_weight", None) is not None:
         train_block["token_ce_key_class_weight"] = float(args.token_ce_key_class_weight)
+    if getattr(args, "noise_mode", None):
+        train_block["noise_mode"] = str(args.noise_mode)
+    if getattr(args, "noise_mlp_hidden_dim", None) is not None:
+        train_block["noise_mlp_hidden_dim"] = int(args.noise_mlp_hidden_dim)
 
     label_map = config_io.label_map_from(cfg)
     label_list = build_bio_label_list(label_map)
@@ -816,6 +840,7 @@ def train(args: argparse.Namespace) -> None:
         )
 
     # 初始化 noise 处理器（如果提供了 noise_bins）
+    noise_mode = str(train_block.get("noise_mode", "bucket") or "bucket").lower()
     noise_processor: Optional[NoiseFeatureProcessor] = None
     use_noise = False
     if args.noise_bins:
@@ -826,6 +851,8 @@ def train(args: argparse.Namespace) -> None:
         except Exception as e:
             logger.warning(f"Failed to load noise bins: {e}; training without noise support")
             use_noise = False
+    if uses_continuous_noise(noise_mode):
+        use_noise = True
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     logger.info(f"Using device: {device}")
@@ -839,6 +866,7 @@ def train(args: argparse.Namespace) -> None:
         val_samples,
         test_samples,
         noise_processor=noise_processor,
+        noise_mode=noise_mode,
     )
     logger.info(f"DataLoaders created: train_loader has {len(train_loader)} batches")
 
@@ -855,8 +883,11 @@ def train(args: argparse.Namespace) -> None:
         dropout=float(train_block.get("dropout", 0.1)),
         freeze_encoder=bool(train_block.get("freeze_encoder", False)),
         unfreeze_last_n_layers=train_block.get("unfreeze_last_n_layers"),
-        use_noise=bool(noise_processor is not None),
+        use_noise=use_noise,
         noise_embed_dim=int(train_block.get("noise_embed_dim", 16)),
+        noise_mode=noise_mode,
+        noise_mlp_hidden_dim=train_block.get("noise_mlp_hidden_dim"),
+        noise_bin_edges=getattr(noise_processor, "bins", {}) if noise_processor is not None else None,
         use_bilstm=bool(train_block.get("use_bilstm", False)),
         lstm_hidden_size=train_block.get("lstm_hidden_size"),
         lstm_num_layers=int(train_block.get("lstm_num_layers", 1)),
@@ -991,6 +1022,8 @@ def train(args: argparse.Namespace) -> None:
                         raise ValueError(f"input_ids min {input_id_min} < 0")
                 if hasattr(batch, "noise_ids") and batch.noise_ids is not None:
                     logger.info("noise_ids shape=%s dtype=%s", batch.noise_ids.shape, batch.noise_ids.dtype)
+                if hasattr(batch, "noise_values") and batch.noise_values is not None:
+                    logger.info("noise_values shape=%s dtype=%s", batch.noise_values.shape, batch.noise_values.dtype)
 
             kwargs = {
                 "input_ids": input_ids,
@@ -999,9 +1032,8 @@ def train(args: argparse.Namespace) -> None:
                 "labels": labels,
             }
             # 如果有noise_ids，传入模型
-            if hasattr(batch, "noise_ids") and batch.noise_ids is not None:
+            if uses_bucket_noise(noise_mode) and hasattr(batch, "noise_ids") and batch.noise_ids is not None:
                 noise_ids = batch.noise_ids.to(device)
-                # sanity check: embedding index range
                 if model.use_noise and model.noise_embeddings:
                     with torch.no_grad():
                         for fi, emb in enumerate(model.noise_embeddings):
@@ -1011,6 +1043,8 @@ def train(args: argparse.Namespace) -> None:
                                     f"noise_ids feature {fi} has max id {max_id} >= num_embeddings {emb.num_embeddings}"
                                 )
                 kwargs["noise_ids"] = noise_ids
+            elif uses_continuous_noise(noise_mode) and hasattr(batch, "noise_values") and batch.noise_values is not None:
+                kwargs["noise_values"] = batch.noise_values.to(device, dtype=torch.float32)
 
             # labels range check for CRF
             with torch.no_grad():
@@ -1049,7 +1083,7 @@ def train(args: argparse.Namespace) -> None:
         avg_loss = running_loss * grad_accum / max(1, len(train_loader))
         logger.info("Epoch %d/%d - train loss: %.4f", epoch, num_epochs, avg_loss)
 
-        metrics = _evaluate_model(model, eval_loader, device, id2label, use_noise=use_noise)
+        metrics = _evaluate_model(model, eval_loader, device, id2label, use_noise=use_noise, noise_mode=noise_mode)
         overall_f1 = metrics["overall"]["f1"]
         history.append({"epoch": epoch, "train_loss": avg_loss, "val_f1": overall_f1})
         logger.info(
@@ -1071,7 +1105,7 @@ def train(args: argparse.Namespace) -> None:
 
     # 最终评估
     logger.info("Training finished. Evaluating on test set...")
-    metrics = _evaluate_model(model, test_loader, device, id2label, use_noise=use_noise)
+    metrics = _evaluate_model(model, test_loader, device, id2label, use_noise=use_noise, noise_mode=noise_mode)
     logger.info("Test F1: %.4f", metrics["overall"]["f1"])
 
     # 保存总结
@@ -1086,6 +1120,7 @@ def train(args: argparse.Namespace) -> None:
         "val_samples": len(val_samples),
         "test_samples": len(test_samples),
         "use_noise": use_noise,
+        "noise_mode": noise_mode,
     }
     (output_dir / "training_summary.json").write_text(
         json.dumps(summary, ensure_ascii=False, indent=2),
@@ -1122,6 +1157,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--token_ce_loss_weight", type=float, default=None, help="Override train.token_ce_loss_weight")
     parser.add_argument("--token_ce_value_class_weight", type=float, default=None, help="Override train.token_ce_value_class_weight")
     parser.add_argument("--token_ce_key_class_weight", type=float, default=None, help="Override train.token_ce_key_class_weight")
+    parser.add_argument("--noise_mode", type=str, default=None, choices=["bucket", "linear", "mlp"], help="Override train.noise_mode")
+    parser.add_argument("--noise_mlp_hidden_dim", type=int, default=None, help="Override train.noise_mlp_hidden_dim")
     return parser.parse_args()
 
 

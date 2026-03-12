@@ -17,6 +17,14 @@ import torch.nn.functional as F
 from torchcrf import CRF
 from transformers import AutoConfig, AutoModel
 from .noise_utils import NUM_BINS, FEATURES
+try:
+    from noise_fusion import ContinuousNoiseProjector, build_feature_ranges, uses_bucket_noise, uses_continuous_noise
+except Exception:  # pragma: no cover
+    import sys
+    _ROOT = Path(__file__).resolve().parents[3]
+    if str(_ROOT) not in sys.path:
+        sys.path.insert(0, str(_ROOT))
+    from noise_fusion import ContinuousNoiseProjector, build_feature_ranges, uses_bucket_noise, uses_continuous_noise
 
 try:
     from model_path_conf import DEFAULT_MODEL_PATH  # type: ignore
@@ -44,6 +52,9 @@ class BertCrfTokenClassifier(nn.Module):
         # noise embedding fusion
         use_noise: bool = False,
         noise_embed_dim: int = 16,
+        noise_mode: str = "bucket",
+        noise_mlp_hidden_dim: Optional[int] = None,
+        noise_bin_edges: Optional[Dict[str, list]] = None,
         # boundary-aware loss controls
         boundary_loss_weight: float = 0.0,
         boundary_positive_weight: float = 1.0,
@@ -82,15 +93,34 @@ class BertCrfTokenClassifier(nn.Module):
         # Noise fusion
         self.use_noise = bool(use_noise)
         self.noise_embed_dim = int(noise_embed_dim)
+        self.noise_mode = str(getattr(self.config, "noise_mode", noise_mode) or noise_mode or "bucket").lower()
+        self.noise_mlp_hidden_dim = int(
+            getattr(self.config, "noise_mlp_hidden_dim", noise_mlp_hidden_dim or 0) or (noise_mlp_hidden_dim or 0)
+        ) or None
+        self.noise_bin_edges = noise_bin_edges or getattr(self.config, "noise_bin_edges", {}) or {}
+        self.noise_embeddings = None
+        self.noise_proj = None
+        self.noise_dropout = None
+        self.noise_projector = None
         if self.use_noise:
-            emb_layers = []
-            for feat in FEATURES:
-                nbin = int(NUM_BINS[feat])
-                # +1 for anchor bin id 0
-                emb_layers.append(nn.Embedding(num_embeddings=nbin + 1, embedding_dim=self.noise_embed_dim))
-            self.noise_embeddings = nn.ModuleList(emb_layers)
-            self.noise_proj = nn.Linear(len(FEATURES) * self.noise_embed_dim, hidden_size)
-            self.noise_dropout = nn.Dropout(dropout)
+            if uses_bucket_noise(self.noise_mode):
+                emb_layers = []
+                for feat in FEATURES:
+                    nbin = int(NUM_BINS[feat])
+                    emb_layers.append(nn.Embedding(num_embeddings=nbin + 1, embedding_dim=self.noise_embed_dim))
+                self.noise_embeddings = nn.ModuleList(emb_layers)
+                self.noise_proj = nn.Linear(len(FEATURES) * self.noise_embed_dim, hidden_size)
+                self.noise_dropout = nn.Dropout(dropout)
+            elif uses_continuous_noise(self.noise_mode):
+                self.noise_projector = ContinuousNoiseProjector(
+                    hidden_size,
+                    mode=self.noise_mode,
+                    dropout=dropout,
+                    mlp_hidden_dim=self.noise_mlp_hidden_dim,
+                    feature_ranges=build_feature_ranges(self.noise_bin_edges),
+                )
+            else:
+                raise ValueError(f"Unsupported noise_mode: {self.noise_mode}")
         
         # BiLSTM layer (optional)
         self.use_bilstm = bool(use_bilstm)
@@ -191,6 +221,7 @@ class BertCrfTokenClassifier(nn.Module):
         token_type_ids: Optional[torch.Tensor] = None,
         labels: Optional[torch.Tensor] = None,
         noise_ids: Optional[torch.Tensor] = None,
+        noise_values: Optional[torch.Tensor] = None,
     ):
         # 显式生成 position_ids 以避免 RoBERTa 内部计算错误
         seq_length = input_ids.shape[1]
@@ -205,16 +236,19 @@ class BertCrfTokenClassifier(nn.Module):
         )
         sequence_output = self.dropout(outputs[0])
         # Fuse noise embeddings if provided
-        if self.use_noise and (noise_ids is not None):
-            # noise_ids: [B, L, 7]
-            noise_vecs = []
-            for i, emb in enumerate(self.noise_embeddings):
-                ids_i = noise_ids[:, :, i]
-                noise_vecs.append(emb(ids_i))  # [B, L, D]
-            noise_cat = torch.cat(noise_vecs, dim=-1)  # [B, L, 7*D]
-            noise_h = self.noise_proj(noise_cat)
-            noise_h = self.noise_dropout(noise_h)
-            sequence_output = sequence_output + noise_h
+        if self.use_noise:
+            if uses_bucket_noise(self.noise_mode) and (noise_ids is not None) and self.noise_embeddings is not None:
+                noise_vecs = []
+                for i, emb in enumerate(self.noise_embeddings):
+                    ids_i = noise_ids[:, :, i].clamp(min=0, max=emb.num_embeddings - 1)
+                    noise_vecs.append(emb(ids_i))
+                noise_cat = torch.cat(noise_vecs, dim=-1)
+                noise_h = self.noise_proj(noise_cat)
+                noise_h = self.noise_dropout(noise_h)
+                sequence_output = sequence_output + noise_h
+            elif uses_continuous_noise(self.noise_mode) and (noise_values is not None) and self.noise_projector is not None:
+                noise_h = self.noise_projector(noise_values.to(sequence_output.device, dtype=torch.float32))
+                sequence_output = sequence_output + noise_h
         
         # Optional BiLSTM layer
         if self.use_bilstm and self.lstm is not None:
@@ -303,6 +337,7 @@ class BertCrfTokenClassifier(nn.Module):
         attention_mask: Optional[torch.Tensor] = None,
         token_type_ids: Optional[torch.Tensor] = None,
         noise_ids: Optional[torch.Tensor] = None,
+        noise_values: Optional[torch.Tensor] = None,
     ):
         return self.forward(
             input_ids=input_ids,
@@ -310,6 +345,7 @@ class BertCrfTokenClassifier(nn.Module):
             token_type_ids=token_type_ids,
             labels=None,
             noise_ids=noise_ids,
+            noise_values=noise_values,
         )
 
     def save_pretrained(self, output_dir: str, use_safetensors: bool = True) -> None:
@@ -341,6 +377,9 @@ class BertCrfTokenClassifier(nn.Module):
             "lstm_dropout": self.lstm_dropout,
             "use_noise": self.use_noise,
             "noise_embed_dim": self.noise_embed_dim,
+            "noise_mode": self.noise_mode,
+            "noise_mlp_hidden_dim": self.noise_mlp_hidden_dim,
+            "noise_bin_edges": self.noise_bin_edges,
             "boundary_loss_weight": self.boundary_loss_weight,
             "boundary_positive_weight": self.boundary_positive_weight,
             "include_hospital_boundary": self.include_hospital_boundary,
@@ -380,6 +419,9 @@ class BertCrfTokenClassifier(nn.Module):
             lstm_dropout=model_cfg.get("lstm_dropout", 0.0),
             use_noise=model_cfg.get("use_noise", False),
             noise_embed_dim=model_cfg.get("noise_embed_dim", 16),
+            noise_mode=model_cfg.get("noise_mode", "bucket"),
+            noise_mlp_hidden_dim=model_cfg.get("noise_mlp_hidden_dim"),
+            noise_bin_edges=model_cfg.get("noise_bin_edges"),
             boundary_loss_weight=model_cfg.get("boundary_loss_weight", 0.0),
             boundary_positive_weight=model_cfg.get("boundary_positive_weight", 1.0),
             include_hospital_boundary=model_cfg.get("include_hospital_boundary", True),

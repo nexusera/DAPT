@@ -45,6 +45,7 @@ from noise_embeddings import RobertaNoiseEmbeddings
 from noise_feature_processor import NoiseFeatureProcessor, FEATURES
 
 from dataset_with_noise import KVDatasetWithNoise
+from negative_sampling import format_negative_sampling_summary
 
 # 完美物理值（非 OCR 样本用），由 processor 映射到桶 ID
 PERFECT_VALUES = [1.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0]
@@ -311,7 +312,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--output_dir", type=str, default="./kv_nsp_outputs_with_noise", help="模型与日志的输出目录")
     parser.add_argument("--max_length", type=int, default=256, help="输入最大长度")
     parser.add_argument("--negative_prob", type=float, default=0.5, help="生成负样本的概率")
-    parser.add_argument("--hard_negative_prob", type=float, default=0.5, help="负样本中使用倒序策略的比例")
+    parser.add_argument("--hard_negative_prob", type=float, default=0.5, help="负样本中使用倒序策略的比例（兼容旧参数；若设置 ratio 参数则会被覆盖）")
+    parser.add_argument("--reverse_negative_ratio", type=float, default=None, help="reverse 倒序负样本权重，例如 3 表示 3:1 里的 3")
+    parser.add_argument("--random_negative_ratio", type=float, default=None, help="random 随机 value 负样本权重，例如 1 表示 3:1 里的 1")
+    parser.add_argument("--max_easy_retries", type=int, default=10, help="构造 random 负样本时避免真实正例的最大重试次数")
     parser.add_argument("--train_ratio", type=float, default=0.9, help="训练集占比")
     parser.add_argument("--seed", type=int, default=42, help="随机种子")
 
@@ -435,9 +439,13 @@ def main() -> None:
         max_length=args.max_length,
         negative_prob=args.negative_prob,
         hard_negative_prob=args.hard_negative_prob,
+        reverse_negative_ratio=args.reverse_negative_ratio,
+        random_negative_ratio=args.random_negative_ratio,
+        max_easy_retries=args.max_easy_retries,
         seed=args.seed,
         perfect_noise_ids=perfect_noise_ids.tolist() if isinstance(perfect_noise_ids, np.ndarray) else perfect_noise_ids,
     )
+    print(f"KV-NSP negative sampling: {format_negative_sampling_summary(full_dataset.sampling_config)}")
 
     # 6) 划分训练 / 验证
     indices = list(range(len(full_dataset)))

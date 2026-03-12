@@ -24,6 +24,13 @@ except Exception:
     except Exception:
         from kv_ner.noise_utils import NoiseFeatureProcessor, PERFECT_VALUES  # type: ignore
         from ebqa.da_core.dataset import EnhancedQADataset  # type: ignore
+try:
+    from noise_fusion import aggregate_token_noise_values
+except Exception:  # pragma: no cover
+    _REPO_ROOT = os.path.abspath(os.path.join(PKG_ROOT, ".."))
+    if _REPO_ROOT not in sys.path:
+        sys.path.append(_REPO_ROOT)
+    from noise_fusion import aggregate_token_noise_values
 import argparse
 
 
@@ -78,6 +85,18 @@ def _build_noise_ids(sample: Dict[str, Any], record_noise: List[List[float]], pr
     return noise_ids
 
 
+def _build_noise_values(sample: Dict[str, Any], record_noise: List[List[float]]) -> Optional[List[List[float]]]:
+    offsets = sample.get("offset_mapping") or []
+    if not offsets:
+        return None
+    return aggregate_token_noise_values(
+        offsets,
+        record_noise,
+        chunk_char_start=int(sample.get("chunk_char_start", 0) or 0),
+        perfect_values=PERFECT_VALUES,
+    )
+
+
 def run_conversion():
     parser = argparse.ArgumentParser()
     parser.add_argument("--tokenizer_name", type=str, default=None)
@@ -120,10 +139,13 @@ def run_conversion():
         for s in samples:
             rec_noise = _get_record_noise(records, s.get("report_index"))
             noise_ids = _build_noise_ids(s, rec_noise, processor)
+            noise_values = _build_noise_values(s, rec_noise)
 
             out = dict(s)
             if noise_ids is not None:
                 out["noise_ids"] = noise_ids
+            if noise_values is not None:
+                out["noise_values"] = noise_values
             f.write(json.dumps(out, ensure_ascii=False) + "\n")
 
     print(f"[OK] Saved {len(samples)} training samples to {output_file}")

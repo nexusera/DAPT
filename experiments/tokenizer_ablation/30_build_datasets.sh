@@ -8,7 +8,7 @@ bash 00_check_env.sh
 source config.env
 
 root="$(cd ../.. && pwd)" # DAPT/
-py="python"
+py=(python -u)
 
 shuffle_flag="--shuffle_split"
 if [[ "${SHUFFLE_SPLIT}" == "0" ]]; then
@@ -26,7 +26,7 @@ ensure_ocr_text () {
   fi
   echo "[ocr] OCR_TEXT_FILE 不存在，尝试从 OCR_JSON 导出：$OCR_TEXT_FILE"
   mkdir -p "$(dirname "$OCR_TEXT_FILE")"
-  $py "$root/export_ocr_texts.py" \
+  "${py[@]}" "$root/export_ocr_texts.py" \
     --ocr_json "$OCR_JSON" \
     --output "$OCR_TEXT_FILE"
 }
@@ -38,7 +38,7 @@ build_nonocr_one () {
   local out_ds="$4"  # non-ocr output
 
   echo "[build-nonocr] $exp -> $out_ds"
-  $py "$root/build_dataset_final_slim.py" \
+  "${py[@]}" "$root/build_dataset_final_slim.py" \
     --train_file "$TRAIN_FILE" \
     --output_path "$out_ds" \
     --tokenizer_path "$tok_dir" \
@@ -58,7 +58,7 @@ build_ocr_one () {
   local out_ds_noise="$5"   # ocr dataset with noise
 
   echo "[build-ocr] $exp -> $out_ds_plain (no shuffle)"
-  $py "$root/build_dataset_final_slim.py" \
+  "${py[@]}" "$root/build_dataset_final_slim.py" \
     --train_file "$OCR_TEXT_FILE" \
     --output_path "$out_ds_plain" \
     --tokenizer_path "$tok_dir" \
@@ -70,7 +70,7 @@ build_ocr_one () {
     --no_shuffle_split
 
   echo "[noise] $exp -> $out_ds_noise"
-  $py "$root/add_noise_features.py" \
+  "${py[@]}" "$root/add_noise_features.py" \
     --dataset "$out_ds_plain" \
     --output "$out_ds_noise" \
     --ocr_json "$OCR_JSON" \
@@ -78,7 +78,7 @@ build_ocr_one () {
     --num_proc "$NUM_PROC"
 
   echo "[verify] $exp alignment check (train first $ALIGN_CHECK_SAMPLES)"
-  $py "$root/verify_noise_alignment.py" \
+  "${py[@]}" "$root/verify_noise_alignment.py" \
     --dataset "$out_ds_noise" \
     --ocr_json "$OCR_JSON" \
     --check_samples "$ALIGN_CHECK_SAMPLES" \
@@ -92,7 +92,7 @@ merge_one () {
   local out_merged="$4"
 
   echo "[merge] $exp -> $out_merged (ocr_repeat=$OCR_REPEAT nonocr_repeat=$NONOCR_REPEAT shuffle=$MERGE_SHUFFLE)"
-  $py "$root/merge_datasets.py" \
+  "${py[@]}" "$root/merge_datasets.py" \
     --ocr_dataset "$ocr_ds_noise" \
     --non_ocr_dataset "$nonocr_ds" \
     --output_path "$out_merged" \

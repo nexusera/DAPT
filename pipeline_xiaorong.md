@@ -340,6 +340,57 @@ python /data/ocean/DAPT/dapt_eval_package/MedStruct-S-Benchmark-feature-configur
   --task_type task3 \
   --output_file "/data/ocean/DAPT/runs/no_noise_eval_report_task3.json"
 ```
+
+#### 实验 8: Noise Ablation - Bucket / Linear / MLP
+
+新增配置文件：
+- `dapt_eval_package/pre_struct/kv_ner/kv_ner_config_noise_bucket.json`
+- `dapt_eval_package/pre_struct/kv_ner/kv_ner_config_noise_linear.json`
+- `dapt_eval_package/pre_struct/kv_ner/kv_ner_config_noise_mlp.json`
+
+三组配置分别指向：
+- Bucket: `/data/ocean/DAPT/workspace/output_ablation_noise_bucket/final_staged_model`
+- Linear: `/data/ocean/DAPT/workspace/output_ablation_noise_linear/final_staged_model`
+- MLP: `/data/ocean/DAPT/workspace/output_ablation_noise_mlp/final_staged_model`
+
+训练/推理时仅替换配置文件与输出名前缀即可。
+
+```bash
+# 8.1 Bucket
+python /data/ocean/DAPT/dapt_eval_package/pre_struct/kv_ner/train_with_noise.py \
+  --config /data/ocean/DAPT/dapt_eval_package/pre_struct/kv_ner/kv_ner_config_noise_bucket.json \
+  --noise_bins "/data/ocean/DAPT/workspace/noise_bins.json"
+
+python /data/ocean/DAPT/dapt_eval_package/pre_struct/kv_ner/compare_models.py \
+  --ner_config /data/ocean/DAPT/dapt_eval_package/pre_struct/kv_ner/kv_ner_config_noise_bucket.json \
+  --test_data "/data/ocean/DAPT/biaozhu_with_ocr_noise_prepared/real_test_with_ocr.json" \
+  --noise_bins "/data/ocean/DAPT/workspace/noise_bins.json" \
+  --output_summary /data/ocean/DAPT/runs/noise_bucket_eval_summary.json
+
+# 8.2 Linear
+python /data/ocean/DAPT/dapt_eval_package/pre_struct/kv_ner/train_with_noise.py \
+  --config /data/ocean/DAPT/dapt_eval_package/pre_struct/kv_ner/kv_ner_config_noise_linear.json \
+  --noise_bins "/data/ocean/DAPT/workspace/noise_bins.json"
+
+python /data/ocean/DAPT/dapt_eval_package/pre_struct/kv_ner/compare_models.py \
+  --ner_config /data/ocean/DAPT/dapt_eval_package/pre_struct/kv_ner/kv_ner_config_noise_linear.json \
+  --test_data "/data/ocean/DAPT/biaozhu_with_ocr_noise_prepared/real_test_with_ocr.json" \
+  --noise_bins "/data/ocean/DAPT/workspace/noise_bins.json" \
+  --output_summary /data/ocean/DAPT/runs/noise_linear_eval_summary.json
+
+# 8.3 MLP
+python /data/ocean/DAPT/dapt_eval_package/pre_struct/kv_ner/train_with_noise.py \
+  --config /data/ocean/DAPT/dapt_eval_package/pre_struct/kv_ner/kv_ner_config_noise_mlp.json \
+  --noise_bins "/data/ocean/DAPT/workspace/noise_bins.json"
+
+python /data/ocean/DAPT/dapt_eval_package/pre_struct/kv_ner/compare_models.py \
+  --ner_config /data/ocean/DAPT/dapt_eval_package/pre_struct/kv_ner/kv_ner_config_noise_mlp.json \
+  --test_data "/data/ocean/DAPT/biaozhu_with_ocr_noise_prepared/real_test_with_ocr.json" \
+  --noise_bins "/data/ocean/DAPT/workspace/noise_bins.json" \
+  --output_summary /data/ocean/DAPT/runs/noise_mlp_eval_summary.json
+```
+
+后续 `align_for_scorer_span.py` 与 `scorer.py` 的流程与前面实验完全一致，只需把文件前缀替换为 `noise_bucket` / `noise_linear` / `noise_mlp`。
 ```
 
 Made changes.

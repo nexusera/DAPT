@@ -53,17 +53,6 @@ python chunk_long_lines.py \
 ```bash
 python train_ocr_clean.py
 ```
-
-### 1.x 关于 Normalizer（文本清洗/空格处理）的说明（重要）
-- 本 pipeline 目前**没有单独新增**“去除空格/统一空白符/Unicode 归一化”等文本 Normalizer 步骤的显式说明。
-- 对 BERT/WordPiece 来说，文本规范化通常由 tokenizer 内置的 normalizer 完成（常见项：`clean_text`、`strip_accents`、`lowercase`、`tokenize_chinese_chars/handle_chinese_chars` 等）。
-- **不要为了修复 fast tokenizer 的 all-UNK 现象而在数据侧“全局去空格”**：
-  - fast 全 UNK 更常见根因是 **fast backend（`tokenizer.json`）构建/配置与 `vocab.txt` 不一致** 或误用了非 WordPiece 的分词器配置，而不是“缺少去空格”。
-  - OCR 路的数据还涉及 `noise_values` 与 `word_ids` 的对齐；对原文本做不可逆的空白改写，容易引入对齐偏差，影响 `verify_noise_alignment.py` 的匹配率与下游 offsets 的可解释性。
-- 如果确实要做空白规范化（例如 OCR 文本存在大量随机空格），必须满足：
-  - **同一规则全链路一致**（数据构建、预训练、下游微调/推理、评测完全一致），并且通常需要重建 dataset；
-  - 建议优先做“空白折叠”（将连续空白折叠为单空格）而不是“删除所有空格”，避免英文/数字串边界被破坏（如 `BRCA1 基因`）。
-  - 任何规范化改动都应在消融实验中保持一致，否则会引入额外变量。
 2) （可选）LLM 过滤（需本地 LLM 服务，保留医学相关词）
 ```bash
 cd /data/ocean/DAPT
@@ -242,6 +231,150 @@ CUDA_VISIBLE_DEVICES=4,5 python /data/ocean/DAPT/train_dapt_macbert_staged.py \
 产物目录结构与原 staged 训练一致：
 - `.../round_{k}_mlm/`、`.../round_{k}_nsp/`
 - 最终模型：`.../final_staged_model/`
+
+### 3.2 KV-NSP 负样本比例消融：reverse / random
+
+当前 KV-NSP 已支持把负样本中的两种策略拆开配置：
+- `--nsp_reverse_negative_ratio`：倒序负样本（reverse）的权重
+- `--nsp_random_negative_ratio`：随机 value 负样本（random）的权重
+- `--nsp_negative_prob`：总负样本概率，默认仍为 `0.5`
+
+说明：
+- 若设为 `--nsp_reverse_negative_ratio 1 --nsp_random_negative_ratio 1`，即原始 `1:1`。
+- 若设为 `3:1`，则负样本内部约 75% 为 reverse、25% 为 random。
+- 若设为 `1:3`，则负样本内部约 25% 为 reverse、75% 为 random。
+
+建议除比例外，其余超参完全保持一致，以保证消融公平。
+
+#### A) 基线：reverse/random = 1:1
+```bash
+python /data/ocean/DAPT/train_dapt_macbert_staged.py \
+  --output_dir /data/ocean/DAPT/workspace/output_macbert_nsp_ratio_1_1 \
+  --dataset_path /data/ocean/DAPT/workspace/processed_dataset \
+  --nsp_data_dir /data/ocean/DAPT/data/pseudo_kv_labels_filtered.json \
+  --tokenizer_path /data/ocean/DAPT/my-medical-tokenizer \
+  --noise_bins_json /data/ocean/DAPT/workspace/noise_bins.json \
+  --learning_rate 5e-5 \
+  --num_rounds 3 \
+  --mlm_epochs_per_round 1 \
+  --nsp_epochs_per_round 3 \
+  --mlm_probability 0.15 \
+  --max_length 512 \
+  --mlm_masking kv_wwm \
+  --nsp_negative_prob 0.5 \
+  --nsp_reverse_negative_ratio 1 \
+  --nsp_random_negative_ratio 1
+```
+
+#### B) reverse 偏置：reverse/random = 3:1
+```bash
+python /data/ocean/DAPT/train_dapt_macbert_staged.py \
+  --output_dir /data/ocean/DAPT/workspace/output_macbert_nsp_ratio_3_1 \
+  --dataset_path /data/ocean/DAPT/workspace/processed_dataset \
+  --nsp_data_dir /data/ocean/DAPT/data/pseudo_kv_labels_filtered.json \
+  --tokenizer_path /data/ocean/DAPT/my-medical-tokenizer \
+  --noise_bins_json /data/ocean/DAPT/workspace/noise_bins.json \
+  --learning_rate 5e-5 \
+  --num_rounds 3 \
+  --mlm_epochs_per_round 1 \
+  --nsp_epochs_per_round 3 \
+  --mlm_probability 0.15 \
+  --max_length 512 \
+  --mlm_masking kv_wwm \
+  --nsp_negative_prob 0.5 \
+  --nsp_reverse_negative_ratio 3 \
+  --nsp_random_negative_ratio 1
+```
+
+#### C) random 偏置：reverse/random = 1:3
+```bash
+python /data/ocean/DAPT/train_dapt_macbert_staged.py \
+  --output_dir /data/ocean/DAPT/workspace/output_macbert_nsp_ratio_1_3 \
+  --dataset_path /data/ocean/DAPT/workspace/processed_dataset \
+  --nsp_data_dir /data/ocean/DAPT/data/pseudo_kv_labels_filtered.json \
+  --tokenizer_path /data/ocean/DAPT/my-medical-tokenizer \
+  --noise_bins_json /data/ocean/DAPT/workspace/noise_bins.json \
+  --learning_rate 5e-5 \
+  --num_rounds 3 \
+  --mlm_epochs_per_round 1 \
+  --nsp_epochs_per_round 3 \
+  --mlm_probability 0.15 \
+  --max_length 512 \
+  --mlm_masking kv_wwm \
+  --nsp_negative_prob 0.5 \
+  --nsp_reverse_negative_ratio 1 \
+  --nsp_random_negative_ratio 3
+```
+
+完成预训练后，下游 Task1/3 与 Task2 的微调、推理、评测流程不变，只需把对应配置中的 `model_name_or_path` / `tokenizer_name_or_path` 改到各自 ratio 实验生成的最终模型目录。
+
+### 3.3 Noise Embedding 消融：Bucket vs Linear vs MLP
+
+当前 `train_dapt_macbert_staged.py` 已支持：
+- `--noise_mode bucket`：现有分桶查表基线
+- `--noise_mode linear`：对 7 维连续噪声直接做 `Linear(7→hidden)`
+- `--noise_mode mlp`：对 7 维连续噪声做 2-layer MLP 投影
+
+建议除 `--noise_mode`（以及 `mlp` 时的 `--noise_mlp_hidden_dim`）外，其余设置完全一致。
+
+#### A) Bucket 基线
+```bash
+python /data/ocean/DAPT/train_dapt_macbert_staged.py \
+  --output_dir /data/ocean/DAPT/workspace/output_ablation_noise_bucket \
+  --dataset_path /data/ocean/DAPT/workspace/processed_dataset \
+  --nsp_data_dir /data/ocean/DAPT/data/pseudo_kv_labels_filtered.json \
+  --tokenizer_path /data/ocean/DAPT/my-medical-tokenizer \
+  --noise_bins_json /data/ocean/DAPT/workspace/noise_bins.json \
+  --learning_rate 5e-5 \
+  --num_rounds 3 \
+  --mlm_epochs_per_round 1 \
+  --nsp_epochs_per_round 3 \
+  --mlm_probability 0.15 \
+  --max_length 512 \
+  --mlm_masking kv_wwm \
+  --noise_mode bucket
+```
+
+#### B) Linear 连续噪声
+```bash
+python /data/ocean/DAPT/train_dapt_macbert_staged.py \
+  --output_dir /data/ocean/DAPT/workspace/output_ablation_noise_linear \
+  --dataset_path /data/ocean/DAPT/workspace/processed_dataset \
+  --nsp_data_dir /data/ocean/DAPT/data/pseudo_kv_labels_filtered.json \
+  --tokenizer_path /data/ocean/DAPT/my-medical-tokenizer \
+  --noise_bins_json /data/ocean/DAPT/workspace/noise_bins.json \
+  --learning_rate 5e-5 \
+  --num_rounds 3 \
+  --mlm_epochs_per_round 1 \
+  --nsp_epochs_per_round 3 \
+  --mlm_probability 0.15 \
+  --max_length 512 \
+  --mlm_masking kv_wwm \
+  --noise_mode linear
+```
+
+#### C) MLP 连续噪声
+```bash
+python /data/ocean/DAPT/train_dapt_macbert_staged.py \
+  --output_dir /data/ocean/DAPT/workspace/output_ablation_noise_mlp \
+  --dataset_path /data/ocean/DAPT/workspace/processed_dataset \
+  --nsp_data_dir /data/ocean/DAPT/data/pseudo_kv_labels_filtered.json \
+  --tokenizer_path /data/ocean/DAPT/my-medical-tokenizer \
+  --noise_bins_json /data/ocean/DAPT/workspace/noise_bins.json \
+  --learning_rate 5e-5 \
+  --num_rounds 3 \
+  --mlm_epochs_per_round 1 \
+  --nsp_epochs_per_round 3 \
+  --mlm_probability 0.15 \
+  --max_length 512 \
+  --mlm_masking kv_wwm \
+  --noise_mode mlp \
+  --noise_mlp_hidden_dim 128
+```
+
+对应下游可直接使用以下配置：
+- KV-NER：`kv_ner_config_noise_bucket.json` / `kv_ner_config_noise_linear.json` / `kv_ner_config_noise_mlp.json`
+- EBQA：`ebqa_config_noise_bucket.json` / `ebqa_config_noise_linear.json` / `ebqa_config_noise_mlp.json`
 <!-- ## 3. 训练（KV-aware MLM + 噪声）
 1) 指向对齐后的数据集（单独 OCR 或合并后）：
 ```bash

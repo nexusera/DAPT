@@ -41,6 +41,9 @@
     "negative_downsample": 0.4,
     "best_metric": "token_f1",
     "short_field_weight": 2.0,
-    "short_field_boost": 0.3
+    "short_field_boost": 0.3,
+    "use_noise": true,
+    "noise_embed_dim": 16,
+    "noise_mode": "bucket"
   }
 }
