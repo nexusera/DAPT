@@ -50,6 +50,7 @@ current_dir = os.path.dirname(os.path.abspath(__file__))
 sys.path.append(current_dir)
 from noise_embeddings import RobertaNoiseEmbeddings
 from noise_feature_processor import NoiseFeatureProcessor, FEATURES
+from noise_fusion import ContinuousNoiseProjector, uses_bucket_noise, uses_continuous_noise
 
 # 引入 KV-NSP 模块
 kv_nsp_dir = os.path.join(current_dir, "kv_nsp")
@@ -171,18 +172,35 @@ class BertNoiseEmbeddings(BertEmbeddings):
     def __init__(self, config):
         super().__init__(config)
         self.noise_dim = len(FEATURES)
-        self.noise_embeddings = torch.nn.ModuleDict()
-        for feat in FEATURES:
-            n_bins = NUM_BINS.get(feat, 64)
-            self.noise_embeddings[feat] = torch.nn.Embedding(n_bins + 1, config.hidden_size)
+        self.noise_mode = str(getattr(config, "noise_mode", "bucket") or "bucket").lower()
+        self.noise_mlp_hidden_dim = getattr(config, "noise_mlp_hidden_dim", None)
+        self.noise_bin_edges = getattr(config, "noise_bin_edges", None)
+        self.noise_embeddings = None
+        self.noise_projector = None
+        if uses_bucket_noise(self.noise_mode):
+            self.noise_embeddings = torch.nn.ModuleDict()
+            for feat in FEATURES:
+                n_bins = NUM_BINS.get(feat, 64)
+                self.noise_embeddings[feat] = torch.nn.Embedding(n_bins + 1, config.hidden_size)
+        elif uses_continuous_noise(self.noise_mode):
+            self.noise_projector = ContinuousNoiseProjector(
+                config.hidden_size,
+                mode=self.noise_mode,
+                dropout=getattr(config, "hidden_dropout_prob", 0.1),
+                mlp_hidden_dim=self.noise_mlp_hidden_dim,
+                feature_ranges=self.noise_bin_edges,
+            )
+        else:
+            raise ValueError(f"Unsupported noise_mode: {self.noise_mode}")
         self.alpha = torch.nn.Parameter(torch.tensor(0.1, dtype=torch.float32))
         self._reset_noise_parameters()
 
     def _reset_noise_parameters(self):
-        for emb in self.noise_embeddings.values():
-            torch.nn.init.normal_(emb.weight, mean=0.0, std=0.02)
+        if self.noise_embeddings is not None:
+            for emb in self.noise_embeddings.values():
+                torch.nn.init.normal_(emb.weight, mean=0.0, std=0.02)
 
-    def forward(self, input_ids=None, token_type_ids=None, position_ids=None, inputs_embeds=None, past_key_values_length=0, noise_ids=None):
+    def forward(self, input_ids=None, token_type_ids=None, position_ids=None, inputs_embeds=None, past_key_values_length=0, noise_ids=None, noise_values=None):
         if input_ids is not None:
             input_shape = input_ids.size()
         else:
@@ -213,16 +231,22 @@ class BertNoiseEmbeddings(BertEmbeddings):
         position_embeddings = self.position_embeddings(position_ids)
         embeddings += position_embeddings
 
-        if noise_ids is not None:
-             if noise_ids.dim() == 2:
+        if uses_bucket_noise(self.noise_mode) and noise_ids is not None:
+            if noise_ids.dim() == 2:
                 noise_ids = noise_ids.unsqueeze(0)
-             noise_ids = noise_ids.to(embeddings.device)
-             noise_embed = 0.0
-             for i, feat in enumerate(FEATURES):
+            noise_ids = noise_ids.to(embeddings.device)
+            noise_embed = 0.0
+            for i, feat in enumerate(FEATURES):
                 emb_layer = self.noise_embeddings[feat]
                 ids_clamped = noise_ids[:, :, i].clamp(min=0, max=emb_layer.num_embeddings - 1)
                 noise_embed = noise_embed + emb_layer(ids_clamped)
-             embeddings = embeddings + self.alpha * noise_embed
+            embeddings = embeddings + self.alpha * noise_embed
+        elif uses_continuous_noise(self.noise_mode) and noise_values is not None:
+            if noise_values.dim() == 2:
+                noise_values = noise_values.unsqueeze(0)
+            noise_values = noise_values.to(embeddings.device, dtype=torch.float32)
+            noise_embed = self.noise_projector(noise_values)
+            embeddings = embeddings + self.alpha * noise_embed
 
         embeddings = self.LayerNorm(embeddings)
         embeddings = self.dropout(embeddings)
@@ -236,7 +260,7 @@ class BertModelWithNoise(BertModel):
     def forward(self, input_ids=None, attention_mask=None, token_type_ids=None, position_ids=None, 
                 head_mask=None, inputs_embeds=None, encoder_hidden_states=None, encoder_attention_mask=None, 
                 past_key_values=None, use_cache=None, output_attentions=None, output_hidden_states=None, 
-                return_dict=None, noise_ids=None):
+                return_dict=None, noise_ids=None, noise_values=None):
         
         return_dict = return_dict if return_dict is not None else self.config.use_return_dict
         
@@ -264,6 +288,7 @@ class BertModelWithNoise(BertModel):
             inputs_embeds=inputs_embeds,
             past_key_values_length=0,
             noise_ids=noise_ids,
+            noise_values=noise_values,
         )
 
         encoder_outputs = self.encoder(
@@ -312,7 +337,7 @@ class BertForDaptMTL(BertPreTrainedModel):
     def forward(
         self,
         input_ids=None, attention_mask=None, token_type_ids=None, position_ids=None, head_mask=None,
-        inputs_embeds=None, labels=None, next_sentence_label=None, noise_ids=None,
+        inputs_embeds=None, labels=None, next_sentence_label=None, noise_ids=None, noise_values=None,
         output_attentions=None, output_hidden_states=None, return_dict=None,
     ):
         return_dict = return_dict if return_dict is not None else self.config.use_return_dict
@@ -321,7 +346,7 @@ class BertForDaptMTL(BertPreTrainedModel):
             input_ids, attention_mask=attention_mask, token_type_ids=token_type_ids, 
             position_ids=position_ids, head_mask=head_mask, inputs_embeds=inputs_embeds,
             output_attentions=output_attentions, output_hidden_states=output_hidden_states, 
-            return_dict=return_dict, noise_ids=noise_ids,
+            return_dict=return_dict, noise_ids=noise_ids, noise_values=noise_values,
         )
 
         sequence_output = outputs[0]
@@ -373,6 +398,7 @@ class BertForDaptMTL(BertPreTrainedModel):
 class MLMStageCollator:
     tokenizer: Any
     noise_processor: NoiseFeatureProcessor
+    noise_mode: str = "bucket"
     mlm_probability: float = 0.15
     max_length: int = 512
     # kv_wwm: use word_ids-based whole-word masking (KV-aware via jieba dict)
@@ -386,14 +412,26 @@ class MLMStageCollator:
         
         # 2. Noise Processing
         batch_noise_ids = []
-        perfect_noise = [PERFECT_VALUES for _ in range(self.max_length)] # Pre-alloc
+        batch_noise_values = []
         for feat in features:
             nv = feat.get("noise_values") or []
-            if not nv: nv = [PERFECT_VALUES for _ in range(len(feat["input_ids"]))]
-            # 截断或填充
-            nv = (nv + perfect_noise)[:len(feat["input_ids"])]
-            ids = self.noise_processor.map_batch(nv) if self.noise_processor else [[0]*len(FEATURES)]*len(feat["input_ids"])
-            batch_noise_ids.append(ids)
+            target_len = len(feat["input_ids"])
+            if not nv:
+                nv = [list(PERFECT_VALUES) for _ in range(target_len)]
+            else:
+                cleaned = []
+                for row in nv[:target_len]:
+                    if isinstance(row, (list, tuple)) and len(row) == len(FEATURES):
+                        cleaned.append([float(v) for v in row])
+                    else:
+                        cleaned.append(list(PERFECT_VALUES))
+                if len(cleaned) < target_len:
+                    cleaned.extend([list(PERFECT_VALUES) for _ in range(target_len - len(cleaned))])
+                nv = cleaned
+            batch_noise_values.append(nv)
+            if uses_bucket_noise(self.noise_mode):
+                ids = self.noise_processor.map_batch(nv) if self.noise_processor else [[0] * len(FEATURES) for _ in range(target_len)]
+                batch_noise_ids.append(ids)
 
         # 3. Padding Input Ids
         batch = self.tokenizer.pad(
@@ -461,11 +499,17 @@ class MLMStageCollator:
         
         # 5. Handle Noise Padding & Tensor conversion
         seq_len = input_ids.shape[1]
-        final_noise_ids = torch.zeros((len(features), seq_len, len(FEATURES)), dtype=torch.long)
-        for i, row in enumerate(batch_noise_ids):
-             l = min(len(row), seq_len)
-             final_noise_ids[i, :l, :] = torch.tensor(row[:l], dtype=torch.long)
-        batch["noise_ids"] = final_noise_ids
+        final_noise_values = torch.zeros((len(features), seq_len, len(FEATURES)), dtype=torch.float32)
+        for i, row in enumerate(batch_noise_values):
+            l = min(len(row), seq_len)
+            final_noise_values[i, :l, :] = torch.tensor(row[:l], dtype=torch.float32)
+        batch["noise_values"] = final_noise_values
+        if uses_bucket_noise(self.noise_mode):
+            final_noise_ids = torch.zeros((len(features), seq_len, len(FEATURES)), dtype=torch.long)
+            for i, row in enumerate(batch_noise_ids):
+                l = min(len(row), seq_len)
+                final_noise_ids[i, :l, :] = torch.tensor(row[:l], dtype=torch.long)
+            batch["noise_ids"] = final_noise_ids
         
         # MLM 阶段不需要 NSP Label
         batch["next_sentence_label"] = None 
@@ -500,6 +544,7 @@ class DynamicNSPDataset(Dataset):
 class NSPStageCollator:
     tokenizer: Any
     noise_processor: NoiseFeatureProcessor
+    noise_mode: str = "bucket"
     max_length: int = 512
 
     def __call__(self, batch_items: List[Dict[str, Any]]) -> Dict[str, Any]:
@@ -523,24 +568,21 @@ class NSPStageCollator:
         
         # Noise Ids: 对于 NSP 这种纯文本任务，我们统一使用 "Perfect" 噪声特征
         # 确保其输入分布与 MLM 阶段的“Text Only”部分一致
-        perfect_ids_row = [0] * len(FEATURES) # Default bin 0 for perfect
-        if self.noise_processor:
-             # 如果 processor 存在，映射一次 Perfect Values 确保 ID 正确
-             perfect_ids_row = self.noise_processor.map_batch([PERFECT_VALUES])[0]
-             
-        # 修复：pin_memory 报错 "more than one element... refers to a single memory location"
-        # .expand() 创建的是共享内存的视图，这在 PyTorch pin_memory 中是不允许的。
-        # 必须使用 .repeat() 来物理复制数据，或者确保每个样本都有独立的内存空间。
-        noise_ids = torch.tensor([perfect_ids_row], dtype=torch.long).repeat(bsz, seq_len, 1)
-
-        return {
+        batch = {
             "input_ids": enc["input_ids"],
             "attention_mask": enc["attention_mask"],
             "token_type_ids": enc["token_type_ids"],
             "next_sentence_label": torch.tensor(labels, dtype=torch.long),
             "labels": None, # MLM Label 为空
-            "noise_ids": noise_ids
         }
+        perfect_values = torch.tensor([PERFECT_VALUES], dtype=torch.float32).repeat(bsz, seq_len, 1)
+        batch["noise_values"] = perfect_values
+        if uses_bucket_noise(self.noise_mode):
+            perfect_ids_row = [0] * len(FEATURES)
+            if self.noise_processor:
+                 perfect_ids_row = self.noise_processor.map_batch([PERFECT_VALUES])[0]
+            batch["noise_ids"] = torch.tensor([perfect_ids_row], dtype=torch.long).repeat(bsz, seq_len, 1)
+        return batch
 
 
 # ===========================
@@ -563,6 +605,19 @@ def main():
         ),
     )
     parser.add_argument("--noise_bins_json", type=str, default="/data/ocean/DAPT/workspace/noise_bins.json")
+    parser.add_argument(
+        "--noise_mode",
+        type=str,
+        default="bucket",
+        choices=["bucket", "linear", "mlp"],
+        help="Noise fusion mode: bucket=离散分桶嵌入, linear=连续值线性投影, mlp=连续值两层 MLP 投影。",
+    )
+    parser.add_argument(
+        "--noise_mlp_hidden_dim",
+        type=int,
+        default=128,
+        help="noise_mode=mlp 时的隐藏层维度。",
+    )
     parser.add_argument("--resume_from_checkpoint", type=str, default=None)
     
     # 训练超参
@@ -625,9 +680,7 @@ def main():
         tokenizer = _load_tokenizer_with_fallback(args.tokenizer_path)
         print(f"[tokenizer] pretrain_use_fast_tokenizer=False loaded={type(tokenizer).__name__} is_fast={getattr(tokenizer, 'is_fast', None)}")
     
-    noise_processor = NoiseFeatureProcessor()
-    if os.path.exists(args.noise_bins_json):
-        noise_processor.load(args.noise_bins_json)
+    noise_processor = NoiseFeatureProcessor.load(args.noise_bins_json) if os.path.exists(args.noise_bins_json) else NoiseFeatureProcessor()
     
     # 2. 准备数据集
     print(f"Loading MLM Dataset from {args.dataset_path}...")
@@ -658,7 +711,11 @@ def main():
         model_path = args.resume_from_checkpoint
         print(f"Resuming form checkpoint: {model_path}")
 
-    model = BertForDaptMTL.from_pretrained(model_path)
+    config = BertConfig.from_pretrained(model_path)
+    config.noise_mode = str(args.noise_mode).lower()
+    config.noise_mlp_hidden_dim = int(args.noise_mlp_hidden_dim)
+    config.noise_bin_edges = getattr(noise_processor, "bin_edges", {})
+    model = BertForDaptMTL.from_pretrained(model_path, config=config)
     
     # Resize Token Embeddings (Safe Logic)
     if len(tokenizer) > model.config.vocab_size:
@@ -669,11 +726,12 @@ def main():
     mlm_collator = MLMStageCollator(
         tokenizer,
         noise_processor,
+        noise_mode=str(args.noise_mode).lower(),
         mlm_probability=float(args.mlm_probability),
         max_length=int(args.max_length),
         mlm_masking=str(args.mlm_masking),
     )
-    nsp_collator = NSPStageCollator(tokenizer, noise_processor)
+    nsp_collator = NSPStageCollator(tokenizer, noise_processor, noise_mode=str(args.noise_mode).lower())
 
     # 5. 交替训练循环
     for round_idx in range(1, args.num_rounds + 1):
