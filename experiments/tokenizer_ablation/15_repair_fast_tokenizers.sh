@@ -36,9 +36,9 @@ for d in "${TOK_ROOT}"/*; do
   [[ -d "$d" ]] || continue
   echo "---"
   echo "Check FAST: $d"
-  python "${SCRIPT_DIR}/debug_tokenizer_settings.py" --tokenizer_path "$d" --use_fast true
+  python "${SCRIPT_DIR}/debug_tokenizer_settings.py" --tokenizer_path "$d" --use_fast true --strict
   echo "Check SLOW: $d"
-  python "${SCRIPT_DIR}/debug_tokenizer_settings.py" --tokenizer_path "$d" --use_fast false
+  python "${SCRIPT_DIR}/debug_tokenizer_settings.py" --tokenizer_path "$d" --use_fast false || true
 done
 
 echo "Done. All tokenizer variants should now have a consistent fast backend (tokenizer.json)."

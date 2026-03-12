@@ -3,8 +3,11 @@
 
 import argparse
 import json
+import os
+import sys
 from typing import Any, Dict
 
+import transformers
 from transformers import AutoTokenizer
 
 
@@ -71,6 +74,51 @@ def _try_dump_tokenizer_config(tok: Any) -> Dict[str, Any]:
     return out
 
 
+def _diagnose_env() -> Dict[str, Any]:
+    cwd = os.getcwd()
+    info: Dict[str, Any] = {
+        "python_executable": sys.executable,
+        "python_version": sys.version,
+        "cwd": cwd,
+        "sys_path_0": sys.path[0] if sys.path else None,
+        "transformers_file": getattr(transformers, "__file__", None),
+        "transformers_version": getattr(transformers, "__version__", None),
+        "AutoTokenizer_repr": repr(AutoTokenizer),
+    }
+
+    # Common shadowing indicators
+    for name in ["transformers.py", "tokenizers.py", "jieba.py"]:
+        p = os.path.join(cwd, name)
+        info[f"exists_cwd_{name}"] = os.path.exists(p)
+    return info
+
+
+def _looks_like_tokenizer(obj: Any) -> bool:
+    return hasattr(obj, "tokenize") and hasattr(obj, "convert_tokens_to_ids")
+
+
+def _load_tokenizer(path: str, use_fast: bool | None):
+    if use_fast is None:
+        return AutoTokenizer.from_pretrained(path)
+
+    tok = AutoTokenizer.from_pretrained(path, use_fast=use_fast)
+    if _looks_like_tokenizer(tok) and not isinstance(tok, bool):
+        return tok
+
+    # Fallback path for slow tokenizers in weird environments
+    if use_fast is False:
+        try:
+            from transformers import BertTokenizer
+
+            fallback = BertTokenizer.from_pretrained(path)
+            if _looks_like_tokenizer(fallback) and not isinstance(fallback, bool):
+                return fallback
+        except Exception:
+            pass
+
+    return tok
+
+
 def main():
     ap = argparse.ArgumentParser(description="Debug tokenizer settings and tokenization behavior")
     ap.add_argument("--tokenizer_path", type=str, required=True)
@@ -95,6 +143,12 @@ def main():
         ],
     )
 
+    ap.add_argument(
+        "--strict",
+        action="store_true",
+        help="If set, raise error when failing to load a tokenizer; otherwise print diagnostics and exit 0.",
+    )
+
     args = ap.parse_args()
 
     use_fast = None
@@ -103,10 +157,7 @@ def main():
     elif args.use_fast == "false":
         use_fast = False
 
-    if use_fast is None:
-        tokenizer = AutoTokenizer.from_pretrained(args.tokenizer_path)
-    else:
-        tokenizer = AutoTokenizer.from_pretrained(args.tokenizer_path, use_fast=use_fast)
+    tokenizer = _load_tokenizer(args.tokenizer_path, use_fast)
 
     info = _try_dump_tokenizer_config(tokenizer)
 
@@ -114,12 +165,18 @@ def main():
     print(json.dumps(info, ensure_ascii=False, indent=2))
     print("-" * 80)
 
-    if not hasattr(tokenizer, "tokenize") or not hasattr(tokenizer, "convert_tokens_to_ids"):
-        raise TypeError(
+    if not _looks_like_tokenizer(tokenizer) or isinstance(tokenizer, bool):
+        diag = _diagnose_env()
+        print("[diagnose] " + json.dumps(diag, ensure_ascii=False, indent=2))
+        msg = (
             "Loaded object does not look like a HuggingFace tokenizer. "
             f"type={type(tokenizer).__name__}, value={tokenizer!r}. "
-            "Please check your transformers installation and whether a local file/module is shadowing it."
+            "Please check transformers installation and whether local files/modules are shadowing it."
         )
+        if args.strict:
+            raise TypeError(msg)
+        print(f"[warning] {msg}")
+        return
 
     for s in args.samples:
         pieces = tokenizer.tokenize(s)

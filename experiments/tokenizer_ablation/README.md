@@ -63,6 +63,15 @@ bash 10_make_tokenizers.sh 2>&1 | tee -a "$(pwd)/tokenizer_build.log"
 
 下游 KV-NER/EBQA 依赖 `return_offsets_mapping=True`（通常需要 Fast tokenizer），所以必须保证 fast/slow 行为一致。
 
+补充说明（关于“现在用 vocab.txt 了，是否还需要 repair/slow？”）：
+
+- 现在我们确实以 `vocab.txt` 为准（新增词直接写入 vocab），这是正确方向。
+- 但 **fast tokenizer 是否可靠** 不只取决于 `vocab.txt`，还取决于目录里是否存在/残留不匹配的 `tokenizer.json`。
+	- 一旦 `tokenizer.json` 与 `vocab.txt` 不一致，`use_fast=True` 可能加载到旧后端，出现 all-UNK 或 offsets 异常。
+- 因此：
+	- **下游（KV-NER/EBQA）仍建议跑 `15_repair_fast_tokenizers.sh`**：它会按 `vocab.txt` 确定性重建 fast 后端并做 offsets/self-test。
+	- **预训练阶段不强依赖 fast**（不需要 offsets），你可以继续默认用 slow（更稳定、变量更少），也可以在 fast 已通过 repair+self-test 后改用 fast。
+
 ```bash
 cd /data/ocean/DAPT/experiments/tokenizer_ablation
 bash 15_repair_fast_tokenizers.sh 2>&1 | tee -a "$(pwd)/tokenizer_repair.log"
