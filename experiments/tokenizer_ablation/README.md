@@ -12,7 +12,10 @@
 - **关键修复（一次）**：`15_repair_fast_tokenizers.sh`（为每个 tokenizer 变体重建 `tokenizer.json`，保证下游 Fast Tokenizer 的 `return_offsets_mapping` 可用）
 - **训练（四个全跑）**：用 `train_dapt_macbert_staged.py` 分别跑 T1/T2/T3/T4（建议先 quick，确认无误后再 full）
 - Tokenizer 生成：使用本目录的 `build_tokenizer_variant.py`（可配置，避免改动你现有脚本里硬编码的 `/data/ocean` 路径）
-- Jieba 词典生成：使用本目录的 `build_jieba_dict.py`（每个 tokenizer 变体一份，避免 confound）
+- Jieba 词典生成：使用本目录的 `build_jieba_dict.py` 生成**一份共享词典**（VIP 基础词表 + keys_min5 + OCR kept vocab），用于所有变体
+- 数据构建是“两阶段”（消融更干净）：
+	- Stage A：用共享 Jieba 词典对语料分词，产出 `words` 数据集（一次性）
+	- Stage B：对同一份 `words`，分别用不同 tokenizer 生成各自的 `input_ids/word_ids`
 - 数据集构建：按 `pipeline_new.md` 的规则分两路构建再合并
 	- 非 OCR 路：可 `shuffle_split`
 	- OCR 路：必须 `--no_shuffle_split`，并在构建后调用 `add_noise_features.py` 写入 `noise_values`，再用 `verify_noise_alignment.py` 抽检
@@ -71,6 +74,8 @@ bash 15_repair_fast_tokenizers.sh 2>&1 | tee -a "$(pwd)/tokenizer_repair.log"
 
 ### 3) 生成每个变体对应的 Jieba 词典（避免消融 confound）
 
+> 更新：为保证“只消融 tokenizer、不消融 jieba 分词边界”，现在改为**只生成一份共享 Jieba 词典**。
+
 ```bash
 cd /data/ocean/DAPT/experiments/tokenizer_ablation
 bash 20_make_jieba_dicts.sh 2>&1 | tee -a "$(pwd)/jieba_build.log"
@@ -84,10 +89,16 @@ bash 20_make_jieba_dicts.sh 2>&1 | tee -a "$(pwd)/jieba_build.log"
 - OCR 路：强制不 shuffle，构建后写入 `noise_values`，并运行 `verify_noise_alignment.py` 抽检
 - 最终使用 `merge_datasets.py` 合并成训练用的 merged dataset
 
+tmux new -s run30
 ```bash
 cd /data/ocean/DAPT/experiments/tokenizer_ablation
 bash 30_build_datasets.sh 2>&1 | tee -a "$(pwd)/dataset_build.log"
 ```
+
+实现细节（便于你核对“变量控制”是否符合预期）：
+
+- `30_build_datasets.sh` 会先用共享 Jieba 词典构建两份 `words` 数据集（non-OCR/OCR 各一份）
+- 再对这两份 `words` 分别用 t1~t4 tokenizer 生成各自的 `processed_dataset_t*`
 
 ### 5)（强烈建议）Quick 数据集（小语料）
 
@@ -248,7 +259,11 @@ python /data/ocean/DAPT/train_dapt_macbert_staged.py \
 - `${OUT_ROOT}/tokenizers/t3_ocr_raw/` ...
 - `${OUT_ROOT}/tokenizers/t4_ocr_llm_keys/` ...
 
-- `${OUT_ROOT}/jieba/t1_base.txt` ...
+- `${OUT_ROOT}/jieba/shared_kept_keys_min5.txt`（共享 Jieba userdict）
+
+- `${OUT_ROOT}/datasets_words/nonocr_words/`（non-OCR 共享 words 数据集）
+- `${OUT_ROOT}/datasets_words/ocr_words/`（OCR 共享 words 数据集）
+
 - `${OUT_ROOT}/datasets/processed_dataset_t1/` ...（最终 merged，用于训练）
 - `${OUT_ROOT}/datasets/nonocr/processed_dataset_t1/` ...（中间产物）
 - `${OUT_ROOT}/datasets/ocr/processed_dataset_t1_with_noise/` ...（中间产物）

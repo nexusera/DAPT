@@ -10,28 +10,15 @@ source config.env
 py="python"
 script="$(pwd)/build_jieba_dict.py"
 
-# T1：不注入 OCR 词表时，建议只保留 keys_min5（以及 VIP），避免 confound
-$py "$script" \
-  --output "$OUT_ROOT/jieba/t1_base.txt" \
-  --keys_vocab "$KEYS_MIN5_FILE"
+shared_dict="$OUT_ROOT/jieba/shared_kept_keys_min5.txt"
 
-# T2：keys-only
+# 共享 Jieba 词典（一次生成，多处复用）：
+# - VIP 基础词表（build_jieba_dict.py 内置）
+# - keys_min5
+# - OCR kept vocab（筛选后的 wordpiece 结果）
 $py "$script" \
-  --output "$OUT_ROOT/jieba/t2_keys.txt" \
-  --keys_vocab "$KEYS_MIN5_FILE"
-
-# T3：ocr_raw + keys
-if [[ -f "$OCR_VOCAB_RAW" ]]; then
-  $py "$script" \
-    --output "$OUT_ROOT/jieba/t3_ocr_raw.txt" \
-    --ocr_vocab "$OCR_VOCAB_RAW" \
-    --keys_vocab "$KEYS_MIN5_FILE"
-fi
-
-# T4：ocr_kept + keys
-$py "$script" \
-  --output "$OUT_ROOT/jieba/t4_ocr_llm_keys.txt" \
+  --output "$shared_dict" \
   --ocr_vocab "$OCR_VOCAB_KEPT" \
   --keys_vocab "$KEYS_MIN5_FILE"
 
-echo "[done] jieba dicts saved under $OUT_ROOT/jieba"
+echo "[done] shared jieba dict saved: $shared_dict"
