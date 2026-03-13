@@ -11,6 +11,13 @@ require_dir "$TOKENIZER_PATH"
 require_file "$NOISE_BINS"
 require_file "${DAPT_ROOT}/train_dapt_macbert_staged.py"
 
+if ! grep -q -- '"--noise_mode"' "${DAPT_ROOT}/train_dapt_macbert_staged.py"; then
+  echo "[ERR] 远端的 train_dapt_macbert_staged.py 仍是旧版本，未包含 --noise_mode 参数。" >&2
+  echo "[ERR] 请先在远端执行 git pull，或直接检查文件: ${DAPT_ROOT}/train_dapt_macbert_staged.py" >&2
+  echo "[ERR] 可用命令: grep -n 'noise_mode\\|noise_mlp_hidden_dim' ${DAPT_ROOT}/train_dapt_macbert_staged.py" >&2
+  exit 1
+fi
+
 run_variant_pretrain() {
   local variant="$1"
   local gpu="$2"

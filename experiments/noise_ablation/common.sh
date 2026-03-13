@@ -17,7 +17,11 @@ DAPT_ROOT="${DAPT_ROOT:-$DEFAULT_DAPT_ROOT}"
 PYTHON_BIN="${PYTHON_BIN:-python}"
 export PYTHONUNBUFFERED=1
 
-VARIANTS=(bucket linear mlp)
+if [[ -n "${VARIANTS:-}" ]]; then
+  IFS=',' read -r -a VARIANTS <<< "$VARIANTS"
+else
+  VARIANTS=(bucket linear mlp)
+fi
 PARALLEL="${PARALLEL:-0}"
 RESUME="${RESUME:-1}"
 GPU_LIST="${GPU_LIST:-0,1,2}"
@@ -90,6 +94,9 @@ run_logged() {
 
   echo "[RUN] [${variant}] ${stage}"
   echo "[LOG] ${logfile}"
+  printf '[CMD] '
+  printf '%q ' "$@"
+  printf '\n'
 
   set +e
   "$@" 2>&1 | tee "$logfile"
@@ -112,6 +119,9 @@ run_logged_in_dir() {
   echo "[RUN] [${variant}] ${stage}"
   echo "[CWD] ${work_dir}"
   echo "[LOG] ${logfile}"
+  printf '[CMD] '
+  printf '%q ' "$@"
+  printf '\n'
 
   set +e
   (
