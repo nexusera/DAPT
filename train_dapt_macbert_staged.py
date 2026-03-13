@@ -408,6 +408,7 @@ class MLMStageCollator:
     # kv_wwm: use word_ids-based whole-word masking (KV-aware via jieba dict)
     # token: standard token-level MLM masking (ignore word_ids)
     mlm_masking: str = "kv_wwm"
+    _cached_perfect_noise_values: Optional[torch.Tensor] = None
 
     def __call__(self, features: List[Dict[str, Any]]) -> Dict[str, Any]:
         # 1. 提取基础数据
@@ -417,6 +418,8 @@ class MLMStageCollator:
         # 2. Noise Processing
         batch_noise_ids = []
         batch_noise_values = []
+        noise_lengths = []
+        flat_noise_values = []
         for feat in features:
             nv = feat.get("noise_values") or []
             target_len = len(feat["input_ids"])
@@ -434,8 +437,19 @@ class MLMStageCollator:
                 nv = cleaned
             batch_noise_values.append(nv)
             if uses_bucket_noise(self.noise_mode):
-                ids = self.noise_processor.map_batch(nv) if self.noise_processor else [[0] * len(FEATURES) for _ in range(target_len)]
-                batch_noise_ids.append(ids)
+                noise_lengths.append(target_len)
+                flat_noise_values.extend(nv)
+
+        if uses_bucket_noise(self.noise_mode):
+            if self.noise_processor and flat_noise_values:
+                mapped_all = self.noise_processor.map_batch(flat_noise_values)
+            else:
+                mapped_all = [[0] * len(FEATURES) for _ in range(len(flat_noise_values))]
+
+            offset = 0
+            for ln in noise_lengths:
+                batch_noise_ids.append(mapped_all[offset: offset + ln])
+                offset += ln
 
         # 3. Padding Input Ids
         batch = self.tokenizer.pad(
@@ -550,6 +564,7 @@ class NSPStageCollator:
     noise_processor: NoiseFeatureProcessor
     noise_mode: str = "bucket"
     max_length: int = 512
+    _cached_perfect_ids_row: Optional[List[int]] = None
 
     def __call__(self, batch_items: List[Dict[str, Any]]) -> Dict[str, Any]:
         
@@ -579,13 +594,14 @@ class NSPStageCollator:
             "next_sentence_label": torch.tensor(labels, dtype=torch.long),
             "labels": None, # MLM Label 为空
         }
-        perfect_values = torch.tensor([PERFECT_VALUES], dtype=torch.float32).repeat(bsz, seq_len, 1)
+        perfect_values = torch.tensor(PERFECT_VALUES, dtype=torch.float32).view(1, 1, -1).repeat(bsz, seq_len, 1)
         batch["noise_values"] = perfect_values
         if uses_bucket_noise(self.noise_mode):
-            perfect_ids_row = [0] * len(FEATURES)
-            if self.noise_processor:
-                 perfect_ids_row = self.noise_processor.map_batch([PERFECT_VALUES])[0]
-            batch["noise_ids"] = torch.tensor([perfect_ids_row], dtype=torch.long).repeat(bsz, seq_len, 1)
+            if self._cached_perfect_ids_row is None:
+                self._cached_perfect_ids_row = [0] * len(FEATURES)
+                if self.noise_processor:
+                    self._cached_perfect_ids_row = self.noise_processor.map_batch([PERFECT_VALUES])[0]
+            batch["noise_ids"] = torch.tensor(self._cached_perfect_ids_row, dtype=torch.long).view(1, 1, -1).repeat(bsz, seq_len, 1)
         return batch
 
 
@@ -631,7 +647,7 @@ def main():
     parser.add_argument(
         "--dataloader_num_workers",
         type=int,
-        default=0,
+        default=4,
         help="DataLoader worker 数。0 最稳定但可能 CPU 成为瓶颈；建议先尝试 2~8。",
     )
     parser.add_argument("--num_rounds", type=int, default=3, help="交替训练的总轮数 (MLM -> NSP -> MLM -> NSP ...)")
@@ -773,6 +789,8 @@ def main():
             # DDP Settings
             ddp_find_unused_parameters=True, 
             dataloader_num_workers=int(args.dataloader_num_workers),
+            dataloader_pin_memory=True,
+            dataloader_persistent_workers=bool(int(args.dataloader_num_workers) > 0),
             save_safetensors=False,
             remove_unused_columns=False, 
             report_to="tensorboard",
@@ -810,6 +828,8 @@ def main():
             fp16=torch.cuda.is_available(),
             ddp_find_unused_parameters=True,
             dataloader_num_workers=int(args.dataloader_num_workers),
+            dataloader_pin_memory=True,
+            dataloader_persistent_workers=bool(int(args.dataloader_num_workers) > 0),
             save_safetensors=False,
             remove_unused_columns=False, # 关键修复
             report_to="tensorboard",
