@@ -281,3 +281,39 @@ python /data/ocean/DAPT/dapt_eval_package/pre_struct/ebqa/predict_ebqa.py \
 ```
 
 后续 `aggregate_qa_preds_to_doc.py`、`preprocess_ebqa_real_h200.py` 与 `scorer.py` 的流程保持不变，只需把输出前缀替换为 `ebqa_noise_bucket` / `ebqa_noise_linear` / `ebqa_noise_mlp`。
+
+---
+
+#### 实验 9: KV-NSP 负样本比例消融（reverse/random）
+
+为了评估 KV-NSP 负样本策略比例对 Task2 的影响，新增三组预训练模型：
+
+- ratio 1:1: `/data/ocean/DAPT/workspace/output_ablation_nsp_ratio_1_1/final_staged_model`
+- ratio 3:1: `/data/ocean/DAPT/workspace/output_ablation_nsp_ratio_3_1/final_staged_model`
+- ratio 1:3: `/data/ocean/DAPT/workspace/output_ablation_nsp_ratio_1_3/final_staged_model`
+
+建议使用统一脚本直接完成 Task2 的数据转换+微调+推理+评测：
+
+```bash
+cd /data/ocean/DAPT
+GPU_LIST=0,1,2 PARALLEL=1 RESUME=1 \
+bash experiments/nsp_ratio_ablation/run_nsp_ratio_ebqa_all.sh
+```
+
+该脚本会自动：
+- 按 ratio 生成 EBQA 运行配置并指向对应预训练模型。
+- 转换 train/eval 为 EBQA JSONL。
+- 训练、推理、doc 聚合、对齐、Task2 打分。
+
+输出报告：
+- `/data/ocean/DAPT/runs/nsp_ratio_1_1_report_task2.json`
+- `/data/ocean/DAPT/runs/nsp_ratio_3_1_report_task2.json`
+- `/data/ocean/DAPT/runs/nsp_ratio_1_3_report_task2.json`
+
+若只想跑单组（例如 3:1）：
+
+```bash
+cd /data/ocean/DAPT
+VARIANTS=r31 GPU_LIST=0 PARALLEL=0 RESUME=1 \
+bash experiments/nsp_ratio_ablation/run_nsp_ratio_ebqa_all.sh
+```

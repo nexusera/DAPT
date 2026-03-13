@@ -391,6 +391,45 @@ python /data/ocean/DAPT/dapt_eval_package/pre_struct/kv_ner/compare_models.py \
 ```
 
 后续 `align_for_scorer_span.py` 与 `scorer.py` 的流程与前面实验完全一致，只需把文件前缀替换为 `noise_bucket` / `noise_linear` / `noise_mlp`。
+
+---
+
+#### 实验 9: KV-NSP 负样本比例消融（reverse/random）
+
+为了验证 KV-NSP 中负样本内部策略比例对下游表现的影响，新增三组预训练模型：
+
+- ratio 1:1: `/data/ocean/DAPT/workspace/output_ablation_nsp_ratio_1_1/final_staged_model`
+- ratio 3:1: `/data/ocean/DAPT/workspace/output_ablation_nsp_ratio_3_1/final_staged_model`
+- ratio 1:3: `/data/ocean/DAPT/workspace/output_ablation_nsp_ratio_1_3/final_staged_model`
+
+建议使用统一脚本直接完成 Task1/3 的微调+推理+评测：
+
+```bash
+cd /data/ocean/DAPT
+GPU_LIST=0,1,2 PARALLEL=1 RESUME=1 \
+bash experiments/nsp_ratio_ablation/run_nsp_ratio_kvner_all.sh
+```
+
+该脚本会自动：
+- 生成每组 ratio 对应的 KV-NER 运行配置（不覆盖你现有手工配置）。
+- 指向对应预训练模型进行微调。
+- 执行 compare、对齐、Task1/Task3 评分。
+
+输出报告：
+- `/data/ocean/DAPT/runs/nsp_ratio_1_1_report_task1.json`
+- `/data/ocean/DAPT/runs/nsp_ratio_1_1_report_task3.json`
+- `/data/ocean/DAPT/runs/nsp_ratio_3_1_report_task1.json`
+- `/data/ocean/DAPT/runs/nsp_ratio_3_1_report_task3.json`
+- `/data/ocean/DAPT/runs/nsp_ratio_1_3_report_task1.json`
+- `/data/ocean/DAPT/runs/nsp_ratio_1_3_report_task3.json`
+
+若只想跑其中两组，可通过 `VARIANTS` 控制：
+
+```bash
+cd /data/ocean/DAPT
+VARIANTS=r11,r31 GPU_LIST=0,1 PARALLEL=1 RESUME=1 \
+bash experiments/nsp_ratio_ablation/run_nsp_ratio_kvner_all.sh
+```
 ```
 
 Made changes.
