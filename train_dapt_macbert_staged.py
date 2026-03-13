@@ -4,6 +4,7 @@ import torch
 import sys
 import random
 import argparse
+import logging
 import numpy as np
 from contextlib import contextmanager
 from dataclasses import dataclass
@@ -44,6 +45,9 @@ from transformers.models.bert.modeling_bert import (
     BertPreTrainingHeads
 )
 from torch.nn import CrossEntropyLoss
+
+# 抑制 tokenization 的高频截断提示，避免日志 I/O 拖慢训练
+logging.getLogger("transformers.tokenization_utils_base").setLevel(logging.ERROR)
 
 # 引入本地模块
 current_dir = os.path.dirname(os.path.abspath(__file__))
@@ -622,6 +626,14 @@ def main():
     
     # 训练超参
     parser.add_argument("--learning_rate", type=float, default=5e-5)
+    parser.add_argument("--per_device_train_batch_size", type=int, default=16)
+    parser.add_argument("--gradient_accumulation_steps", type=int, default=4)
+    parser.add_argument(
+        "--dataloader_num_workers",
+        type=int,
+        default=0,
+        help="DataLoader worker 数。0 最稳定但可能 CPU 成为瓶颈；建议先尝试 2~8。",
+    )
     parser.add_argument("--num_rounds", type=int, default=3, help="交替训练的总轮数 (MLM -> NSP -> MLM -> NSP ...)")
     parser.add_argument("--mlm_epochs_per_round", type=int, default=1, help="每轮 MLM 训练的 epoch 数")
     parser.add_argument("--nsp_epochs_per_round", type=int, default=3, help="每轮 NSP 训练的 epoch 数")
@@ -703,6 +715,12 @@ def main():
     print(f"NSP negative sampling: {format_negative_sampling_summary(raw_kv_dataset.sampling_config)}")
     
     print(f"MLM Samples: {len(mlm_dataset)}, NSP Samples: {len(nsp_dataset)}")
+    print(
+        "Train throughput config: "
+        f"per_device_train_batch_size={args.per_device_train_batch_size}, "
+        f"gradient_accumulation_steps={args.gradient_accumulation_steps}, "
+        f"dataloader_num_workers={args.dataloader_num_workers}"
+    )
 
     # 3. 初始化模型
     # 尝试加载最新 checkpint 或者 基座
@@ -745,8 +763,8 @@ def main():
             output_dir=mlm_output_dir,
             overwrite_output_dir=True,
             num_train_epochs=args.mlm_epochs_per_round,
-            per_device_train_batch_size=16,
-            gradient_accumulation_steps=4,
+            per_device_train_batch_size=int(args.per_device_train_batch_size),
+            gradient_accumulation_steps=int(args.gradient_accumulation_steps),
             learning_rate=args.learning_rate,
             logging_steps=50,
             save_strategy="epoch", # 每轮只在结束时保存，避免中间文件过多
@@ -754,7 +772,7 @@ def main():
             fp16=torch.cuda.is_available(),
             # DDP Settings
             ddp_find_unused_parameters=True, 
-            dataloader_num_workers=0, # 彻底禁用多进程 Loader，解决死锁/IPC崩溃问题
+            dataloader_num_workers=int(args.dataloader_num_workers),
             save_safetensors=False,
             remove_unused_columns=False, 
             report_to="tensorboard",
@@ -783,15 +801,15 @@ def main():
             output_dir=nsp_output_dir,
             overwrite_output_dir=True,
             num_train_epochs=args.nsp_epochs_per_round,
-            per_device_train_batch_size=16,
-            gradient_accumulation_steps=4,
+            per_device_train_batch_size=int(args.per_device_train_batch_size),
+            gradient_accumulation_steps=int(args.gradient_accumulation_steps),
             learning_rate=args.learning_rate,
             logging_steps=20,
             save_strategy="epoch",
             save_total_limit=1,
             fp16=torch.cuda.is_available(),
             ddp_find_unused_parameters=True,
-            dataloader_num_workers=0, # 同步禁用
+            dataloader_num_workers=int(args.dataloader_num_workers),
             save_safetensors=False,
             remove_unused_columns=False, # 关键修复
             report_to="tensorboard",

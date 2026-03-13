@@ -12,6 +12,7 @@
 
 ```bash
 cd /data/ocean/DAPT
+conda activate medical_bert   
 ```
 
 如果需要先更新代码：
@@ -97,10 +98,11 @@ bash experiments/noise_ablation/run_noise_pretrain_all.sh
 ```
 
 ### 4.3 三卡并行
+tmux attach -t noise_ab
 
 ```bash
 cd /data/ocean/DAPT
-GPU_LIST=0,1,2 PARALLEL=1 RESUME=1 \
+GPU_LIST=2,3,4 PARALLEL=1 RESUME=1 \
 bash experiments/noise_ablation/run_noise_pretrain_all.sh
 ```
 
