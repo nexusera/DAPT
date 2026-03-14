@@ -25,15 +25,39 @@ run_variant_pretrain() {
 
   local pretrain_out="$(pretrain_output_dir "$variant")"
   local model_dir="$(pretrain_model_dir "$variant")"
+  local done_mark="${pretrain_out}/.pretrain_done"
   local pretrain_log="${LOG_DIR}/${variant}_pretrain.gpu${gpu}.log"
 
   echo "============================================================"
   echo "[${variant}] PRETRAIN START (CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES})"
   echo "============================================================"
 
-  if [[ "$RESUME" == "1" && -d "$model_dir" ]]; then
-    echo "[${variant}] [SKIP] pretrain (found: $model_dir)"
+  if [[ "$RESUME" == "0" && "$CLEAN_BEFORE_RUN" == "1" ]]; then
+    if [[ -d "$pretrain_out" ]]; then
+      echo "[${variant}] [CLEAN] remove stale output dir: $pretrain_out"
+      rm -rf "$pretrain_out"
+    fi
+  fi
+
+  local has_model_bin="0"
+  local has_tokenizer="0"
+  if [[ -s "${model_dir}/pytorch_model.bin" || -s "${model_dir}/model.safetensors" ]]; then
+    has_model_bin="1"
+  fi
+  if [[ -s "${model_dir}/tokenizer.json" || -s "${model_dir}/tokenizer_config.json" || -s "${model_dir}/vocab.txt" ]]; then
+    has_tokenizer="1"
+  fi
+  local model_complete="0"
+  if [[ -s "${model_dir}/config.json" && "$has_model_bin" == "1" && "$has_tokenizer" == "1" ]]; then
+    model_complete="1"
+  fi
+
+  if [[ "$RESUME" == "1" && "$model_complete" == "1" ]]; then
+    echo "[${variant}] [SKIP] pretrain (valid model found: $model_dir)"
     return 0
+  fi
+  if [[ "$RESUME" == "1" && -d "$model_dir" && "$model_complete" != "1" ]]; then
+    echo "[${variant}] [WARN] 发现不完整模型目录，将重新训练: $model_dir"
   fi
 
   local cmd=(
@@ -65,6 +89,11 @@ run_variant_pretrain() {
 
   run_logged "$variant" "pretrain" "$pretrain_log" "${cmd[@]}"
   require_path "$variant" "pretrain" "$model_dir" dir
+  if [[ ! -s "${model_dir}/config.json" || ( ! -s "${model_dir}/pytorch_model.bin" && ! -s "${model_dir}/model.safetensors" ) ]]; then
+    echo "[ERR] [${variant}] pretrain 结束后模型文件不完整: ${model_dir}" >&2
+    return 1
+  fi
+  date '+%F %T %z' > "$done_mark"
 
   echo "[${variant}] PRETRAIN DONE -> $model_dir"
 }

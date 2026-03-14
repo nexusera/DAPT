@@ -24,6 +24,7 @@ else
 fi
 PARALLEL="${PARALLEL:-0}"
 RESUME="${RESUME:-1}"
+CLEAN_BEFORE_RUN="${CLEAN_BEFORE_RUN:-0}"
 GPU_LIST="${GPU_LIST:-0,1,2}"
 
 DATASET_PATH="${DATASET_PATH:-${DAPT_ROOT}/workspace/processed_dataset}"
