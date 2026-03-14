@@ -14,7 +14,13 @@ if [[ ! -d "$DEFAULT_DAPT_ROOT" ]]; then
 fi
 
 DAPT_ROOT="${DAPT_ROOT:-$DEFAULT_DAPT_ROOT}"
-PYTHON_BIN="${PYTHON_BIN:-python}"
+if [[ -z "${PYTHON_BIN:-}" ]]; then
+  if [[ -x "/home/ocean/.conda/envs/medical_bert/bin/python" ]]; then
+    PYTHON_BIN="/home/ocean/.conda/envs/medical_bert/bin/python"
+  else
+    PYTHON_BIN="python"
+  fi
+fi
 export PYTHONUNBUFFERED=1
 
 if [[ -n "${VARIANTS:-}" ]]; then
@@ -373,4 +379,48 @@ run_variants_parallel_or_serial() {
       "$runner" "$variant" "$run_gpu"
     done
   fi
+}
+
+print_python_runtime() {
+  echo "[INFO] PYTHON_BIN=$PYTHON_BIN"
+  if ! command -v "$PYTHON_BIN" >/dev/null 2>&1; then
+    echo "[ERR] Python 不可用: $PYTHON_BIN" >&2
+    exit 1
+  fi
+  "$PYTHON_BIN" - <<'PY'
+import sys
+print("[INFO] python_exec=", sys.executable)
+print("[INFO] python_ver=", sys.version.replace("\n", " "))
+try:
+    import datasets
+    print("[INFO] datasets_ver=", datasets.__version__)
+except Exception as e:
+    print("[WARN] import datasets failed:", e)
+PY
+}
+
+check_dataset_load_compat() {
+  local dataset_path="$1"
+  "$PYTHON_BIN" - "$dataset_path" <<'PY'
+import sys
+from datasets import load_from_disk
+
+dataset_path = sys.argv[1]
+try:
+    ds = load_from_disk(dataset_path)
+    if hasattr(ds, "keys"):
+        keys = list(ds.keys())
+        print(f"[INFO] dataset_load_ok={dataset_path} splits={keys}")
+    else:
+        print(f"[INFO] dataset_load_ok={dataset_path} type={type(ds).__name__}")
+except Exception as e:
+    msg = str(e)
+    print(f"[ERR] dataset_load_failed={dataset_path}: {msg}")
+    if "Feature type 'List' not found" in msg:
+        print("[ERR] 你的 datasets 版本与该离线数据集不兼容（常见于 base 环境或版本过旧）。")
+        print("[ERR] 请切到训练环境或显式指定 PYTHON_BIN，例如:")
+        print("[ERR]   conda activate medical_bert")
+        print("[ERR]   或 PYTHON_BIN=/home/ocean/.conda/envs/medical_bert/bin/python")
+    raise
+PY
 }

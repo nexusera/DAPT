@@ -29,6 +29,16 @@ git pull
 grep -n 'nsp_reverse_negative_ratio\|nsp_random_negative_ratio' /data/ocean/DAPT/train_dapt_macbert_staged.py
 ```
 
+并确认脚本实际使用的 Python（避免误用 base 环境）：
+
+```bash
+cd /data/ocean/DAPT
+PYTHON_BIN=/home/ocean/.conda/envs/medical_bert/bin/python \
+bash experiments/nsp_ratio_ablation/run_nsp_ratio_pretrain_all.sh
+```
+
+若你已经 `conda activate medical_bert`，也可不显式传 `PYTHON_BIN`。
+
 ---
 
 ## 2. 分阶段脚本（推荐）
@@ -53,8 +63,10 @@ grep -n 'nsp_reverse_negative_ratio\|nsp_random_negative_ratio' /data/ocean/DAPT
 串行（单卡，推荐先跑通）：
 
 ```bash
+tmux attach -t nsp_ab
+
 cd /data/ocean/DAPT
-GPU_LIST=0 PARALLEL=0 RESUME=1 \
+GPU_LIST=5 PARALLEL=0 RESUME=1 \
 bash experiments/nsp_ratio_ablation/run_nsp_ratio_pretrain_all.sh
 ```
 

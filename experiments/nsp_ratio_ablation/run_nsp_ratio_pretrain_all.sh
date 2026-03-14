@@ -11,6 +11,9 @@ require_dir "$TOKENIZER_PATH"
 require_file "$NOISE_BINS"
 require_file "${DAPT_ROOT}/train_dapt_macbert_staged.py"
 
+print_python_runtime
+check_dataset_load_compat "$DATASET_PATH"
+
 if ! grep -q -- 'nsp_reverse_negative_ratio' "${DAPT_ROOT}/train_dapt_macbert_staged.py"; then
   echo "[ERR] 远端 train_dapt_macbert_staged.py 仍是旧版本，缺少 nsp ratio 参数。" >&2
   echo "[ERR] 请先同步代码并确认: grep -n 'nsp_reverse_negative_ratio' ${DAPT_ROOT}/train_dapt_macbert_staged.py" >&2
