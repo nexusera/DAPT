@@ -24,6 +24,7 @@ run_variant_kvner() {
   local kv_best_dir="${DAPT_ROOT}/runs/kv_ner_finetuned_noise_${variant}/best"
   local summary="$(kv_summary_path "$variant")"
   local pred_jsonl="${summary%.json}_preds.jsonl"
+  local gt_jsonl="${summary%.json}_gt.jsonl"
   local aligned_gt="$(kv_aligned_gt "$variant")"
   local aligned_pred="$(kv_aligned_pred "$variant")"
   local report_t1="${DAPT_ROOT}/runs/noise_${variant}_report_task1.json"
@@ -47,8 +48,8 @@ run_variant_kvner() {
     require_path "$variant" "kvner-train" "$kv_best_dir" dir
   fi
 
-  if [[ "$RESUME" == "1" && -s "$summary" ]]; then
-    echo "[${variant}] [SKIP] KV-NER predict (found: $summary)"
+  if [[ "$RESUME" == "1" && -s "$pred_jsonl" && -s "$gt_jsonl" ]]; then
+    echo "[${variant}] [SKIP] KV-NER predict (found: $pred_jsonl, $gt_jsonl)"
   else
     run_logged "$variant" "kvner-predict" "${LOG_DIR}/${variant}_kvner_predict.gpu${gpu}.log" \
       "$PYTHON_BIN" "${DAPT_ROOT}/dapt_eval_package/pre_struct/kv_ner/compare_models.py" \
@@ -57,8 +58,8 @@ run_variant_kvner() {
       --test_data "$REAL_TEST_JSON" \
       --noise_bins "$NOISE_BINS" \
       --output_summary "$summary"
-    require_path "$variant" "kvner-predict" "$summary" file
     require_path "$variant" "kvner-predict" "$pred_jsonl" file
+    require_path "$variant" "kvner-predict" "$gt_jsonl" file
   fi
 
   if [[ "$RESUME" == "1" && -s "$aligned_gt" && -s "$aligned_pred" ]]; then

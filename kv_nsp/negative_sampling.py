@@ -114,12 +114,37 @@ def _sample_random_negative_value(
     return None
 
 
+def _sample_global_negative_pair(
+    pair_pool: Sequence[Pair],
+    value_pool: Sequence[str],
+    valid_pairs_set: Set[Pair],
+    config: NegativeSamplingConfig,
+    rng=random,
+) -> Optional[Pair]:
+    if not pair_pool or not value_pool:
+        return None
+
+    tries = max(config.max_easy_retries * 3, 30)
+    last_pair: Optional[Pair] = None
+    for _ in range(tries):
+        random_key, _ = rng.choice(pair_pool)
+        candidate_value = rng.choice(value_pool)
+        last_pair = (random_key, candidate_value)
+        if last_pair not in valid_pairs_set:
+            return last_pair
+
+    if last_pair is not None and last_pair not in valid_pairs_set:
+        return last_pair
+    return None
+
+
 def sample_kv_nsp_text_pair(
     key_text: str,
     value_text: str,
     value_pool: Sequence[str],
     valid_pairs_set: Set[Pair],
     config: NegativeSamplingConfig,
+    pair_pool: Optional[Sequence[Pair]] = None,
     rng=random,
 ) -> Tuple[str, str, int, str]:
     if rng.random() >= config.negative_prob:
@@ -159,5 +184,17 @@ def sample_kv_nsp_text_pair(
 
         if (swapped_key, swapped_value) not in valid_pairs_set:
             return swapped_key, swapped_value, 0, "reverse_fallback"
+
+    if pair_pool is not None:
+        global_neg = _sample_global_negative_pair(
+            pair_pool=pair_pool,
+            value_pool=value_pool,
+            valid_pairs_set=valid_pairs_set,
+            config=config,
+            rng=rng,
+        )
+        if global_neg is not None:
+            gk, gv = global_neg
+            return gk, gv, 0, "global_random_fallback"
 
     return key_text, value_text, 1, "positive_fallback"

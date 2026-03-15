@@ -164,6 +164,7 @@ class KVDataset(Dataset):
             value_pool=self.value_pool,
             valid_pairs_set=valid_pairs_set,
             config=self.sampling_config,
+            pair_pool=self.pairs,
             rng=random,
         )
 
