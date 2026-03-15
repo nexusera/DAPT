@@ -98,7 +98,6 @@ run_variant_kvner() {
       --gt_file "$aligned_gt" \
       --schema_file "$QUERY_SET" \
       --task_type task3 \
-      --overlap_threshold -1 \
       --output_file "$report_t3"
     require_path "$variant" "task3-score" "$report_t3" file
   fi
