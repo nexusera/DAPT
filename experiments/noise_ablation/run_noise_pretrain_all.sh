@@ -5,6 +5,29 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 # shellcheck disable=SC1091
 source "${SCRIPT_DIR}/common.sh"
 
+PRETRAIN_LAUNCHER="${PRETRAIN_LAUNCHER:-python}"   # python | torchrun
+NPROC_PER_NODE="${NPROC_PER_NODE:-1}"
+MASTER_PORT_BASE="${MASTER_PORT_BASE:-29521}"
+TORCHRUN_BIN="${TORCHRUN_BIN:-torchrun}"
+TORCHRUN_CUDA_VISIBLE_DEVICES="${TORCHRUN_CUDA_VISIBLE_DEVICES:-$GPU_LIST}"
+
+use_torchrun=0
+if [[ "${PRETRAIN_LAUNCHER}" == "torchrun" || "${NPROC_PER_NODE}" -gt 1 ]]; then
+  use_torchrun=1
+fi
+
+if [[ "$use_torchrun" == "1" ]]; then
+  if ! command -v "$TORCHRUN_BIN" >/dev/null 2>&1; then
+    echo "[ERR] PRETRAIN_LAUNCHER=torchrun 但未找到命令: $TORCHRUN_BIN" >&2
+    exit 1
+  fi
+  if [[ "$PARALLEL" == "1" ]]; then
+    echo "[ERR] 使用 torchrun 多进程预训练时，当前脚本仅支持 PARALLEL=0（串行逐个 variant 运行）。" >&2
+    echo "[ERR] 建议: PARALLEL=0 GPU_LIST=2,3 NPROC_PER_NODE=2 PRETRAIN_LAUNCHER=torchrun" >&2
+    exit 1
+  fi
+fi
+
 require_dir "$DATASET_PATH"
 require_file_or_dir "$NSP_DATA_DIR"
 require_dir "$TOKENIZER_PATH"
@@ -21,7 +44,11 @@ fi
 run_variant_pretrain() {
   local variant="$1"
   local gpu="$2"
-  export CUDA_VISIBLE_DEVICES="$gpu"
+  local cuda_visible_devices="$gpu"
+  if [[ "$use_torchrun" == "1" ]]; then
+    cuda_visible_devices="$TORCHRUN_CUDA_VISIBLE_DEVICES"
+  fi
+  export CUDA_VISIBLE_DEVICES="$cuda_visible_devices"
 
   local pretrain_out="$(pretrain_output_dir "$variant")"
   local model_dir="$(pretrain_model_dir "$variant")"
@@ -60,8 +87,16 @@ run_variant_pretrain() {
     echo "[${variant}] [WARN] 发现不完整模型目录，将重新训练: $model_dir"
   fi
 
+  local port_offset=0
+  case "$variant" in
+    bucket) port_offset=0 ;;
+    linear) port_offset=1 ;;
+    mlp)    port_offset=2 ;;
+    *)      port_offset=0 ;;
+  esac
+  local master_port=$((MASTER_PORT_BASE + port_offset))
+
   local cmd=(
-    "$PYTHON_BIN" "${DAPT_ROOT}/train_dapt_macbert_staged.py"
     --output_dir "$pretrain_out"
     --dataset_path "$DATASET_PATH"
     --nsp_data_dir "$NSP_DATA_DIR"
@@ -80,6 +115,20 @@ run_variant_pretrain() {
     --noise_mode "$variant"
     --export_fast_tokenizer
   )
+  if [[ "$use_torchrun" == "1" ]]; then
+    cmd=(
+      "$TORCHRUN_BIN"
+      --nproc_per_node "$NPROC_PER_NODE"
+      --master_port "$master_port"
+      "${DAPT_ROOT}/train_dapt_macbert_staged.py"
+      "${cmd[@]}"
+    )
+  else
+    cmd=(
+      "$PYTHON_BIN" "${DAPT_ROOT}/train_dapt_macbert_staged.py"
+      "${cmd[@]}"
+    )
+  fi
   if [[ "$variant" == "mlp" ]]; then
     cmd+=(--noise_mlp_hidden_dim "$MLP_HIDDEN_DIM")
   fi
