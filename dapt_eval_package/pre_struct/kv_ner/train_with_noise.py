@@ -887,7 +887,7 @@ def train(args: argparse.Namespace) -> None:
         noise_embed_dim=int(train_block.get("noise_embed_dim", 16)),
         noise_mode=noise_mode,
         noise_mlp_hidden_dim=train_block.get("noise_mlp_hidden_dim"),
-        noise_bin_edges=getattr(noise_processor, "bins", {}) if noise_processor is not None else None,
+        noise_bin_edges=getattr(noise_processor, "bin_edges", {}) if noise_processor is not None else None,
         use_bilstm=bool(train_block.get("use_bilstm", False)),
         lstm_hidden_size=train_block.get("lstm_hidden_size"),
         lstm_num_layers=int(train_block.get("lstm_num_layers", 1)),
