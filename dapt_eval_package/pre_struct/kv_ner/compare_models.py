@@ -182,39 +182,25 @@ def _entity_records(label_ids, mask, offsets, id2label, text):
     return entities
 
 def _assemble_pairs(entities, full_text):
-    # Simplified version of predict.py's _assemble_pairs
-    # Assuming simple nearest neighbor: Key -> Next Value
-    # This is "Task 2" logic
+    # Reuse canonical pairing logic from predict.py to keep evaluation consistent.
+    try:
+        from pre_struct.kv_ner.predict import _assemble_pairs as _assemble_pairs_predict
+        packed = _assemble_pairs_predict(entities, full_text=full_text)
+        if isinstance(packed, dict) and isinstance(packed.get("pairs"), list):
+            return packed["pairs"]
+    except Exception:
+        pass
+
+    # Conservative fallback to avoid breaking old environments.
     seq = [e for e in entities if e["type"] in {"KEY", "VALUE"}]
     seq.sort(key=lambda x: (x["start"], x["end"]))
     pairs = []
-    
-    # Logic: iterate, if KEY, look ahead for VALUE
-    # Default pairing heuristic from predict.py is slightly disjointed (it iterates and tracks 'pending' key)
-    
     pending_key = None
-    structured_pairs = []
-    
     for ent in seq:
         if ent["type"] == "KEY":
             pending_key = ent
-        elif ent["type"] == "VALUE":
-            if pending_key:
-                # Pair it
-                pairs.append({
-                    "key": pending_key,
-                    "value_text": ent["text"]
-                })
-                # Reset key? Strict Nearest Neighbor usually implies 1 Key -> 1 Value
-                # But sometimes 1 Key -> Multiple Values. 
-                # Let's simple reset for now or keep if we support multi-value. 
-                # The repo supports multi-value (pending["values"].append). 
-                # Let's mimic repo logic simplified:
-                pass
-            else:
-                # Value without key
-                pass
-    
+        elif ent["type"] == "VALUE" and pending_key:
+            pairs.append({"key": pending_key, "value_text": ent["text"]})
     return pairs
 
 def predict_ner_text(text, model, tokenizer, max_len, device, id2label, o_id):
