@@ -871,88 +871,98 @@ def main():
             
     logger.info(f"Standardized predictions saved to {output_file} (Ready for Unified Scorer)")
     
-    # Optional inline metrics; if core.metrics is unavailable, skip and rely on scorer.py
+    # Optional inline metrics; if core.metrics is unavailable, still write summary for pipeline compatibility.
+    final_res = {}
     try:
         from core.metrics import (
-            calculate_task1_stats, 
-            calculate_task2_stats, 
+            calculate_task1_stats,
+            calculate_task2_stats,
             calculate_task3_stats,
             calc_micro_f1
         )
+
+        # Re-implement aggregation using NEW core metrics
+        t1_strict_stats = {'tp':0, 'fp':0, 'fn':0}
+        t1_loose_stats = {'ps':0, 'pc':0, 'rs':0, 'rc':0}
+
+        t2_ss_stats = {'tp':0, 'fp':0, 'fn':0}
+        t2_sl_stats = {'ps':0, 'pc':0, 'rs':0, 'rc':0}
+        t2_ll_stats = {'ps':0, 'pc':0, 'rs':0, 'rc':0}
+
+        t3_stats_all = {"all_match_sum": 0, "all_count": 0, "all_f1_sum": 0}
+        t3_stats_pos = {"pos_match_sum": 0, "pos_count": 0, "pos_f1_sum": 0}
+
+        logger.info("Computing metrics using CORE/METRICS.PY ...")
+
+        for item in results_list:
+            pred_pairs_tuples = item['pred_pairs']
+            gt_keys = item['gt_keys']
+            gt_pairs = item['gt_pairs']
+            gt_qa_map = item['gt_qa_map']
+            title = item['title']
+
+            pred_keys = [p[0] for p in pred_pairs_tuples]
+
+            s1, l1 = calculate_task1_stats(pred_keys, gt_keys)
+            for k in t1_strict_stats:
+                t1_strict_stats[k] += s1[k]
+            for k in t1_loose_stats:
+                t1_loose_stats[k] += l1[k]
+
+            s2, sl2, ll2 = calculate_task2_stats(pred_pairs_tuples, gt_pairs)
+            for k in t2_ss_stats:
+                t2_ss_stats[k] += s2[k]
+            for k in t2_sl_stats:
+                t2_sl_stats[k] += sl2[k]
+            for k in t2_ll_stats:
+                t2_ll_stats[k] += ll2[k]
+
+            pred_dict = {k: v for k, v in pred_pairs_tuples}
+            s3 = calculate_task3_stats(pred_dict, title, keys_dict, gt_qa_map)
+
+            t3_stats_all['all_match_sum'] += s3['all_match_sum']
+            t3_stats_all['all_count'] += s3['all_count']
+            t3_stats_all['all_f1_sum'] += s3['all_f1_sum']
+
+            t3_stats_pos['pos_match_sum'] += s3['pos_match_sum']
+            t3_stats_pos['pos_count'] += s3['pos_count']
+            t3_stats_pos['pos_f1_sum'] += s3['pos_f1_sum']
+
+        final_res["Task 1 (Strict)"] = calc_micro_f1(t1_strict_stats)
+        final_res["Task 1 (Loose)"] = calc_micro_f1(t1_loose_stats)
+        final_res["Task 2 (Strict-Strict)"] = calc_micro_f1(t2_ss_stats)
+        final_res["Task 2 (Strict-Loose)"] = calc_micro_f1(t2_sl_stats)
+        final_res["Task 2 (Loose-Loose)"] = calc_micro_f1(t2_ll_stats)
+
+        t3_all_cnt = t3_stats_all['all_count']
+        t3_pos_cnt = t3_stats_pos['pos_count']
+        final_res["Task 3 (All)"] = {
+            "strict_em": t3_stats_all['all_match_sum'] / t3_all_cnt if t3_all_cnt else 0,
+            "loose_f1": t3_stats_all['all_f1_sum'] / t3_all_cnt if t3_all_cnt else 0,
+            "count": t3_all_cnt
+        }
+        final_res["Task 3 (Pos Only)"] = {
+            "strict_em": t3_stats_pos['pos_match_sum'] / t3_pos_cnt if t3_pos_cnt else 0,
+            "loose_f1": t3_stats_pos['pos_f1_sum'] / t3_pos_cnt if t3_pos_cnt else 0,
+            "count": t3_pos_cnt
+        }
     except ImportError:
-        logger.warning("core.metrics not found; skip inline metrics. Use experiments/scorer.py on preds file.")
-        return
-    
-    # Re-implement aggregation using NEW core metrics
-    t1_strict_stats = {'tp':0, 'fp':0, 'fn':0}
-    t1_loose_stats = {'ps':0, 'pc':0, 'rs':0, 'rc':0}
-    
-    t2_ss_stats = {'tp':0, 'fp':0, 'fn':0}
-    t2_sl_stats = {'ps':0, 'pc':0, 'rs':0, 'rc':0}
-    t2_ll_stats = {'ps':0, 'pc':0, 'rs':0, 'rc':0}
-    
-    t3_stats_all = {"all_match_sum": 0, "all_count": 0, "all_f1_sum": 0}
-    t3_stats_pos = {"pos_match_sum": 0, "pos_count": 0, "pos_f1_sum": 0}
+        logger.warning("core.metrics not found; skip inline metrics. Use scorer.py on preds/gt files.")
+        final_res = {
+            "status": "metrics_skipped",
+            "reason": "core.metrics not found",
+            "pred_file": output_file,
+            "gt_file": gt_file
+        }
 
-    # Re-iterate to calculate stats
-    logger.info("Computing metrics using CORE/METRICS.PY ...")
-    
-    for item in results_list:
-        pred_pairs_tuples = item['pred_pairs']
-        gt_keys = item['gt_keys']
-        gt_pairs = item['gt_pairs']
-        gt_qa_map = item['gt_qa_map']
-        title = item['title']
-        
-        pred_keys = [p[0] for p in pred_pairs_tuples]
-        
-        # T1
-        s1, l1 = calculate_task1_stats(pred_keys, gt_keys)
-        for k in t1_strict_stats: t1_strict_stats[k] += s1[k]
-        for k in t1_loose_stats: t1_loose_stats[k] += l1[k]
-        
-        # T2
-        s2, sl2, ll2 = calculate_task2_stats(pred_pairs_tuples, gt_pairs)
-        for k in t2_ss_stats: t2_ss_stats[k] += s2[k]
-        for k in t2_sl_stats: t2_sl_stats[k] += sl2[k]
-        for k in t2_ll_stats: t2_ll_stats[k] += ll2[k]
-        
-        # T3
-        pred_dict = {k:v for k,v in pred_pairs_tuples}
-        s3 = calculate_task3_stats(pred_dict, title, keys_dict, gt_qa_map)
-        
-        t3_stats_all['all_match_sum'] += s3['all_match_sum']
-        t3_stats_all['all_count'] += s3['all_count']
-        t3_stats_all['all_f1_sum'] += s3['all_f1_sum']
-        
-        t3_stats_pos['pos_match_sum'] += s3['pos_match_sum']
-        t3_stats_pos['pos_count'] += s3['pos_count']
-        t3_stats_pos['pos_f1_sum'] += s3['pos_f1_sum']
+    if args.output_summary:
+        out_dir = os.path.dirname(args.output_summary)
+        if out_dir:
+            os.makedirs(out_dir, exist_ok=True)
+        with open(args.output_summary, 'w', encoding='utf-8') as f:
+            json.dump(final_res, f, ensure_ascii=False, indent=2)
+        logger.info(f"Summary saved to {args.output_summary}")
 
-    # Final Results
-    final_res = {}
-    final_res["Task 1 (Strict)"] = calc_micro_f1(t1_strict_stats)
-    final_res["Task 1 (Loose)"] = calc_micro_f1(t1_loose_stats)
-    
-    final_res["Task 2 (Strict-Strict)"] = calc_micro_f1(t2_ss_stats)
-    final_res["Task 2 (Strict-Loose)"] = calc_micro_f1(t2_sl_stats)
-    final_res["Task 2 (Loose-Loose)"] = calc_micro_f1(t2_ll_stats)
-    
-    # Task 3 Formatting
-    t3_all_cnt = t3_stats_all['all_count']
-    t3_pos_cnt = t3_stats_pos['pos_count']
-    
-    final_res["Task 3 (All)"] = {
-        "strict_em": t3_stats_all['all_match_sum'] / t3_all_cnt if t3_all_cnt else 0,
-        "loose_f1": t3_stats_all['all_f1_sum'] / t3_all_cnt if t3_all_cnt else 0,
-        "count": t3_all_cnt
-    }
-    final_res["Task 3 (Pos Only)"] = {
-        "strict_em": t3_stats_pos['pos_match_sum'] / t3_pos_cnt if t3_pos_cnt else 0,
-        "loose_f1": t3_stats_pos['pos_f1_sum'] / t3_pos_cnt if t3_pos_cnt else 0,
-        "count": t3_pos_cnt
-    }
-    
     print(json.dumps(final_res, indent=2, ensure_ascii=False))
     
 if __name__ == "__main__":
