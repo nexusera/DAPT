@@ -243,11 +243,12 @@ ebqa_eval_jsonl() {
 gen_kv_config() {
   local variant="$1"
   local model_dir="$2"
+  local tokenizer_dir="${3:-$TOKENIZER_PATH}"
   local ratio_name
   ratio_name="$(variant_ratio_name "$variant")"
   local out_cfg="${GEN_DIR}/kv_ner_config_nsp_ratio_${ratio_name}.json"
 
-  "$PYTHON_BIN" - "$DAPT_ROOT" "$ratio_name" "$REAL_TRAIN_JSON" "$REAL_TEST_JSON" "$model_dir" "$out_cfg" <<'PY'
+  "$PYTHON_BIN" - "$DAPT_ROOT" "$ratio_name" "$REAL_TRAIN_JSON" "$REAL_TEST_JSON" "$model_dir" "$tokenizer_dir" "$out_cfg" <<'PY'
 import json
 import sys
 from pathlib import Path
@@ -257,7 +258,8 @@ ratio_name = sys.argv[2]
 real_train = sys.argv[3]
 real_test = sys.argv[4]
 model_dir = sys.argv[5]
-out_cfg = Path(sys.argv[6])
+tokenizer_dir = sys.argv[6]
+out_cfg = Path(sys.argv[7])
 
 tpl = root / "dapt_eval_package" / "pre_struct" / "kv_ner" / "kv_ner_config_macbert.json"
 if not tpl.is_file():
@@ -267,6 +269,7 @@ with tpl.open("r", encoding="utf-8") as f:
     kv = json.load(f)
 
 kv["model_name_or_path"] = model_dir
+kv["tokenizer_name_or_path"] = tokenizer_dir
 kv.setdefault("train", {})["data_path"] = real_train
 kv["train"]["test_data_path"] = real_test
 kv["train"]["output_dir"] = f"runs/kv_ner_finetuned_nsp_ratio_{ratio_name}"

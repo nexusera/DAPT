@@ -14,6 +14,74 @@ require_file "${DAPT_ROOT}/dapt_eval_package/pre_struct/kv_ner/compare_models.py
 require_file "${DAPT_ROOT}/scripts/align_for_scorer_span.py"
 require_file "${DAPT_ROOT}/dapt_eval_package/MedStruct-S-Benchmark-feature-configurable-metrics/scorer.py"
 
+check_pred_nonempty() {
+  local variant="$1"
+  local stage="$2"
+  local pred_file="$3"
+  local min_pairs="${4:-1}"
+  local stats
+  stats="$($PYTHON_BIN - "$pred_file" <<'PY'
+import json, sys
+pred = sys.argv[1]
+n = 0
+pairs = 0
+with open(pred, 'r', encoding='utf-8') as f:
+    for line in f:
+        line = line.strip()
+        if not line:
+            continue
+        n += 1
+        try:
+            obj = json.loads(line)
+        except Exception:
+            continue
+        pairs += len(obj.get('pairs', []) or [])
+print(f"{n}\t{pairs}")
+PY
+)"
+  local rows
+  local pairs
+  rows="${stats%%$'\t'*}"
+  pairs="${stats##*$'\t'}"
+  echo "[${variant}] [CHECK] ${stage}: rows=${rows}, total_pairs=${pairs}"
+  if [[ "${pairs}" -lt "${min_pairs}" ]]; then
+    echo "[ERR] [${variant}] ${stage} 预测结果为空或几乎为空：${pred_file}" >&2
+    echo "[ERR] [${variant}] 请检查对应日志：${LOG_DIR}/${variant}_kvner_predict.gpu${CUDA_VISIBLE_DEVICES}.log" >&2
+    return 1
+  fi
+}
+
+check_kv_train_quality() {
+  local variant="$1"
+  local summary_file="$2"
+  local min_f1="${3:-0.0001}"
+  local val
+  val="$($PYTHON_BIN - "$summary_file" <<'PY'
+import json, sys
+f = sys.argv[1]
+obj = json.load(open(f, 'r', encoding='utf-8'))
+v = obj.get('best_val_f1', 0.0)
+try:
+    v = float(v)
+except Exception:
+    v = 0.0
+print(v)
+PY
+)"
+  echo "[${variant}] [CHECK] kvner-train: best_val_f1=${val}"
+  if ! $PYTHON_BIN - "$val" "$min_f1" <<'PY'
+import sys
+v = float(sys.argv[1])
+t = float(sys.argv[2])
+raise SystemExit(0 if v >= t else 1)
+PY
+  then
+    echo "[ERR] [${variant}] kvner-train 疑似塌缩（best_val_f1=${val} < ${min_f1}）。" >&2
+    echo "[ERR] [${variant}] 请检查训练日志和 tokenizer 配置。" >&2
+    return 1
+  fi
+}
+
 run_variant_kvner() {
   local variant="$1"
   local gpu="$2"
@@ -37,7 +105,7 @@ run_variant_kvner() {
   local report_t3="${DAPT_ROOT}/runs/nsp_ratio_${ratio_name}_report_task3.json"
 
   require_path "$variant" "pretrained-model" "$model_dir" dir
-  gen_kv_config "$variant" "$model_dir"
+  gen_kv_config "$variant" "$model_dir" "$TOKENIZER_PATH"
   require_path "$variant" "generate-config" "$kv_cfg" file
 
   echo "============================================================"
@@ -52,6 +120,7 @@ run_variant_kvner() {
       --config "$kv_cfg" \
       --noise_bins "$NOISE_BINS"
     require_path "$variant" "kvner-train" "$kv_best_dir" dir
+    check_kv_train_quality "$variant" "${DAPT_ROOT}/runs/kv_ner_finetuned_nsp_ratio_${ratio_name}/training_summary.json" 0.0001
   fi
 
   if [[ "$RESUME" == "1" && -s "$summary" ]]; then
@@ -66,6 +135,7 @@ run_variant_kvner() {
       --output_summary "$summary"
     require_path "$variant" "kvner-predict" "$summary" file
     require_path "$variant" "kvner-predict" "$pred_jsonl" file
+    check_pred_nonempty "$variant" "kvner-predict" "$pred_jsonl" 1
   fi
 
   if [[ "$RESUME" == "1" && -s "$aligned_gt" && -s "$aligned_pred" ]]; then
@@ -79,6 +149,7 @@ run_variant_kvner() {
       --pred_out "$aligned_pred"
     require_path "$variant" "task13-align" "$aligned_gt" file
     require_path "$variant" "task13-align" "$aligned_pred" file
+    check_pred_nonempty "$variant" "task13-align" "$aligned_pred" 1
   fi
 
   if [[ "$RESUME" == "1" && -s "$report_t1" ]]; then
