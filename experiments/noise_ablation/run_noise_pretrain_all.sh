@@ -10,6 +10,10 @@ NPROC_PER_NODE="${NPROC_PER_NODE:-1}"
 MASTER_PORT_BASE="${MASTER_PORT_BASE:-29521}"
 TORCHRUN_BIN="${TORCHRUN_BIN:-torchrun}"
 TORCHRUN_CUDA_VISIBLE_DEVICES="${TORCHRUN_CUDA_VISIBLE_DEVICES:-$GPU_LIST}"
+NSP_LOSS_GUARD_ENABLE="${NSP_LOSS_GUARD_ENABLE:-1}"
+NSP_LOSS_GUARD_ROUND="${NSP_LOSS_GUARD_ROUND:-2}"
+NSP_LOSS_GUARD_TARGET="${NSP_LOSS_GUARD_TARGET:-0.6931}"
+NSP_LOSS_GUARD_TOL="${NSP_LOSS_GUARD_TOL:-0.005}"
 
 use_torchrun=0
 if [[ "${PRETRAIN_LAUNCHER}" == "torchrun" || "${NPROC_PER_NODE}" -gt 1 ]]; then
@@ -22,9 +26,20 @@ if [[ "$use_torchrun" == "1" ]]; then
     exit 1
   fi
   if [[ "$PARALLEL" == "1" ]]; then
-    echo "[ERR] 使用 torchrun 多进程预训练时，当前脚本仅支持 PARALLEL=0（串行逐个 variant 运行）。" >&2
-    echo "[ERR] 建议: PARALLEL=0 GPU_LIST=2,3 NPROC_PER_NODE=2 PRETRAIN_LAUNCHER=torchrun" >&2
-    exit 1
+    IFS=',' read -r -a _torchrun_gpus <<< "$GPU_LIST"
+    _torchrun_gpu_count=0
+    for idx in "${!_torchrun_gpus[@]}"; do
+      _torchrun_gpus[$idx]="${_torchrun_gpus[$idx]//[[:space:]]/}"
+      if [[ -n "${_torchrun_gpus[$idx]}" ]]; then
+        _torchrun_gpu_count=$((_torchrun_gpu_count + 1))
+      fi
+    done
+    _required_gpu_count=$(( ${#VARIANTS[@]} * NPROC_PER_NODE ))
+    if [[ "$_torchrun_gpu_count" -lt "$_required_gpu_count" ]]; then
+      echo "[ERR] torchrun+PARALLEL=1 需要至少 ${_required_gpu_count} 张卡（${#VARIANTS[@]} variants × NPROC_PER_NODE=${NPROC_PER_NODE}），当前 GPU_LIST 仅 ${_torchrun_gpu_count} 张。" >&2
+      echo "[ERR] 建议: GPU_LIST=0,1,2,3,4,5 PARALLEL=1 PRETRAIN_LAUNCHER=torchrun NPROC_PER_NODE=2" >&2
+      exit 1
+    fi
   fi
 fi
 
@@ -33,6 +48,72 @@ require_file_or_dir "$NSP_DATA_DIR"
 require_dir "$TOKENIZER_PATH"
 require_file "$NOISE_BINS"
 require_file "${DAPT_ROOT}/train_dapt_macbert_staged.py"
+
+check_nsp_loss_guard() {
+  local variant="$1"
+  local pretrain_out="$2"
+
+  if [[ "$NSP_LOSS_GUARD_ENABLE" != "1" ]]; then
+    return 0
+  fi
+
+  local round_dir="${pretrain_out}/round_${NSP_LOSS_GUARD_ROUND}_nsp"
+  if [[ ! -d "$round_dir" ]]; then
+    echo "[WARN] [${variant}] NSP guard skipped: round dir missing: ${round_dir}"
+    return 0
+  fi
+
+  if ! "$PYTHON_BIN" - "$variant" "$round_dir" "$NSP_LOSS_GUARD_TARGET" "$NSP_LOSS_GUARD_TOL" <<'PY'
+import glob
+import json
+import math
+import os
+import sys
+
+variant = sys.argv[1]
+round_dir = sys.argv[2]
+target = float(sys.argv[3])
+tol = float(sys.argv[4])
+
+paths = sorted(glob.glob(os.path.join(round_dir, "checkpoint-*", "trainer_state.json")))
+if not paths:
+    root_state = os.path.join(round_dir, "trainer_state.json")
+    if os.path.exists(root_state):
+        paths = [root_state]
+
+if not paths:
+    print(f"[WARN] [{variant}] NSP guard skipped: trainer_state.json not found under {round_dir}")
+    sys.exit(0)
+
+with open(paths[-1], "r", encoding="utf-8") as f:
+    state = json.load(f)
+
+losses = [x.get("loss") for x in state.get("log_history", []) if isinstance(x, dict) and "loss" in x]
+losses = [float(x) for x in losses if x is not None and math.isfinite(float(x))]
+if not losses:
+    print(f"[WARN] [{variant}] NSP guard skipped: no finite loss found in trainer_state")
+    sys.exit(0)
+
+last_loss = losses[-1]
+if abs(last_loss - target) <= tol:
+    print(
+        f"[ERR] [{variant}] NSP guard triggered: round2 NSP last_loss={last_loss:.6f} "
+        f"is within [{target - tol:.6f}, {target + tol:.6f}] (target={target:.6f}, tol={tol:.6f})."
+    )
+    print(f"[ERR] [{variant}] Recent losses: " + ", ".join(f"{x:.6f}" for x in losses[-10:]))
+    sys.exit(2)
+
+print(
+    f"[OK] [{variant}] NSP guard pass: round2 NSP last_loss={last_loss:.6f}, "
+    f"target={target:.6f}, tol={tol:.6f}"
+)
+PY
+  then
+    return 1
+  fi
+
+  return 0
+}
 
 if ! grep -q -- '"--noise_mode"' "${DAPT_ROOT}/train_dapt_macbert_staged.py"; then
   echo "[ERR] 远端的 train_dapt_macbert_staged.py 仍是旧版本，未包含 --noise_mode 参数。" >&2
@@ -46,7 +127,42 @@ run_variant_pretrain() {
   local gpu="$2"
   local cuda_visible_devices="$gpu"
   if [[ "$use_torchrun" == "1" ]]; then
-    cuda_visible_devices="$TORCHRUN_CUDA_VISIBLE_DEVICES"
+    if [[ "$PARALLEL" == "1" ]]; then
+      IFS=',' read -r -a _gpus <<< "$GPU_LIST"
+      local variant_idx=-1
+      for i in "${!VARIANTS[@]}"; do
+        if [[ "${VARIANTS[$i]}" == "$variant" ]]; then
+          variant_idx="$i"
+          break
+        fi
+      done
+      if [[ "$variant_idx" -lt 0 ]]; then
+        echo "[ERR] 无法为 variant=${variant} 计算 GPU 分组" >&2
+        return 1
+      fi
+      local start=$((variant_idx * NPROC_PER_NODE))
+      local end=$((start + NPROC_PER_NODE - 1))
+      local group=()
+      for gi in $(seq "$start" "$end"); do
+        local g="${_gpus[$gi]//[[:space:]]/}"
+        if [[ -z "$g" ]]; then
+          echo "[ERR] variant=${variant} 的 torchrun GPU 分组不足（idx=${gi}）" >&2
+          return 1
+        fi
+        group+=("$g")
+      done
+      local joined=""
+      for g in "${group[@]}"; do
+        if [[ -z "$joined" ]]; then
+          joined="$g"
+        else
+          joined+=",$g"
+        fi
+      done
+      cuda_visible_devices="$joined"
+    else
+      cuda_visible_devices="$TORCHRUN_CUDA_VISIBLE_DEVICES"
+    fi
   fi
   export CUDA_VISIBLE_DEVICES="$cuda_visible_devices"
 
@@ -137,6 +253,7 @@ run_variant_pretrain() {
   fi
 
   run_logged "$variant" "pretrain" "$pretrain_log" "${cmd[@]}"
+  check_nsp_loss_guard "$variant" "$pretrain_out"
   require_path "$variant" "pretrain" "$model_dir" dir
   if [[ ! -s "${model_dir}/config.json" || ( ! -s "${model_dir}/pytorch_model.bin" && ! -s "${model_dir}/model.safetensors" ) ]]; then
     echo "[ERR] [${variant}] pretrain 结束后模型文件不完整: ${model_dir}" >&2
