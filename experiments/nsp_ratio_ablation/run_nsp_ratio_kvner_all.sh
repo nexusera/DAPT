@@ -5,6 +5,11 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 # shellcheck disable=SC1091
 source "${SCRIPT_DIR}/common.sh"
 
+KV_VAL_F1_GUARD_ENABLE="${KV_VAL_F1_GUARD_ENABLE:-1}"
+KV_VAL_F1_GUARD_PATIENCE="${KV_VAL_F1_GUARD_PATIENCE:-5}"
+KV_VAL_F1_GUARD_TOL="${KV_VAL_F1_GUARD_TOL:-0.001}"
+KV_VAL_F1_GUARD_MIN_EPOCHS="${KV_VAL_F1_GUARD_MIN_EPOCHS:-5}"
+
 require_file "$NOISE_BINS"
 require_file "$QUERY_SET"
 require_file "$REAL_TEST_JSON"
@@ -82,6 +87,75 @@ PY
   fi
 }
 
+check_kv_valf1_guard() {
+  local variant="$1"
+  local train_log="$2"
+
+  if [[ "$KV_VAL_F1_GUARD_ENABLE" != "1" ]]; then
+    return 0
+  fi
+
+  if [[ ! -s "$train_log" ]]; then
+    echo "[WARN] [${variant}] KV val_f1 guard skipped: missing log ${train_log}"
+    return 0
+  fi
+
+  if ! "$PYTHON_BIN" - "$variant" "$train_log" "$KV_VAL_F1_GUARD_PATIENCE" "$KV_VAL_F1_GUARD_TOL" "$KV_VAL_F1_GUARD_MIN_EPOCHS" <<'PY'
+import re
+import sys
+
+variant = sys.argv[1]
+log_file = sys.argv[2]
+patience = int(float(sys.argv[3]))
+tol = float(sys.argv[4])
+min_epochs = int(float(sys.argv[5]))
+
+pat = re.compile(r"Validation F1:\s*([0-9]*\.?[0-9]+)")
+vals = []
+with open(log_file, "r", encoding="utf-8", errors="ignore") as f:
+    for line in f:
+        m = pat.search(line)
+        if m:
+            try:
+                vals.append(float(m.group(1)))
+            except Exception:
+                pass
+
+if len(vals) < min_epochs:
+    print(f"[WARN] [{variant}] KV val_f1 guard skipped: only {len(vals)} validation points (< {min_epochs})")
+    raise SystemExit(0)
+
+max_zero_streak = 0
+cur = 0
+for v in vals:
+    if abs(v) <= tol:
+        cur += 1
+        if cur > max_zero_streak:
+            max_zero_streak = cur
+    else:
+        cur = 0
+
+if max_zero_streak >= patience:
+    tail = ", ".join(f"{x:.4f}" for x in vals[-min(12, len(vals)):])
+    print(
+        f"[ERR] [{variant}] KV val_f1 guard triggered: max_zero_streak={max_zero_streak} >= patience={patience}, "
+        f"tol={tol}."
+    )
+    print(f"[ERR] [{variant}] Recent val_f1: {tail}")
+    raise SystemExit(2)
+
+print(
+    f"[OK] [{variant}] KV val_f1 guard pass: max_zero_streak={max_zero_streak}, "
+    f"patience={patience}, tol={tol}"
+)
+PY
+  then
+    return 1
+  fi
+
+  return 0
+}
+
 run_variant_kvner() {
   local variant="$1"
   local gpu="$2"
@@ -115,11 +189,13 @@ run_variant_kvner() {
   if [[ "$RESUME" == "1" && -d "$kv_best_dir" ]]; then
     echo "[${variant}] [SKIP] KV-NER train (found: $kv_best_dir)"
   else
+    local train_log="${LOG_DIR}/${variant}_kvner_train.gpu${gpu}.log"
     run_logged "$variant" "kvner-train" "${LOG_DIR}/${variant}_kvner_train.gpu${gpu}.log" \
       "$PYTHON_BIN" "${DAPT_ROOT}/dapt_eval_package/pre_struct/kv_ner/train_with_noise.py" \
       --config "$kv_cfg" \
       --noise_bins "$NOISE_BINS"
     require_path "$variant" "kvner-train" "$kv_best_dir" dir
+    check_kv_valf1_guard "$variant" "$train_log"
     check_kv_train_quality "$variant" "${DAPT_ROOT}/runs/kv_ner_finetuned_nsp_ratio_${ratio_name}/training_summary.json" 0.0001
   fi
 

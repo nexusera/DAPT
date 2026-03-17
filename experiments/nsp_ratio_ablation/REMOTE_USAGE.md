@@ -60,6 +60,13 @@ bash experiments/nsp_ratio_ablation/run_nsp_ratio_pretrain_all.sh
 
 ## 3. 预训练阶段
 
+与 `noise_ablation` 对齐后，`run_nsp_ratio_pretrain_all.sh` 也支持：
+
+- `CLEAN_BEFORE_RUN=1`：`RESUME=0` 时先清理旧产物
+- `PRETRAIN_LAUNCHER=torchrun` + `NPROC_PER_NODE`：单实验多卡
+- `MASTER_PORT_BASE`：按变体自动偏移端口（r11/r31/r13）
+- `NSP_LOSS_GUARD_*`：第 N 轮 NSP loss 卡在 0.693 附近时自动失败
+
 串行（单卡，推荐先跑通）：
 
 ```bash
@@ -76,6 +83,32 @@ bash experiments/nsp_ratio_ablation/run_nsp_ratio_pretrain_all.sh
 cd /data/ocean/DAPT
 GPU_LIST=0,1,2 PARALLEL=1 RESUME=1 \
 bash experiments/nsp_ratio_ablation/run_nsp_ratio_pretrain_all.sh
+```
+
+并行（6 卡，torchrun 2 卡/变体，推荐与 noise_ablation 一致）：
+
+```bash
+cd /data/ocean/DAPT
+git pull
+conda activate medical_bert
+export PYTHONPATH=$PYTHONPATH:$(pwd)
+
+GPU_LIST=0,1,2,3,4,5 \
+PARALLEL=1 \
+RESUME=0 \
+CLEAN_BEFORE_RUN=1 \
+PRETRAIN_LAUNCHER=torchrun \
+NPROC_PER_NODE=2 \
+MASTER_PORT_BASE=29521 \
+PER_DEVICE_TRAIN_BATCH_SIZE=16 \
+GRADIENT_ACCUMULATION_STEPS=4 \
+DATALOADER_NUM_WORKERS=4 \
+NSP_LOSS_GUARD_ENABLE=1 \
+NSP_LOSS_GUARD_ROUND=2 \
+NSP_LOSS_GUARD_TARGET=0.6931 \
+NSP_LOSS_GUARD_TOL=0.005 \
+bash experiments/nsp_ratio_ablation/run_nsp_ratio_pretrain_all.sh \
+| tee runs/nsp_ratio_ablation_logs/_pretrain_torchrun_6gpu_guard.$(date +%F_%H%M%S).log
 ```
 
 预训练输出模型：
@@ -146,8 +179,13 @@ bash experiments/nsp_ratio_ablation/run_nsp_ratio_ablation_all.sh
 - GPU_LIST：默认 0,1,2
 - PARALLEL：0 串行；1 并行
 - RESUME：1 断点续跑；0 强制重跑
+- CLEAN_BEFORE_RUN：`RESUME=0` 时清理旧输出目录
 - NSP_NEGATIVE_PROB：总负样本概率，默认 0.5
 - NUM_ROUNDS / MLM_EPOCHS_PER_ROUND / NSP_EPOCHS_PER_ROUND：预训练轮次
+- PRETRAIN_LAUNCHER：`python` 或 `torchrun`
+- NPROC_PER_NODE：torchrun 每个变体使用的进程数
+- MASTER_PORT_BASE：torchrun 起始端口（每个变体自动 +1）
+- NSP_LOSS_GUARD_ENABLE / ROUND / TARGET / TOL：NSP loss 守卫参数
 
 示例（只跑 1:1 和 3:1）：
 
