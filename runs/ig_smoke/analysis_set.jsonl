@@ -1,0 +1,1 @@
+{"analysis_id": "task3_0", "task": "task3", "report_index": 0, "text": "患者主诉头晕，诊断为高血压。", "pred": {"pred_text": "高血压", "question_key": "诊断", "task": null}, "gt": {"answer_text": "高血压"}}
