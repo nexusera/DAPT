@@ -8,6 +8,28 @@ from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional
 
 
+def _norm_key(v: Any) -> Optional[str]:
+    if v is None:
+        return None
+    try:
+        if isinstance(v, bool):
+            return str(v)
+        if isinstance(v, int):
+            return str(v)
+        if isinstance(v, float):
+            if v.is_integer():
+                return str(int(v))
+            return str(v)
+        s = str(v).strip()
+        if not s:
+            return None
+        if s.isdigit() or (s.startswith("-") and s[1:].isdigit()):
+            return str(int(s))
+        return s
+    except Exception:
+        return None
+
+
 def _iter_json_or_jsonl(path: str) -> Iterable[Dict[str, Any]]:
     p = Path(path)
     if not p.is_file():
@@ -37,7 +59,16 @@ def _iter_json_or_jsonl(path: str) -> Iterable[Dict[str, Any]]:
 
 
 def _extract_text(raw: Dict[str, Any]) -> str:
-    for k in ("text", "raw_text", "content", "ocr_text"):
+    for k in (
+        "text",
+        "raw_text",
+        "content",
+        "ocr_text",
+        "full_text",
+        "report_text",
+        "raw",
+        "chunk_text",
+    ):
         v = raw.get(k)
         if isinstance(v, str) and v.strip():
             return v
@@ -55,16 +86,29 @@ def _extract_text(raw: Dict[str, Any]) -> str:
             if words:
                 return "".join(words)
 
+    for kk in ("ocr", "ocr_result", "ocr_data"):
+        obj = raw.get(kk)
+        if isinstance(obj, dict):
+            wr = obj.get("words_result")
+            if isinstance(wr, list):
+                words = []
+                for it in wr:
+                    if isinstance(it, dict) and isinstance(it.get("words"), str):
+                        words.append(it["words"])
+                if words:
+                    return "".join(words)
+
     if isinstance(raw.get("spans"), dict):
         return ""
     return ""
 
 
 def _to_key(idx: int, obj: Dict[str, Any]) -> str:
-    for k in ("report_index", "id", "doc_id", "uid"):
+    for k in ("report_index", "report_id", "id", "doc_id", "uid", "index", "sample_id"):
         v = obj.get(k)
-        if v is not None:
-            return str(v)
+        nk = _norm_key(v)
+        if nk is not None:
+            return nk
     return str(idx)
 
 
@@ -107,7 +151,18 @@ def build(args: argparse.Namespace) -> None:
         k = _to_key(i, p)
         g = gt_map.get(k, {})
         r = raw_map.get(k, {})
+
+        # fallback by positional index when id-style keys don't align
+        if not g and i < len(gts):
+            g = gts[i]
+        if not r and i < len(raws):
+            r = raws[i]
+
         text = _extract_text(r)
+        if not text:
+            text = _extract_text(g) if isinstance(g, dict) else ""
+        if not text:
+            text = _extract_text(p)
 
         row: Dict[str, Any] = {
             "analysis_id": f"{args.task}_{i}",
