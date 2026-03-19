@@ -151,6 +151,60 @@ def _topk_token_scores(scores: torch.Tensor, k: int) -> List[Dict[str, Any]]:
     return out
 
 
+def _choose_faithfulness_indices(
+    token_scores,
+    input_ids,
+    attention_mask,
+    tokenizer,
+    topk_frac: float,
+    topk_max: int,
+) -> List[int]:
+    import torch
+
+    seq_len = int(input_ids.size(1))
+    scores = token_scores.detach().cpu()
+    ids = input_ids.squeeze(0).detach().cpu().tolist()
+    mask = attention_mask.squeeze(0).detach().cpu().tolist()
+
+    special_ids = set()
+    for sid in [tokenizer.cls_token_id, tokenizer.sep_token_id, tokenizer.pad_token_id]:
+        if sid is not None:
+            special_ids.add(int(sid))
+
+    candidates: List[int] = []
+    for i in range(seq_len):
+        if i >= len(mask) or int(mask[i]) == 0:
+            continue
+        tid = int(ids[i]) if i < len(ids) else None
+        if tid is not None and tid in special_ids:
+            continue
+        candidates.append(i)
+
+    if not candidates:
+        return []
+
+    n_pick = max(1, int(round(len(candidates) * float(topk_frac))))
+    if topk_max > 0:
+        n_pick = min(n_pick, int(topk_max))
+
+    ranked = sorted(candidates, key=lambda i: float(scores[i].item()), reverse=True)
+    return ranked[:n_pick]
+
+
+def _apply_token_perturbation(input_ids, baseline_ids, selected_idx: List[int], mode: str):
+    pert = input_ids.clone()
+    if mode == "delete":
+        for idx in selected_idx:
+            pert[:, idx] = baseline_ids[:, idx]
+        return pert
+    if mode == "keep":
+        pert = baseline_ids.clone()
+        for idx in selected_idx:
+            pert[:, idx] = input_ids[:, idx]
+        return pert
+    raise ValueError(f"Unknown perturbation mode: {mode}")
+
+
 def run(args: argparse.Namespace) -> None:
     rows = _read_jsonl(args.analysis_set)
 
@@ -262,6 +316,63 @@ def run(args: argparse.Namespace) -> None:
                 "noise_attr": None,
             }
 
+            if args.compute_faithfulness:
+                selected_idx = _choose_faithfulness_indices(
+                    token_scores=token_scores,
+                    input_ids=input_ids,
+                    attention_mask=attention_mask,
+                    tokenizer=tokenizer,
+                    topk_frac=args.faithfulness_topk_frac,
+                    topk_max=args.faithfulness_topk_max,
+                )
+
+                deleted_ids = _apply_token_perturbation(input_ids, baselines, selected_idx, mode="delete")
+                kept_ids = _apply_token_perturbation(input_ids, baselines, selected_idx, mode="keep")
+
+                with torch.no_grad():
+                    full_score = float(
+                        forward_token(
+                            input_ids,
+                            attention_mask,
+                            token_type_ids,
+                            noise_ids,
+                            noise_values,
+                            target_pos,
+                            target_label,
+                        ).item()
+                    )
+                    deleted_score = float(
+                        forward_token(
+                            deleted_ids,
+                            attention_mask,
+                            token_type_ids,
+                            noise_ids,
+                            noise_values,
+                            target_pos,
+                            target_label,
+                        ).item()
+                    )
+                    kept_score = float(
+                        forward_token(
+                            kept_ids,
+                            attention_mask,
+                            token_type_ids,
+                            noise_ids,
+                            noise_values,
+                            target_pos,
+                            target_label,
+                        ).item()
+                    )
+
+                rec["faithfulness"] = {
+                    "topk_frac": float(args.faithfulness_topk_frac),
+                    "topk_max": int(args.faithfulness_topk_max),
+                    "selected_token_indices": [int(x) for x in selected_idx],
+                    "full_score": full_score,
+                    "deleted_score": deleted_score,
+                    "kept_score": kept_score,
+                }
+
             if model.use_noise and uses_continuous_noise(model.noise_mode) and noise_values is not None:
                 ig_noise = IntegratedGradients(
                     lambda nv, ids, attn, ttype, pos, lid: forward_token(ids, attn, ttype, None, nv, pos, lid)
@@ -307,6 +418,9 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--noise_baseline", type=str, choices=["zero", "perfect"], default="perfect")
     p.add_argument("--max_samples", type=int, default=20)
     p.add_argument("--top_k", type=int, default=10)
+    p.add_argument("--compute_faithfulness", action="store_true", help="Compute true faithfulness scores via token perturbation")
+    p.add_argument("--faithfulness_topk_frac", type=float, default=0.2, help="Fraction of important tokens to perturb")
+    p.add_argument("--faithfulness_topk_max", type=int, default=32, help="Maximum number of perturbed tokens")
     p.add_argument("--dry_run", action="store_true")
     return p.parse_args()
 
