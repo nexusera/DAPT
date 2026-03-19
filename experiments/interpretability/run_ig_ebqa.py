@@ -325,7 +325,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--internal_batch_size", type=int, default=8)
     p.add_argument("--baseline", type=str, choices=["pad", "mask"], default="pad")
     p.add_argument("--noise_baseline", type=str, choices=["zero", "perfect"], default="perfect")
-    p.add_argument("--max_samples", type=int, default=20)
+    p.add_argument("--max_samples", type=int, default=0)
     p.add_argument("--top_k", type=int, default=10)
     p.add_argument("--compute_faithfulness", action="store_true", help="Compute true faithfulness scores via token perturbation")
     p.add_argument("--faithfulness_topk_frac", type=float, default=0.2, help="Fraction of important tokens to perturb")
