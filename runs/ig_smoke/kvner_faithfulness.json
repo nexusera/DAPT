@@ -1,0 +1,76 @@
+{
+  "summary": {
+    "ig_file": "runs/ig_smoke/kvner_ig.jsonl",
+    "num_samples": 1,
+    "metrics": {
+      "deletion_aopc": {
+        "aggregate": {
+          "count": 1,
+          "mean": 0.0,
+          "std": 0.0,
+          "min": 0.0,
+          "max": 0.0
+        },
+        "mode_count": {
+          "true": 0,
+          "proxy": 1,
+          "missing": 0
+        },
+        "interpretation": "true mode uses model scores before/after perturbation; proxy mode uses attribution-only approximation and is for relative comparison only"
+      },
+      "comprehensiveness": {
+        "aggregate": {
+          "count": 1,
+          "mean": 0.0,
+          "std": 0.0,
+          "min": 0.0,
+          "max": 0.0
+        },
+        "mode_count": {
+          "true": 0,
+          "proxy": 1,
+          "missing": 0
+        },
+        "interpretation": "true mode uses model scores before/after perturbation; proxy mode uses attribution-only approximation and is for relative comparison only"
+      },
+      "sufficiency": {
+        "aggregate": {
+          "count": 1,
+          "mean": 1.0,
+          "std": 0.0,
+          "min": 1.0,
+          "max": 1.0
+        },
+        "mode_count": {
+          "true": 0,
+          "proxy": 1,
+          "missing": 0
+        },
+        "interpretation": "true mode uses model scores before/after perturbation; proxy mode uses attribution-only approximation and is for relative comparison only"
+      }
+    }
+  },
+  "per_sample": [
+    {
+      "index": 0,
+      "analysis_id": "task3_0",
+      "metrics": {
+        "deletion_aopc": {
+          "value": 0.0,
+          "mode": "proxy",
+          "note": "proxy from mean(|top_token_attribution|)"
+        },
+        "comprehensiveness": {
+          "value": 0.0,
+          "mode": "proxy",
+          "note": "proxy from sum(|top_token_attribution|)"
+        },
+        "sufficiency": {
+          "value": 1.0,
+          "mode": "proxy",
+          "note": "proxy from attribution concentration (1 - top1_share)"
+        }
+      }
+    }
+  ]
+}
