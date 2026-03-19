@@ -97,17 +97,22 @@ def _compute_emissions(
 
     if model.use_bilstm and model.lstm is not None:
         original_seq_length = sequence_output.size(1)
-        if attention_mask is not None:
-            lengths = attention_mask.sum(dim=1).cpu()
-            packed = torch.nn.utils.rnn.pack_padded_sequence(
-                sequence_output, lengths, batch_first=True, enforce_sorted=False
-            )
-            lstm_output, _ = model.lstm(packed)
-            lstm_output, _ = torch.nn.utils.rnn.pad_packed_sequence(
-                lstm_output, batch_first=True, total_length=original_seq_length
-            )
-        else:
-            lstm_output, _ = model.lstm(sequence_output)
+        # NOTE:
+        # Captum/IG requires backward pass, while cuDNN RNN in eval mode may throw:
+        # "cudnn RNN backward can only be called in training mode".
+        # Use non-cuDNN path for LSTM attribution to ensure gradients are available.
+        with torch.backends.cudnn.flags(enabled=False):
+            if attention_mask is not None:
+                lengths = attention_mask.sum(dim=1).cpu()
+                packed = torch.nn.utils.rnn.pack_padded_sequence(
+                    sequence_output, lengths, batch_first=True, enforce_sorted=False
+                )
+                lstm_output, _ = model.lstm(packed)
+                lstm_output, _ = torch.nn.utils.rnn.pad_packed_sequence(
+                    lstm_output, batch_first=True, total_length=original_seq_length
+                )
+            else:
+                lstm_output, _ = model.lstm(sequence_output)
         sequence_output = model.dropout(lstm_output)
 
     return model.classifier(sequence_output)
