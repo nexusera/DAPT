@@ -28,6 +28,60 @@ from noise_feature_processor import FEATURES, NoiseFeatureProcessor
 from train_dapt_macbert_staged import BertForDaptMTL
 
 
+def _load_state_dict_from_dir(model_dir: Path, map_location: str = "cpu") -> Dict[str, torch.Tensor]:
+    safetensors_path = model_dir / "model.safetensors"
+    pytorch_path = model_dir / "pytorch_model.bin"
+
+    if safetensors_path.is_file():
+        try:
+            from safetensors.torch import load_file
+
+            return load_file(str(safetensors_path), device=map_location)
+        except Exception as e:
+            raise RuntimeError(f"Failed to load safetensors at {safetensors_path}: {e}") from e
+
+    if pytorch_path.is_file():
+        state = torch.load(str(pytorch_path), map_location=map_location)
+        if not isinstance(state, dict):
+            raise RuntimeError(f"Invalid state dict format in {pytorch_path}")
+        return state
+
+    raise FileNotFoundError(
+        f"No weight file found in {model_dir}. Expected one of: {safetensors_path.name}, {pytorch_path.name}"
+    )
+
+
+def _load_dapt_model(
+    model_dir: Path,
+    device: str,
+    base_model_name: str,
+    noise_mode_hint: str,
+    noise_bin_edges: Optional[Dict[str, List[float]]],
+) -> BertForDaptMTL:
+    config_path = model_dir / "config.json"
+    if config_path.is_file():
+        cfg = AutoConfig.from_pretrained(str(model_dir))
+        model = BertForDaptMTL.from_pretrained(str(model_dir), config=cfg)
+        return model.to(device)
+
+    # Fallback path: recover config from base model, then load local weights directly.
+    cfg = AutoConfig.from_pretrained(base_model_name)
+    cfg.noise_mode = str(noise_mode_hint or "bucket").lower()
+    if noise_bin_edges is not None:
+        cfg.noise_bin_edges = noise_bin_edges
+
+    model = BertForDaptMTL(cfg)
+    state = _load_state_dict_from_dir(model_dir, map_location="cpu")
+    missing, unexpected = model.load_state_dict(state, strict=False)
+
+    if missing:
+        print(f"[warn] missing keys when loading checkpoint: {len(missing)}")
+    if unexpected:
+        print(f"[warn] unexpected keys when loading checkpoint: {len(unexpected)}")
+
+    return model.to(device)
+
+
 def _read_json_or_jsonl(path: Path) -> List[Dict[str, Any]]:
     if path.suffix.lower() == ".jsonl":
         rows: List[Dict[str, Any]] = []
@@ -538,6 +592,12 @@ def main() -> None:
     parser.add_argument("--tokenizer_path", type=str, default=None, help="Tokenizer path; default uses model_dir")
     parser.add_argument("--input_file", type=str, required=True, help="JSON/JSONL with key-value pairs")
     parser.add_argument("--output_dir", type=str, required=True)
+    parser.add_argument(
+        "--base_model_name",
+        type=str,
+        default="hfl/chinese-macbert-base",
+        help="Fallback backbone config when model_dir has no config.json",
+    )
 
     parser.add_argument("--max_length", type=int, default=256)
     parser.add_argument("--max_samples_per_group", type=int, default=200)
@@ -549,6 +609,13 @@ def main() -> None:
     parser.add_argument("--run_rollout", action="store_true")
 
     parser.add_argument("--noise_bins_json", type=str, default=None)
+    parser.add_argument(
+        "--noise_mode_hint",
+        type=str,
+        default="bucket",
+        choices=["bucket", "linear", "mlp"],
+        help="Used only when model_dir lacks config.json",
+    )
     parser.add_argument("--inject_perfect_noise", action="store_true", help="Inject perfect noise vectors when forwarding")
 
     parser.add_argument("--auto_generate_negatives", action="store_true", help="If input has no negatives, auto-build reverse/random negatives")
@@ -580,16 +647,32 @@ def main() -> None:
     if not getattr(tokenizer, "is_fast", False):
         raise RuntimeError("A fast tokenizer is required for span extraction. Please provide tokenizer.json enabled tokenizer.")
 
-    cfg = AutoConfig.from_pretrained(args.model_dir)
-    model = BertForDaptMTL.from_pretrained(args.model_dir, config=cfg).to(args.device)
-    model.eval()
+    model_dir = Path(args.model_dir)
+    if not model_dir.exists():
+        raise FileNotFoundError(
+            f"model_dir not found: {model_dir}. Please check remote path and run 'ls -lah {model_dir.parent}' to verify."
+        )
+    if not model_dir.is_dir():
+        raise NotADirectoryError(f"model_dir is not a directory: {model_dir}")
 
-    noise_mode = str(getattr(model.config, "noise_mode", "bucket") or "bucket").lower()
     noise_processor = None
+    noise_bin_edges = None
     if args.noise_bins_json:
         p = Path(args.noise_bins_json)
         if p.is_file():
             noise_processor = NoiseFeatureProcessor.load(str(p))
+            noise_bin_edges = noise_processor.bin_edges
+
+    model = _load_dapt_model(
+        model_dir=model_dir,
+        device=args.device,
+        base_model_name=args.base_model_name,
+        noise_mode_hint=args.noise_mode_hint,
+        noise_bin_edges=noise_bin_edges,
+    )
+    model.eval()
+
+    noise_mode = str(getattr(model.config, "noise_mode", args.noise_mode_hint) or args.noise_mode_hint).lower()
 
     per_sample: List[Dict[str, Any]] = []
 
