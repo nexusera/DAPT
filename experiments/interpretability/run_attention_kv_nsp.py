@@ -6,6 +6,7 @@ import argparse
 import json
 import math
 import random
+import re
 import statistics
 import sys
 from dataclasses import dataclass
@@ -26,6 +27,22 @@ from transformers import AutoConfig, AutoTokenizer
 
 from noise_feature_processor import FEATURES, NoiseFeatureProcessor
 from train_dapt_macbert_staged import BertForDaptMTL
+
+
+def _first_not_none(*values: Optional[int]) -> Optional[int]:
+    for v in values:
+        if v is not None:
+            return v
+    return None
+
+
+def _safe_filename(name: str, max_len: int = 120) -> str:
+    """Return a filesystem-safe file stem."""
+    x = re.sub(r"[^0-9A-Za-z._-]+", "_", str(name))
+    x = x.strip("._")
+    if not x:
+        x = "sample"
+    return x[:max_len]
 
 
 def _load_state_dict_from_dir(model_dir: Path, map_location: str = "cpu") -> Dict[str, torch.Tensor]:
@@ -217,11 +234,11 @@ def _load_pair_samples(path: Path) -> List[PairSample]:
                     )
             continue
 
-        label = (
-            _extract_label(row.get("label"))
-            or _extract_label(row.get("is_match"))
-            or _extract_label(row.get("matched"))
-            or _extract_label(row.get("nsp_label"))
+        label = _first_not_none(
+            _extract_label(row.get("label")),
+            _extract_label(row.get("is_match")),
+            _extract_label(row.get("matched")),
+            _extract_label(row.get("nsp_label")),
         )
         if label is None:
             label = 1
@@ -230,6 +247,11 @@ def _load_pair_samples(path: Path) -> List[PairSample]:
         group = _normalize_group(label=label, raw_group=raw_group)
 
         sid = row.get("id") or row.get("sample_id") or row.get("uid") or f"row_{idx}"
+        # Keep lightweight metadata needed for noise stratification and provenance.
+        kept_meta: Dict[str, Any] = {"source_index": idx, "raw_group": raw_group}
+        for mk in ("noise_level", "conf_avg", "ocr_conf_avg", "confidence", "avg_conf", "noise_values"):
+            if mk in row:
+                kept_meta[mk] = row[mk]
         samples.append(
             PairSample(
                 sample_id=str(sid),
@@ -237,7 +259,7 @@ def _load_pair_samples(path: Path) -> List[PairSample]:
                 value_text=str(val),
                 label=int(label),
                 group=group,
-                meta={"source_index": idx, "raw_group": raw_group},
+                meta=kept_meta,
             )
         )
 
@@ -452,11 +474,22 @@ def _safe_div(a: float, b: float) -> float:
     return a / b
 
 
-def _compute_csam(A: np.ndarray, key_idx: List[int], value_idx: List[int]) -> float:
+def _compute_csam(
+    A: np.ndarray,
+    key_idx: List[int],
+    value_idx: List[int],
+    valid_token_idx: Optional[List[int]] = None,
+) -> float:
     if not key_idx or not value_idx:
         return 0.0
     numer = float(A[np.ix_(key_idx, value_idx)].sum())
-    denom = float(A[np.ix_(key_idx, list(range(A.shape[1])))].sum())
+    if valid_token_idx is None:
+        denom_cols = list(range(A.shape[1]))
+    else:
+        denom_cols = valid_token_idx
+    if not denom_cols:
+        return 0.0
+    denom = float(A[np.ix_(key_idx, denom_cols)].sum())
     return _safe_div(numer, denom)
 
 
@@ -509,6 +542,56 @@ def _plot_heatmap(matrix: np.ndarray, out_file: Path, title: str) -> None:
     plt.ylabel("Key token index")
     plt.tight_layout()
     plt.savefig(out_file)
+    plt.close()
+
+
+def _plot_metric_distributions(per_sample: Sequence[Dict[str, Any]], out_dir: Path, metric_key: str, title: str) -> None:
+    try:
+        import matplotlib.pyplot as plt
+    except Exception:
+        return
+
+    groups_order = ["positive", "reverse", "random", "negative_other"]
+    buckets: Dict[str, List[float]] = {g: [] for g in groups_order}
+    for r in per_sample:
+        g = str(r.get("group", "negative_other"))
+        v = float(r.get(metric_key, 0.0))
+        if g not in buckets:
+            buckets[g] = []
+        buckets[g].append(v)
+
+    labels = [g for g in groups_order if buckets.get(g)]
+    if not labels:
+        labels = [g for g in buckets.keys() if buckets[g]]
+    if not labels:
+        return
+    data = [buckets[g] for g in labels]
+
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    plt.figure(figsize=(8.4, 4.0), dpi=160)
+    for i, vals in enumerate(data):
+        if not vals:
+            continue
+        jitter = (np.random.rand(len(vals)) - 0.5) * 0.16
+        plt.scatter(np.full(len(vals), i + 1, dtype=np.float64) + jitter, vals, s=10, alpha=0.35)
+    plt.boxplot(data, labels=labels, showfliers=False)
+    plt.ylabel(metric_key)
+    plt.title(f"{title} (box + points)")
+    plt.tight_layout()
+    plt.savefig(out_dir / f"{metric_key}_boxplot.png")
+    plt.close()
+
+    plt.figure(figsize=(8.4, 4.0), dpi=160)
+    for g, vals in zip(labels, data):
+        if vals:
+            plt.hist(vals, bins=20, alpha=0.45, label=g)
+    plt.legend()
+    plt.xlabel(metric_key)
+    plt.ylabel("count")
+    plt.title(f"{title} (histogram)")
+    plt.tight_layout()
+    plt.savefig(out_dir / f"{metric_key}_hist.png")
     plt.close()
 
 
@@ -607,6 +690,11 @@ def main() -> None:
     parser.add_argument("--topk", type=int, default=5)
     parser.add_argument("--case_topn_per_group", type=int, default=6)
     parser.add_argument("--run_rollout", action="store_true")
+    parser.add_argument(
+        "--exclude_special_tokens",
+        action="store_true",
+        help="Exclude special tokens ([CLS]/[SEP]/etc.) from CSAM denominator and Top-k candidate pool.",
+    )
 
     parser.add_argument("--noise_bins_json", type=str, default=None)
     parser.add_argument(
@@ -722,15 +810,23 @@ def main() -> None:
                 continue
 
             A = _aggregate_attention(attentions, last_n_layers=args.last_n_layers)
+            special = enc.get("special_tokens_mask", [0] * len(ids))
             valid_idx = [i for i, m in enumerate(mask) if int(m) == 1]
+            valid_non_special_idx = [i for i in valid_idx if int(special[i]) == 0]
+            metric_valid_idx = valid_non_special_idx if args.exclude_special_tokens else valid_idx
 
-            csam = _compute_csam(A, key_idx=key_idx, value_idx=value_idx)
+            csam = _compute_csam(
+                A,
+                key_idx=key_idx,
+                value_idx=value_idx,
+                valid_token_idx=metric_valid_idx,
+            )
             topk_rate = _compute_topk_align_rate(
                 A,
                 key_idx=key_idx,
                 value_idx=value_idx,
                 k=args.topk,
-                valid_token_idx=valid_idx,
+                valid_token_idx=metric_valid_idx,
             )
 
             rec: Dict[str, Any] = {
@@ -752,14 +848,21 @@ def main() -> None:
 
             if args.run_rollout:
                 R = _attention_rollout(attentions, last_n_layers=args.last_n_layers)
-                rec["rollout_csam"] = float(_compute_csam(R, key_idx=key_idx, value_idx=value_idx))
+                rec["rollout_csam"] = float(
+                    _compute_csam(
+                        R,
+                        key_idx=key_idx,
+                        value_idx=value_idx,
+                        valid_token_idx=metric_valid_idx,
+                    )
+                )
                 rec["rollout_topk_align_rate"] = float(
                     _compute_topk_align_rate(
                         R,
                         key_idx=key_idx,
                         value_idx=value_idx,
                         k=args.topk,
-                        valid_token_idx=valid_idx,
+                        valid_token_idx=metric_valid_idx,
                     )
                 )
 
@@ -868,19 +971,33 @@ def main() -> None:
     summary_path = out_dir / "summary.json"
     summary_path.write_text(json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8")
 
+    # Distribution plots for paper figures.
+    figs_dir = out_dir / "figures"
+    _plot_metric_distributions(per_sample, figs_dir, metric_key="csam", title="CSAM by sample group")
+    _plot_metric_distributions(per_sample, figs_dir, metric_key="topk_align_rate", title="Top-k Align Rate by group")
+    if args.run_rollout:
+        _plot_metric_distributions(per_sample, figs_dir, metric_key="rollout_csam", title="Rollout CSAM by sample group")
+        _plot_metric_distributions(
+            per_sample,
+            figs_dir,
+            metric_key="rollout_topk_align_rate",
+            title="Rollout Top-k Align Rate by group",
+        )
+
     # Case heatmaps: top csam per group.
     case_idx = _select_case_indices(per_sample, topn=args.case_topn_per_group, key_name="csam")
     for idx in case_idx:
         rec = per_sample[idx]
         sub = np.array(rec["key_to_value_submatrix"], dtype=np.float64)
+        sid = _safe_filename(rec["sample_id"])
         if sub.size > 0:
-            fn = cases_dir / f"{rec['group']}_{rec['sample_id']}_k2v.png"
+            fn = cases_dir / f"{rec['group']}_{sid}_k2v.png"
             _plot_heatmap(sub, fn, title=f"{rec['group']} | CSAM={rec['csam']:.4f}")
 
         if args.run_rollout and "rollout_key_to_value_submatrix" in rec:
             rsub = np.array(rec["rollout_key_to_value_submatrix"], dtype=np.float64)
             if rsub.size > 0:
-                fn = cases_dir / f"{rec['group']}_{rec['sample_id']}_k2v_rollout.png"
+                fn = cases_dir / f"{rec['group']}_{sid}_k2v_rollout.png"
                 _plot_heatmap(rsub, fn, title=f"{rec['group']} | Rollout CSAM={rec.get('rollout_csam', 0.0):.4f}")
 
     # Lightweight markdown report

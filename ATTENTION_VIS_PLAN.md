@@ -221,3 +221,41 @@ KV-NSP 输入：`[CLS] Key [SEP] Value [SEP]`
 - span 索引必须和 tokenizer 输出一致（最好在样本构造时写入）。
 - 训练/推理时 dropout 关闭（eval 模式），保证可复现。
 
+---
+
+## 15. 与当前脚本对齐的可执行命令（run_attention_kv_nsp.py）
+
+当前实现脚本：`DAPT/experiments/interpretability/run_attention_kv_nsp.py`  
+适用范围：**KV-NSP 的注意力诊断与统计**（含 CSAM / Top-k / Rollout / 显著性检验 / 热力图 / 分布图）。
+
+推荐命令（示例）：
+
+```bash
+python DAPT/experiments/interpretability/run_attention_kv_nsp.py \
+  --model_dir /path/to/final_staged_model \
+  --tokenizer_path /path/to/tokenizer_or_model \
+  --input_file /path/to/kv_nsp_pairs.jsonl \
+  --output_dir /path/to/attn_vis_out \
+  --noise_bins_json /path/to/noise_bins.json \
+  --last_n_layers 4 \
+  --topk 5 \
+  --run_rollout \
+  --exclude_special_tokens \
+  --max_samples_per_group 200
+```
+
+输入数据建议字段（json/jsonl 任一）：  
+- `key` / `value`（或 `key_text` / `value_text`）  
+- `label`（1/0）  
+- `negative_type`（`reverse` / `random`）  
+- 可选噪声字段：`noise_level`、`conf_avg`、`noise_values`
+
+输出文件：
+- `per_sample_metrics.jsonl`：逐样本指标与子矩阵
+- `summary.json`：分组统计 + 显著性检验 + effect size
+- `report.md`：简版文字报告
+- `cases/*.png`：代表性样本热力图
+- `figures/*`：CSAM/Top-k（含 rollout）分布图
+
+> 说明：KV-MLM 的“mask query 注意力去向统计”建议单独脚本实现（输入应是 MLM 样本并显式提供 mask span），与 KV-NSP 的 pair 判别流程分开更稳妥。
+
