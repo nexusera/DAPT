@@ -8,7 +8,8 @@ PY_SCRIPT="${PY_SCRIPT:-$ROOT_DIR/experiments/interpretability/run_attention_kv_
 
 MODEL_DIR="${MODEL_DIR:-/data/ocean/DAPT/workspace/output_ablation_noise_bucket/final_staged_model}"
 NO_KVMLM_MODEL_DIR="${NO_KVMLM_MODEL_DIR:-/data/ocean/DAPT/workspace/output_ablation_no_mlm/final_no_mlm_model}"
-TOKENIZER_PATH="${TOKENIZER_PATH:-/data/ocean/DAPT/my-medical-tokenizer}"
+# Prefer model-local tokenizer by default to avoid vocab mismatch across ablation checkpoints.
+TOKENIZER_PATH="${TOKENIZER_PATH:-$MODEL_DIR}"
 INPUT_FILE="${INPUT_FILE:-/data/ocean/DAPT/data/pseudo_kv_labels_filtered.json}"
 NOISE_BINS_JSON="${NOISE_BINS_JSON:-/data/ocean/DAPT/workspace/noise_bins.json}"
 

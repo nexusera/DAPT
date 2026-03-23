@@ -94,6 +94,7 @@ bash /data/ocean/DAPT/experiments/interpretability/run_attention_kv_mlm_oneclick
 ### 3.3 `w/o KV-MLM` 对照命令（建议做）
 ```bash
 MODEL_DIR=/data/ocean/DAPT/workspace/output_ablation_no_mlm/final_no_mlm_model \
+TOKENIZER_PATH=/data/ocean/DAPT/workspace/output_ablation_no_mlm/final_no_mlm_model \
 MODEL_TAG=no_kvmlm \
 GPU_ID=0 \
 MASK_STRATEGY=both \
@@ -105,6 +106,8 @@ bash /data/ocean/DAPT/experiments/interpretability/run_attention_kv_mlm_oneclick
 
 > 默认不会覆盖：脚本输出目录格式为  
 > `attention_kv_mlm_${MODEL_TAG}_${RUN_TAG}`，主模型与对照模型会分开保存。
+>
+> 另外，KV-MLM 一键脚本默认会优先使用 `MODEL_DIR` 下的 tokenizer，避免 `vocab size mismatch`。
 
 关键产出：
 - `.../summary.json`

@@ -78,7 +78,20 @@ def _load_dapt_model(
     config_path = model_dir / "config.json"
     if config_path.is_file():
         cfg = AutoConfig.from_pretrained(str(model_dir))
-        model = BertForDaptMTL.from_pretrained(str(model_dir), config=cfg)
+        try:
+            model = BertForDaptMTL.from_pretrained(str(model_dir), config=cfg)
+        except RuntimeError as e:
+            msg = str(e)
+            if "size mismatch" not in msg:
+                raise
+            # For interpretability inference, MLM head shape mismatch can happen across ablation checkpoints.
+            # We don't use MLM logits here, so allow mismatched modules to be re-initialized.
+            print(f"[warn] size mismatch when loading {model_dir}, retry with ignore_mismatched_sizes=True")
+            model = BertForDaptMTL.from_pretrained(
+                str(model_dir),
+                config=cfg,
+                ignore_mismatched_sizes=True,
+            )
         return model.to(device)
 
     # Fallback path: recover config from base model, then load local weights directly.
