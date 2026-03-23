@@ -100,6 +100,17 @@ def _load_dapt_model(
 
 
 def _read_json_or_jsonl(path: Path) -> List[Dict[str, Any]]:
+    if path.is_dir():
+        files = sorted([p for p in path.iterdir() if p.is_file() and p.suffix.lower() in {".json", ".jsonl"}])
+        if not files:
+            raise FileNotFoundError(
+                f"input_file points to a directory but no .json/.jsonl files were found: {path}"
+            )
+        rows: List[Dict[str, Any]] = []
+        for fp in files:
+            rows.extend(_read_json_or_jsonl(fp))
+        return rows
+
     if path.suffix.lower() == ".jsonl":
         rows: List[Dict[str, Any]] = []
         with path.open("r", encoding="utf-8") as f:
@@ -708,6 +719,12 @@ def main() -> None:
 
     parser.add_argument("--auto_generate_negatives", action="store_true", help="If input has no negatives, auto-build reverse/random negatives")
     parser.add_argument("--device", type=str, default=("cuda" if torch.cuda.is_available() else "cpu"))
+    parser.add_argument(
+        "--progress_every",
+        type=int,
+        default=20,
+        help="Print processing progress every N samples (0 to disable).",
+    )
 
     args = parser.parse_args()
 
@@ -721,6 +738,8 @@ def main() -> None:
     cases_dir.mkdir(parents=True, exist_ok=True)
 
     input_path = Path(args.input_file)
+    if not input_path.exists():
+        raise FileNotFoundError(f"input_file not found: {input_path}")
     samples = _load_pair_samples(input_path)
     if not samples:
         raise RuntimeError(f"No pair samples found in {input_path}")
@@ -765,7 +784,8 @@ def main() -> None:
     per_sample: List[Dict[str, Any]] = []
 
     with torch.no_grad():
-        for s in samples:
+        total_samples = len(samples)
+        for idx, s in enumerate(samples, start=1):
             enc, key_idx, value_idx, token_texts = _prepare_encoding(
                 tokenizer=tokenizer,
                 key_text=s.key_text,
@@ -875,6 +895,9 @@ def main() -> None:
                 rec["rollout_key_to_value_submatrix"] = rsub.tolist()
 
             per_sample.append(rec)
+
+            if args.progress_every > 0 and (idx % args.progress_every == 0 or idx == total_samples):
+                print(f"[progress] processed={idx}/{total_samples}, valid_kept={len(per_sample)}")
 
     if not per_sample:
         raise RuntimeError("No valid samples were processed. Check tokenizer spans and input format.")
