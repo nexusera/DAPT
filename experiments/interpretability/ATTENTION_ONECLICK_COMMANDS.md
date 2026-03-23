@@ -50,12 +50,17 @@ bash /data/ocean/DAPT/experiments/interpretability/run_attention_noise_compare_o
 ### 2.2 常用可配置命令（示例）
 ```bash
 WITH_NOISE_MODEL_DIR=/data/ocean/DAPT/workspace/output_ablation_noise_bucket/final_staged_model \
-WITHOUT_NOISE_MODEL_DIR=/data/ocean/DAPT/workspace/output_ablation_no_noise/final_staged_model \
+WITHOUT_NOISE_MODEL_DIR=/data/ocean/DAPT/workspace/output_ablation_no_noise/final_no_noise_model \
 GPU_ID=0 \
 MAX_SAMPLES_PER_GROUP=200 \
 PROGRESS_EVERY=10 \
 bash /data/ocean/DAPT/experiments/interpretability/run_attention_noise_compare_oneclick.sh
 ```
+
+> 说明：若不显式传 `WITHOUT_NOISE_MODEL_DIR`，脚本会自动按以下顺序探测：  
+> 1) `/data/ocean/DAPT/workspace/output_ablation_no_noise/final_no_noise_model`  
+> 2) `/data/ocean/DAPT/workspace/output_no_noise_baseline/final_no_noise_model`  
+> 3) `/data/ocean/DAPT/workspace/output_ablation_no_noise/final_staged_model`
 
 关键产出：
 - `.../with_noise/summary.json`
