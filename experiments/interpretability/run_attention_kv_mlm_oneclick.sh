@@ -7,6 +7,7 @@ ROOT_DIR="${ROOT_DIR:-/data/ocean/DAPT}"
 PY_SCRIPT="${PY_SCRIPT:-$ROOT_DIR/experiments/interpretability/run_attention_kv_mlm.py}"
 
 MODEL_DIR="${MODEL_DIR:-/data/ocean/DAPT/workspace/output_ablation_noise_bucket/final_staged_model}"
+NO_KVMLM_MODEL_DIR="${NO_KVMLM_MODEL_DIR:-/data/ocean/DAPT/workspace/output_ablation_no_mlm/final_no_mlm_model}"
 TOKENIZER_PATH="${TOKENIZER_PATH:-/data/ocean/DAPT/my-medical-tokenizer}"
 INPUT_FILE="${INPUT_FILE:-/data/ocean/DAPT/data/pseudo_kv_labels_filtered.json}"
 NOISE_BINS_JSON="${NOISE_BINS_JSON:-/data/ocean/DAPT/workspace/noise_bins.json}"
@@ -24,9 +25,18 @@ EXCLUDE_SPECIAL_TOKENS="${EXCLUDE_SPECIAL_TOKENS:-1}" # 1/0
 
 RUN_TAG="${RUN_TAG:-$(date +%Y%m%d_%H%M%S)}"
 OUTPUT_BASE="${OUTPUT_BASE:-$ROOT_DIR/runs}"
-OUTPUT_DIR="${OUTPUT_DIR:-$OUTPUT_BASE/attention_kv_mlm_${RUN_TAG}}"
+MODEL_TAG="${MODEL_TAG:-main}"
+OUTPUT_DIR="${OUTPUT_DIR:-$OUTPUT_BASE/attention_kv_mlm_${MODEL_TAG}_${RUN_TAG}}"
 LOG_FILE="$OUTPUT_DIR/run.log"
 mkdir -p "$OUTPUT_DIR"
+
+if [[ ! -d "$MODEL_DIR" ]]; then
+  echo "[error] model dir not found: $MODEL_DIR"
+  echo "Try one of:"
+  echo "  MODEL_DIR=/data/ocean/DAPT/workspace/output_ablation_noise_bucket/final_staged_model"
+  echo "  MODEL_DIR=$NO_KVMLM_MODEL_DIR"
+  exit 1
+fi
 
 CMD=(python "$PY_SCRIPT"
   --model_dir "$MODEL_DIR"

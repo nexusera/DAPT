@@ -50,17 +50,15 @@ bash /data/ocean/DAPT/experiments/interpretability/run_attention_noise_compare_o
 ### 2.2 常用可配置命令（示例）
 ```bash
 WITH_NOISE_MODEL_DIR=/data/ocean/DAPT/workspace/output_ablation_noise_bucket/final_staged_model \
-WITHOUT_NOISE_MODEL_DIR=/data/ocean/DAPT/workspace/output_ablation_no_noise/final_no_noise_model \
+WITHOUT_NOISE_MODEL_DIR=/data/ocean/DAPT/workspace/output_no_noise_baseline/final_no_noise_model \
 GPU_ID=0 \
 MAX_SAMPLES_PER_GROUP=200 \
 PROGRESS_EVERY=10 \
 bash /data/ocean/DAPT/experiments/interpretability/run_attention_noise_compare_oneclick.sh
 ```
 
-> 说明：若不显式传 `WITHOUT_NOISE_MODEL_DIR`，脚本会自动按以下顺序探测：  
-> 1) `/data/ocean/DAPT/workspace/output_ablation_no_noise/final_no_noise_model`  
-> 2) `/data/ocean/DAPT/workspace/output_no_noise_baseline/final_no_noise_model`  
-> 3) `/data/ocean/DAPT/workspace/output_ablation_no_noise/final_staged_model`
+> 默认路径已固定为你确认的真实路径：  
+> `WITHOUT_NOISE_MODEL_DIR=/data/ocean/DAPT/workspace/output_no_noise_baseline/final_no_noise_model`
 
 关键产出：
 - `.../with_noise/summary.json`
@@ -84,6 +82,7 @@ bash /data/ocean/DAPT/experiments/interpretability/run_attention_kv_mlm_oneclick
 ### 3.2 常用可配置命令（示例）
 ```bash
 MODEL_DIR=/data/ocean/DAPT/workspace/output_ablation_noise_bucket/final_staged_model \
+MODEL_TAG=main \
 GPU_ID=0 \
 MASK_STRATEGY=both \
 MASK_SPAN_LEN=1 \
@@ -91,6 +90,21 @@ MAX_SAMPLES_PER_GROUP=120 \
 PROGRESS_EVERY=10 \
 bash /data/ocean/DAPT/experiments/interpretability/run_attention_kv_mlm_oneclick.sh
 ```
+
+### 3.3 `w/o KV-MLM` 对照命令（建议做）
+```bash
+MODEL_DIR=/data/ocean/DAPT/workspace/output_ablation_no_mlm/final_no_mlm_model \
+MODEL_TAG=no_kvmlm \
+GPU_ID=0 \
+MASK_STRATEGY=both \
+MASK_SPAN_LEN=1 \
+MAX_SAMPLES_PER_GROUP=120 \
+PROGRESS_EVERY=10 \
+bash /data/ocean/DAPT/experiments/interpretability/run_attention_kv_mlm_oneclick.sh
+```
+
+> 默认不会覆盖：脚本输出目录格式为  
+> `attention_kv_mlm_${MODEL_TAG}_${RUN_TAG}`，主模型与对照模型会分开保存。
 
 关键产出：
 - `.../summary.json`
@@ -116,4 +130,72 @@ ls -dt attention_kv_mlm_* | head -n 1
 1. 先跑 KV-NSP（已有主结果）  
 2. 再跑 Noise-Embedding 对照（补“鲁棒性机制解释”）  
 3. 最后跑 KV-MLM（补“实体/边界重建机制解释”）
+
+---
+
+## 6) 远端结果同步到本地（GitHub）
+
+> 建议每次实验单独分支，避免互相覆盖。
+
+### 6.1 远端 push
+```bash
+cd /data/ocean/DAPT
+BRANCH=exp/attn-results-$(date +%Y%m%d_%H%M)
+git checkout -b "$BRANCH"
+
+# 按需添加你这次实验目录（示例）
+git add runs/attention_kv_nsp_* runs/attention_noise_compare_* runs/attention_kv_mlm_*
+git commit -m "Add attention interpretability outputs"
+git push -u origin "$BRANCH"
+echo "$BRANCH"
+```
+
+### 6.2 本地 pull
+```bash
+cd /Users/shanqi/Documents/BERT_DAPT
+git fetch origin
+# 把分支名替换为远端打印出来的 BRANCH
+git checkout exp/attn-results-YYYYMMDD_HHMM
+git pull
+```
+
+---
+
+## 7) 贴给助手评估结果（固定命令）
+
+```bash
+cd /data/ocean/DAPT
+
+# 1) Noise-Embedding compare 最新结果
+OUT_NOISE=$(ls -dt runs/attention_noise_compare_* | head -n 1)
+echo "OUT_NOISE=${OUT_NOISE}"
+python - <<'PY'
+import json, os, glob
+out=sorted(glob.glob("runs/attention_noise_compare_*"))[-1]
+print("## noise compare:", out)
+print(open(f"{out}/compare_report.md","r",encoding="utf-8").read())
+print("## compare_summary.json")
+print(open(f"{out}/compare_summary.json","r",encoding="utf-8").read())
+PY
+
+# 2) KV-MLM 主模型最新结果
+OUT_MLM_MAIN=$(ls -dt runs/attention_kv_mlm_main_* | head -n 1)
+echo "OUT_MLM_MAIN=${OUT_MLM_MAIN}"
+python - <<'PY'
+import json, os, glob
+cand=sorted(glob.glob("runs/attention_kv_mlm_main_*"))
+if cand:
+    out=cand[-1]
+else:
+    out=sorted(glob.glob("runs/attention_kv_mlm_*"))[-1]
+print("## kv-mlm(main):", out)
+print(open(f"{out}/report.md","r",encoding="utf-8").read())
+print("## summary.json")
+print(open(f"{out}/summary.json","r",encoding="utf-8").read())
+PY
+
+# 3) KV-MLM 对照模型（如果跑了 no_kvmlm）
+OUT_MLM_ABL=$(ls -dt runs/attention_kv_mlm_no_kvmlm_* 2>/dev/null | head -n 1 || true)
+echo "OUT_MLM_ABL=${OUT_MLM_ABL}"
+```
 

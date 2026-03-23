@@ -8,7 +8,7 @@ ROOT_DIR="${ROOT_DIR:-/data/ocean/DAPT}"
 PY_SCRIPT="${PY_SCRIPT:-$ROOT_DIR/experiments/interpretability/run_attention_noise_compare.py}"
 
 WITH_NOISE_MODEL_DIR="${WITH_NOISE_MODEL_DIR:-/data/ocean/DAPT/workspace/output_ablation_noise_bucket/final_staged_model}"
-WITHOUT_NOISE_MODEL_DIR="${WITHOUT_NOISE_MODEL_DIR:-}"
+WITHOUT_NOISE_MODEL_DIR="${WITHOUT_NOISE_MODEL_DIR:-/data/ocean/DAPT/workspace/output_no_noise_baseline/final_no_noise_model}"
 TOKENIZER_PATH="${TOKENIZER_PATH:-/data/ocean/DAPT/my-medical-tokenizer}"
 INPUT_FILE="${INPUT_FILE:-/data/ocean/DAPT/data/pseudo_kv_labels_filtered.json}"
 NOISE_BINS_JSON="${NOISE_BINS_JSON:-/data/ocean/DAPT/workspace/noise_bins.json}"
@@ -31,25 +31,14 @@ OUTPUT_DIR="${OUTPUT_DIR:-$OUTPUT_BASE/attention_noise_compare_${RUN_TAG}}"
 LOG_FILE="$OUTPUT_DIR/run.log"
 mkdir -p "$OUTPUT_DIR"
 
-# Auto-resolve no-noise model path if not explicitly set.
-if [[ -z "${WITHOUT_NOISE_MODEL_DIR}" ]]; then
-  CANDIDATES=(
-    "/data/ocean/DAPT/workspace/output_ablation_no_noise/final_no_noise_model"
-    "/data/ocean/DAPT/workspace/output_no_noise_baseline/final_no_noise_model"
-    "/data/ocean/DAPT/workspace/output_ablation_no_noise/final_staged_model"
-  )
-  for p in "${CANDIDATES[@]}"; do
-    if [[ -d "$p" ]]; then
-      WITHOUT_NOISE_MODEL_DIR="$p"
-      break
-    fi
-  done
+if [[ ! -d "${WITH_NOISE_MODEL_DIR}" ]]; then
+  echo "[error] with-noise model dir not found: ${WITH_NOISE_MODEL_DIR}"
+  exit 1
 fi
-
-if [[ -z "${WITHOUT_NOISE_MODEL_DIR}" ]]; then
-  echo "[error] no valid WITHOUT_NOISE_MODEL_DIR found."
-  echo "Please set it manually, e.g.:"
-  echo "  WITHOUT_NOISE_MODEL_DIR=/data/ocean/DAPT/workspace/output_ablation_no_noise/final_no_noise_model"
+if [[ ! -d "${WITHOUT_NOISE_MODEL_DIR}" ]]; then
+  echo "[error] without-noise model dir not found: ${WITHOUT_NOISE_MODEL_DIR}"
+  echo "You can override by:"
+  echo "  WITHOUT_NOISE_MODEL_DIR=/path/to/final_no_noise_model bash .../run_attention_noise_compare_oneclick.sh"
   exit 1
 fi
 
