@@ -12,6 +12,8 @@ WITHOUT_NOISE_MODEL_DIR="${WITHOUT_NOISE_MODEL_DIR:-/data/ocean/DAPT/workspace/o
 TOKENIZER_PATH="${TOKENIZER_PATH:-/data/ocean/DAPT/my-medical-tokenizer}"
 INPUT_FILE="${INPUT_FILE:-/data/ocean/DAPT/data/pseudo_kv_labels_filtered.json}"
 NOISE_BINS_JSON="${NOISE_BINS_JSON:-/data/ocean/DAPT/workspace/noise_bins.json}"
+# Optional: JSON/JSONL with sample-level noise metadata (noise_level/conf_avg/noise_values)
+NOISE_META_FILE="${NOISE_META_FILE:-}"
 
 GPU_ID="${GPU_ID:-0}"
 MAX_LENGTH="${MAX_LENGTH:-256}"
@@ -56,6 +58,7 @@ CMD=(python "$PY_SCRIPT"
   --progress_every "$PROGRESS_EVERY"
   --device "cuda:0"
 )
+if [[ -n "$NOISE_META_FILE" ]]; then CMD+=(--noise_meta_file "$NOISE_META_FILE"); fi
 
 if [[ "$INJECT_PERFECT_NOISE" == "1" ]]; then CMD+=(--inject_perfect_noise); fi
 if [[ "$AUTO_GENERATE_NEGATIVES" == "1" ]]; then CMD+=(--auto_generate_negatives); fi
@@ -71,6 +74,7 @@ if [[ "$EXCLUDE_SPECIAL_TOKENS" == "1" ]]; then CMD+=(--exclude_special_tokens);
   echo "with_noise_model: $WITH_NOISE_MODEL_DIR"
   echo "without_noise_model: $WITHOUT_NOISE_MODEL_DIR"
   echo "input_file: $INPUT_FILE"
+  if [[ -n "$NOISE_META_FILE" ]]; then echo "noise_meta_file: $NOISE_META_FILE"; fi
   printf "command: "; printf "%q " "${CMD[@]}"; echo
   echo "======================================================="
 } | tee -a "$LOG_FILE"

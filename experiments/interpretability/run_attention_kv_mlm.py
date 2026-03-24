@@ -15,8 +15,10 @@ from transformers import AutoTokenizer
 from run_attention_kv_nsp import (
     _aggregate_attention,
     _build_perfect_noise_tensors,
+    _cohens_d,
     _load_dapt_model,
     _load_pair_samples,
+    _mann_whitney_u,
     _mean_std,
     _plot_heatmap,
     _prepare_encoding,
@@ -41,10 +43,32 @@ def _choose_mask_indices(strategy: str, key_idx: List[int], value_idx: List[int]
     raise ValueError(f"Unknown strategy: {strategy}")
 
 
-def _select_rows(A: np.ndarray, row_idx: Sequence[int], col_idx: Sequence[int]) -> float:
-    if not row_idx or not col_idx:
+def _normalized_mass(
+    A: np.ndarray,
+    row_idx: Sequence[int],
+    target_idx: Sequence[int],
+    denom_idx: Sequence[int],
+) -> float:
+    """Average normalized attention mass from row_idx to target_idx within denom_idx.
+    This returns a value in [0,1] when target_idx is a subset of denom_idx.
+    """
+    if not row_idx or not target_idx or not denom_idx:
         return 0.0
-    return float(A[np.ix_(list(row_idx), list(col_idx))].sum())
+    denom_set = set(int(x) for x in denom_idx)
+    denom_cols = sorted(denom_set)
+    target = [int(x) for x in target_idx if int(x) in denom_set]
+    if not target:
+        return 0.0
+    out: List[float] = []
+    for r in row_idx:
+        denom = float(A[int(r), denom_cols].sum())
+        if denom <= 0:
+            continue
+        numer = float(A[int(r), target].sum())
+        out.append(numer / denom)
+    if not out:
+        return 0.0
+    return float(sum(out) / len(out))
 
 
 def _plot_metric_boxplot(per_sample: Sequence[Dict[str, Any]], metric_key: str, out_file: Path, title: str) -> None:
@@ -206,12 +230,9 @@ def main() -> None:
                     continue
                 A = _aggregate_attention(attentions, last_n_layers=args.last_n_layers)
 
-                denom = _select_rows(A, mask_idx, valid_idx)
-                if denom <= 0:
-                    continue
-                same_block = _select_rows(A, mask_idx, value_idx) / denom
-                to_key = _select_rows(A, mask_idx, key_idx) / denom
-                to_boundary = _select_rows(A, mask_idx, boundary_idx) / denom
+                same_block = _normalized_mass(A, row_idx=mask_idx, target_idx=value_idx, denom_idx=valid_idx)
+                to_key = _normalized_mass(A, row_idx=mask_idx, target_idx=key_idx, denom_idx=valid_idx)
+                to_boundary = _normalized_mass(A, row_idx=mask_idx, target_idx=boundary_idx, denom_idx=valid_idx)
 
                 rec = {
                     "sample_id": s.sample_id,
@@ -243,6 +264,7 @@ def main() -> None:
         "num_records": len(per_sample),
         "strategy_summary": {},
         "group_strategy_summary": {},
+        "tests": {},
         "config": {
             "model_dir": args.model_dir,
             "input_file": args.input_file,
@@ -271,6 +293,19 @@ def main() -> None:
                 "same_value_block_mass": _mean_std([x["same_value_block_mass"] for x in rows]),
                 "to_key_mass": _mean_std([x["to_key_mass"] for x in rows]),
                 "to_sep_boundary_mass": _mean_std([x["to_sep_boundary_mass"] for x in rows]),
+            }
+
+    # Intra-run significance by strategy (entity vs boundary), useful sanity check.
+    for mk in ("same_value_block_mass", "to_key_mass", "to_sep_boundary_mass"):
+        x = [float(r[mk]) for r in per_sample if r["strategy"] == "entity"]
+        y = [float(r[mk]) for r in per_sample if r["strategy"] == "boundary"]
+        if x and y:
+            t = _mann_whitney_u(x, y)
+            summary["tests"][f"entity_vs_boundary__{mk}"] = {
+                **t,
+                "cohens_d": _cohens_d(x, y),
+                "n_entity": len(x),
+                "n_boundary": len(y),
             }
 
     (out_dir / "summary.json").write_text(json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8")

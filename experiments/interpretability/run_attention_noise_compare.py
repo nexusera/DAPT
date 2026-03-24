@@ -129,6 +129,7 @@ def main() -> None:
     parser.add_argument("--input_file", type=str, required=True)
     parser.add_argument("--output_dir", type=str, required=True)
     parser.add_argument("--noise_bins_json", type=str, default=None)
+    parser.add_argument("--noise_meta_file", type=str, default=None, help="Optional JSON/JSONL with noise_level/conf_avg.")
 
     parser.add_argument("--max_length", type=int, default=256)
     parser.add_argument("--max_samples_per_group", type=int, default=200)
@@ -176,6 +177,8 @@ def main() -> None:
     ]
     if args.noise_bins_json:
         common += ["--noise_bins_json", args.noise_bins_json]
+    if args.noise_meta_file:
+        common += ["--noise_meta_file", args.noise_meta_file]
     if args.inject_perfect_noise:
         common.append("--inject_perfect_noise")
     if args.auto_generate_negatives:

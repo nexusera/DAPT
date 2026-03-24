@@ -149,6 +149,39 @@ def _read_json_or_jsonl(path: Path) -> List[Dict[str, Any]]:
     return []
 
 
+def _load_noise_meta_index(path: Path) -> Tuple[Dict[str, Dict[str, Any]], Dict[Tuple[str, str], Dict[str, Any]]]:
+    rows = _read_json_or_jsonl(path)
+    by_id: Dict[str, Dict[str, Any]] = {}
+    by_pair: Dict[Tuple[str, str], Dict[str, Any]] = {}
+    meta_keys = ("noise_level", "conf_avg", "ocr_conf_avg", "confidence", "avg_conf", "noise_values")
+
+    for row in rows:
+        sid = row.get("id") or row.get("sample_id") or row.get("uid")
+        key = row.get("key") or row.get("key_text") or row.get("text_a") or row.get("question_key")
+        val = row.get("value") or row.get("value_text") or row.get("text_b") or row.get("value_text_pred")
+        meta = {k: row.get(k) for k in meta_keys if k in row}
+        if not meta:
+            continue
+        if sid is not None:
+            by_id[str(sid)] = meta
+        if key is not None and val is not None:
+            by_pair[(str(key), str(val))] = meta
+    return by_id, by_pair
+
+
+def _attach_noise_meta(
+    samples: Sequence["PairSample"],
+    by_id: Dict[str, Dict[str, Any]],
+    by_pair: Dict[Tuple[str, str], Dict[str, Any]],
+) -> None:
+    for s in samples:
+        m = by_id.get(str(s.sample_id))
+        if m is None:
+            m = by_pair.get((s.key_text, s.value_text))
+        if m:
+            s.meta.update(m)
+
+
 @dataclass
 class PairSample:
     sample_id: str
@@ -733,6 +766,12 @@ def main() -> None:
     parser.add_argument("--auto_generate_negatives", action="store_true", help="If input has no negatives, auto-build reverse/random negatives")
     parser.add_argument("--device", type=str, default=("cuda" if torch.cuda.is_available() else "cpu"))
     parser.add_argument(
+        "--noise_meta_file",
+        type=str,
+        default=None,
+        help="Optional JSON/JSONL to attach noise_level/conf_avg metadata by sample_id or (key,value).",
+    )
+    parser.add_argument(
         "--progress_every",
         type=int,
         default=20,
@@ -756,6 +795,14 @@ def main() -> None:
     samples = _load_pair_samples(input_path)
     if not samples:
         raise RuntimeError(f"No pair samples found in {input_path}")
+
+    if args.noise_meta_file:
+        nmp = Path(args.noise_meta_file)
+        if nmp.is_file():
+            by_id, by_pair = _load_noise_meta_index(nmp)
+            _attach_noise_meta(samples, by_id, by_pair)
+        else:
+            print(f"[warn] noise_meta_file not found or not a file, ignored: {nmp}")
 
     if (not _has_negatives(samples)) and args.auto_generate_negatives:
         samples = _auto_generate_negatives(samples, seed=args.seed)

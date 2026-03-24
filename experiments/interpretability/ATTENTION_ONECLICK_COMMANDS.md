@@ -51,6 +51,9 @@ bash /data/ocean/DAPT/experiments/interpretability/run_attention_noise_compare_o
 ```bash
 WITH_NOISE_MODEL_DIR=/data/ocean/DAPT/workspace/output_ablation_noise_bucket/final_staged_model \
 WITHOUT_NOISE_MODEL_DIR=/data/ocean/DAPT/workspace/output_no_noise_baseline/final_no_noise_model \
+# 推荐传入带 noise_level/conf_avg 的元数据文件（用于 high/medium/low 分桶）
+# 例如可用真实数据：/data/ocean/DAPT/biaozhu_with_ocr_noise_prepared/real_test_with_ocr.json
+NOISE_META_FILE=/data/ocean/DAPT/biaozhu_with_ocr_noise_prepared/real_test_with_ocr.json \
 GPU_ID=0 \
 MAX_SAMPLES_PER_GROUP=200 \
 PROGRESS_EVERY=10 \
@@ -59,6 +62,8 @@ bash /data/ocean/DAPT/experiments/interpretability/run_attention_noise_compare_o
 
 > 默认路径已固定为你确认的真实路径：  
 > `WITHOUT_NOISE_MODEL_DIR=/data/ocean/DAPT/workspace/output_no_noise_baseline/final_no_noise_model`
+>
+> 若不传 `NOISE_META_FILE`，噪声分桶可能只有 `unknown`，无法做 high/medium/low 对比。
 
 关键产出：
 - `.../with_noise/summary.json`
@@ -108,6 +113,21 @@ bash /data/ocean/DAPT/experiments/interpretability/run_attention_kv_mlm_oneclick
 > `attention_kv_mlm_${MODEL_TAG}_${RUN_TAG}`，主模型与对照模型会分开保存。
 >
 > 另外，KV-MLM 一键脚本默认会优先使用 `MODEL_DIR` 下的 tokenizer，避免 `vocab size mismatch`。
+
+### 3.4 Main vs w/o KV-MLM 显著性检验（新增）
+```bash
+cd /data/ocean/DAPT
+MAIN_DIR=$(ls -dt runs/attention_kv_mlm_main_* | head -n 1)
+ABL_DIR=$(ls -dt runs/attention_kv_mlm_no_kvmlm_* | head -n 1)
+OUT_CMP="runs/attention_kv_mlm_compare_$(date +%Y%m%d_%H%M%S)"
+
+python /data/ocean/DAPT/experiments/interpretability/compare_kv_mlm_runs.py \
+  --main_metrics "${MAIN_DIR}/per_sample_metrics.jsonl" \
+  --abl_metrics "${ABL_DIR}/per_sample_metrics.jsonl" \
+  --output_dir "${OUT_CMP}"
+
+cat "${OUT_CMP}/kv_mlm_main_vs_no_kvmlm_report.md"
+```
 
 关键产出：
 - `.../summary.json`
@@ -218,5 +238,12 @@ print(open(f"{out}/report.md","r",encoding="utf-8").read())
 print("## summary.json")
 print(open(f"{out}/summary.json","r",encoding="utf-8").read())
 PY
+
+# 4) Main vs w/o KV-MLM 显著性检验结果（若已跑 compare）
+OUT_MLM_CMP=$(ls -dt runs/attention_kv_mlm_compare_* 2>/dev/null | head -n 1 || true)
+echo "OUT_MLM_CMP=${OUT_MLM_CMP}"
+if [ -n "$OUT_MLM_CMP" ]; then
+  cat "${OUT_MLM_CMP}/kv_mlm_main_vs_no_kvmlm_report.md"
+fi
 ```
 
