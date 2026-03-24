@@ -174,7 +174,10 @@ OUT_NOISE=$(ls -dt runs/attention_noise_compare_* | head -n 1)
 echo "OUT_NOISE=${OUT_NOISE}"
 python - <<'PY'
 import json, os, glob
-out=sorted(glob.glob("runs/attention_noise_compare_*"))[-1]
+cand = glob.glob("runs/attention_noise_compare_*")
+if not cand:
+    raise SystemExit("No runs/attention_noise_compare_* found")
+out = max(cand, key=os.path.getmtime)
 print("## noise compare:", out)
 print(open(f"{out}/compare_report.md","r",encoding="utf-8").read())
 print("## compare_summary.json")
@@ -186,19 +189,34 @@ OUT_MLM_MAIN=$(ls -dt runs/attention_kv_mlm_main_* | head -n 1)
 echo "OUT_MLM_MAIN=${OUT_MLM_MAIN}"
 python - <<'PY'
 import json, os, glob
-cand=sorted(glob.glob("runs/attention_kv_mlm_main_*"))
+cand = glob.glob("runs/attention_kv_mlm_main_*")
 if cand:
-    out=cand[-1]
+    out = max(cand, key=os.path.getmtime)
 else:
-    out=sorted(glob.glob("runs/attention_kv_mlm_*"))[-1]
+    fallback = glob.glob("runs/attention_kv_mlm_*")
+    if not fallback:
+        raise SystemExit("No runs/attention_kv_mlm_* found")
+    out = max(fallback, key=os.path.getmtime)
 print("## kv-mlm(main):", out)
 print(open(f"{out}/report.md","r",encoding="utf-8").read())
 print("## summary.json")
 print(open(f"{out}/summary.json","r",encoding="utf-8").read())
 PY
 
-# 3) KV-MLM 对照模型（如果跑了 no_kvmlm）
+# 3) KV-MLM 对照模型（w/o KV-MLM，若已跑）
 OUT_MLM_ABL=$(ls -dt runs/attention_kv_mlm_no_kvmlm_* 2>/dev/null | head -n 1 || true)
 echo "OUT_MLM_ABL=${OUT_MLM_ABL}"
+python - <<'PY'
+import os, glob
+cand = glob.glob("runs/attention_kv_mlm_no_kvmlm_*")
+if not cand:
+    print("## kv-mlm(no_kvmlm): not found, skip")
+    raise SystemExit(0)
+out = max(cand, key=os.path.getmtime)
+print("## kv-mlm(no_kvmlm):", out)
+print(open(f"{out}/report.md","r",encoding="utf-8").read())
+print("## summary.json")
+print(open(f"{out}/summary.json","r",encoding="utf-8").read())
+PY
 ```
 
