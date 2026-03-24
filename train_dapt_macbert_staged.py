@@ -150,6 +150,19 @@ def _load_tokenizer_with_fallback(tokenizer_path: str):
         raise TypeError(f"Failed to load a usable tokenizer from: {tokenizer_path}")
     return tok_fast
 
+
+def set_global_seed(seed: int) -> None:
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(seed)
+    try:
+        torch.backends.cudnn.deterministic = True
+        torch.backends.cudnn.benchmark = False
+    except Exception:
+        pass
+
 def is_main_process():
     return int(os.environ.get("LOCAL_RANK", -1)) in [-1, 0]
 
@@ -662,6 +675,7 @@ def main():
     )
     parser.add_argument("--mlm_probability", type=float, default=0.15)
     parser.add_argument("--max_length", type=int, default=512)
+    parser.add_argument("--seed", type=int, default=42, help="Global random seed for pretraining.")
     parser.add_argument("--nsp_negative_prob", type=float, default=0.5, help="KV-NSP 中把正样本改造成负样本的总概率。")
     parser.add_argument("--nsp_reverse_negative_ratio", type=float, default=1.0, help="KV-NSP 负样本里 reverse 倒序策略的权重，例如 3:1。")
     parser.add_argument("--nsp_random_negative_ratio", type=float, default=1.0, help="KV-NSP 负样本里 random 随机 value 策略的权重，例如 1:3。")
@@ -681,10 +695,12 @@ def main():
 
     # Default behavior: export fast tokenizer unless explicitly disabled.
     export_fast_tokenizer = bool(args.export_fast_tokenizer) or not bool(args.no_export_fast_tokenizer)
+    set_global_seed(int(args.seed))
 
     if is_main_process():
         cvd = os.environ.get("CUDA_VISIBLE_DEVICES")
         print(f"CUDA_VISIBLE_DEVICES={cvd}")
+        print(f"Global seed={args.seed}")
         if torch.cuda.is_available():
             try:
                 n = torch.cuda.device_count()
@@ -781,6 +797,8 @@ def main():
             num_train_epochs=args.mlm_epochs_per_round,
             per_device_train_batch_size=int(args.per_device_train_batch_size),
             gradient_accumulation_steps=int(args.gradient_accumulation_steps),
+            seed=int(args.seed),
+            data_seed=int(args.seed),
             learning_rate=args.learning_rate,
             logging_steps=50,
             save_strategy="epoch", # 每轮只在结束时保存，避免中间文件过多
@@ -821,6 +839,8 @@ def main():
             num_train_epochs=args.nsp_epochs_per_round,
             per_device_train_batch_size=int(args.per_device_train_batch_size),
             gradient_accumulation_steps=int(args.gradient_accumulation_steps),
+            seed=int(args.seed),
+            data_seed=int(args.seed),
             learning_rate=args.learning_rate,
             logging_steps=20,
             save_strategy="epoch",
