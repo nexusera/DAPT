@@ -375,6 +375,84 @@ python /data/ocean/DAPT/train_dapt_macbert_staged.py \
 对应下游可直接使用以下配置：
 - KV-NER：`kv_ner_config_noise_bucket.json` / `kv_ner_config_noise_linear.json` / `kv_ner_config_noise_mlp.json`
 - EBQA：`ebqa_config_noise_bucket.json` / `ebqa_config_noise_linear.json` / `ebqa_config_noise_mlp.json`
+
+### 3.4 Noise Embedding 融合方式消融：Bucket-Add vs Concat-Linear
+
+**动机**：现有 `bucket` 模式直接把 7 路分桶嵌入求和（Add），不同维度的嵌入信号可能互相干扰或相互抵消。
+新提出的 `concat_linear` 模式改为先 **Concat（拼接）** 再接一层 **Linear 映射**，保留各维嵌入的独立性，由线性层学习最优融合权重。
+
+实现细节：
+- 每路特征独立 Embedding 表：`Embedding(n_bins+1, embed_dim)`，默认 `embed_dim=64`
+- 7 路拼接：`[batch, seq, 7×64=448]`
+- 线性映射：`Linear(448 → 768)` + Dropout
+- 可学习系数 `alpha` 控制残差强度（与 bucket 模式一致）
+
+#### A) Concat-Linear 预训练（新增实验）
+```bash
+cd /data/ocean/DAPT
+
+python /data/ocean/DAPT/train_dapt_macbert_staged.py \
+  --output_dir /data/ocean/DAPT/workspace/output_ablation_noise_concat_linear \
+  --dataset_path /data/ocean/DAPT/workspace/processed_dataset \
+  --nsp_data_dir /data/ocean/DAPT/data/pseudo_kv_labels_filtered.json \
+  --tokenizer_path /data/ocean/DAPT/my-medical-tokenizer \
+  --noise_bins_json /data/ocean/DAPT/workspace/noise_bins.json \
+  --learning_rate 5e-5 \
+  --num_rounds 3 \
+  --mlm_epochs_per_round 1 \
+  --nsp_epochs_per_round 3 \
+  --mlm_probability 0.15 \
+  --max_length 512 \
+  --mlm_masking kv_wwm \
+  --noise_mode concat_linear \
+  --noise_concat_embed_dim 64 \
+  2>&1 | tee /data/ocean/DAPT/workspace/output_ablation_noise_concat_linear/train.log
+```
+
+> 说明：`--noise_concat_embed_dim 64` 意味着 7×64=448 维拼接后映射至 768。如需更大容量可改为 `128`（7×128=896 → Linear(896,768)）。
+
+#### B) 一键消融实验（仅跑新增 Concat-Linear 部分）
+
+以下脚本与第 3.3 节 Bucket/Linear/MLP 实验共享同一基线，仅增量补跑 `concat_linear`：
+
+```bash
+#!/bin/bash
+set -e
+
+BASE_CMD="python /data/ocean/DAPT/train_dapt_macbert_staged.py \
+  --dataset_path /data/ocean/DAPT/workspace/processed_dataset \
+  --nsp_data_dir /data/ocean/DAPT/data/pseudo_kv_labels_filtered.json \
+  --tokenizer_path /data/ocean/DAPT/my-medical-tokenizer \
+  --noise_bins_json /data/ocean/DAPT/workspace/noise_bins.json \
+  --learning_rate 5e-5 \
+  --num_rounds 3 \
+  --mlm_epochs_per_round 1 \
+  --nsp_epochs_per_round 3 \
+  --mlm_probability 0.15 \
+  --max_length 512 \
+  --mlm_masking kv_wwm"
+
+# ---- D) Concat-Linear（新融合方式，embed_dim=64）----
+echo "=== [D] concat_linear (embed_dim=64) ==="
+OUT=/data/ocean/DAPT/workspace/output_ablation_noise_concat_linear
+mkdir -p "$OUT"
+$BASE_CMD \
+  --output_dir "$OUT" \
+  --noise_mode concat_linear \
+  --noise_concat_embed_dim 64 \
+  2>&1 | tee "$OUT/train.log"
+
+echo "=== All new ablation runs completed ==="
+```
+
+保存为 `run_ablation_concat.sh` 后执行：
+```bash
+chmod +x run_ablation_concat.sh && bash run_ablation_concat.sh
+```
+
+完成预训练后，下游 KV-NER 微调时将 `model_name_or_path` / `tokenizer_name_or_path` 指向
+`/data/ocean/DAPT/workspace/output_ablation_noise_concat_linear/final_staged_model`，
+其余微调/推理/评测步骤与第 3.3 节保持一致。
 <!-- ## 3. 训练（KV-aware MLM + 噪声）
 1) 指向对齐后的数据集（单独 OCR 或合并后）：
 ```bash

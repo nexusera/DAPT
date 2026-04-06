@@ -37,6 +37,16 @@ def uses_bucket_noise(noise_mode: Optional[str]) -> bool:
     return str(noise_mode or "bucket").lower() == "bucket"
 
 
+def uses_concat_noise(noise_mode: Optional[str]) -> bool:
+    """concat_linear 模式：7 路分桶嵌入 Concat 后线性映射至 hidden_size。"""
+    return str(noise_mode or "bucket").lower() == "concat_linear"
+
+
+def needs_bucket_ids(noise_mode: Optional[str]) -> bool:
+    """需要提供离散桶 ID（noise_ids）的所有模式：bucket 和 concat_linear。"""
+    return uses_bucket_noise(noise_mode) or uses_concat_noise(noise_mode)
+
+
 def load_noise_bin_edges(path: Optional[str]) -> Dict[str, List[float]]:
     if not path:
         return {}
@@ -121,6 +131,60 @@ class ContinuousNoiseProjector(nn.Module):
 
     def forward(self, noise_values: torch.Tensor) -> torch.Tensor:
         return self.proj(self.normalize(noise_values))
+
+
+class ConcatLinearNoiseEmbedder(nn.Module):
+    """Concat-Linear 融合：对 7 路分桶 ID 分别查嵌入（embed_dim），
+    拼接为 [batch, seq, 7*embed_dim]，再经 Linear 投影至 hidden_size。
+
+    与 bucket(Add) 模式对比：
+    - bucket(Add)  : sum(emb_i(id_i)) → 7 路直接叠加，各维信息互相干扰
+    - concat_linear: cat([emb_i(id_i)]) → Linear(7*embed_dim → hidden_size)
+                     各维嵌入保持独立，由线性层学习最优融合权重
+    """
+
+    def __init__(
+        self,
+        hidden_size: int,
+        num_bins_per_feat: Dict[str, int],
+        *,
+        embed_dim: int = 64,
+        dropout: float = 0.1,
+    ) -> None:
+        super().__init__()
+        self.embed_dim = embed_dim
+        self.hidden_size = hidden_size
+        self.noise_embeddings = nn.ModuleDict()
+        for feat in FEATURES:
+            n_bins = num_bins_per_feat.get(feat, 64)
+            self.noise_embeddings[feat] = nn.Embedding(n_bins + 1, embed_dim)
+
+        concat_dim = len(FEATURES) * embed_dim
+        self.proj = nn.Linear(concat_dim, hidden_size)
+        self.dropout = nn.Dropout(dropout)
+        self.reset_parameters()
+
+    def reset_parameters(self) -> None:
+        for emb in self.noise_embeddings.values():
+            nn.init.normal_(emb.weight, mean=0.0, std=0.02)
+        nn.init.xavier_uniform_(self.proj.weight)
+        if self.proj.bias is not None:
+            nn.init.zeros_(self.proj.bias)
+
+    def forward(self, noise_ids: torch.Tensor) -> torch.Tensor:
+        """
+        Args:
+            noise_ids: [batch, seq_len, 7]  —— 每个 token 各维桶 ID
+        Returns:
+            [batch, seq_len, hidden_size]
+        """
+        parts = []
+        for i, feat in enumerate(FEATURES):
+            emb_layer = self.noise_embeddings[feat]
+            ids_clamped = noise_ids[:, :, i].clamp(min=0, max=emb_layer.num_embeddings - 1)
+            parts.append(emb_layer(ids_clamped))          # [batch, seq, embed_dim]
+        concat = torch.cat(parts, dim=-1)                  # [batch, seq, 7*embed_dim]
+        return self.dropout(self.proj(concat))             # [batch, seq, hidden_size]
 
 
 def _is_global_noise_vector(noise_values: Any) -> bool:

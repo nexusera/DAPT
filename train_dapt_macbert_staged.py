@@ -54,7 +54,14 @@ current_dir = os.path.dirname(os.path.abspath(__file__))
 sys.path.append(current_dir)
 from noise_embeddings import RobertaNoiseEmbeddings
 from noise_feature_processor import NoiseFeatureProcessor, FEATURES
-from noise_fusion import ContinuousNoiseProjector, uses_bucket_noise, uses_continuous_noise
+from noise_fusion import (
+    ContinuousNoiseProjector,
+    ConcatLinearNoiseEmbedder,
+    uses_bucket_noise,
+    uses_continuous_noise,
+    uses_concat_noise,
+    needs_bucket_ids,
+)
 
 # 引入 KV-NSP 模块
 kv_nsp_dir = os.path.join(current_dir, "kv_nsp")
@@ -191,9 +198,11 @@ class BertNoiseEmbeddings(BertEmbeddings):
         self.noise_dim = len(FEATURES)
         self.noise_mode = str(getattr(config, "noise_mode", "bucket") or "bucket").lower()
         self.noise_mlp_hidden_dim = getattr(config, "noise_mlp_hidden_dim", None)
+        self.noise_concat_embed_dim = getattr(config, "noise_concat_embed_dim", 64)
         self.noise_bin_edges = getattr(config, "noise_bin_edges", None)
         self.noise_embeddings = None
         self.noise_projector = None
+        self.concat_embedder = None
         if uses_bucket_noise(self.noise_mode):
             self.noise_embeddings = torch.nn.ModuleDict()
             for feat in FEATURES:
@@ -206,6 +215,13 @@ class BertNoiseEmbeddings(BertEmbeddings):
                 dropout=getattr(config, "hidden_dropout_prob", 0.1),
                 mlp_hidden_dim=self.noise_mlp_hidden_dim,
                 feature_ranges=self.noise_bin_edges,
+            )
+        elif uses_concat_noise(self.noise_mode):
+            self.concat_embedder = ConcatLinearNoiseEmbedder(
+                hidden_size=config.hidden_size,
+                num_bins_per_feat=NUM_BINS,
+                embed_dim=int(self.noise_concat_embed_dim),
+                dropout=getattr(config, "hidden_dropout_prob", 0.1),
             )
         else:
             raise ValueError(f"Unsupported noise_mode: {self.noise_mode}")
@@ -263,6 +279,13 @@ class BertNoiseEmbeddings(BertEmbeddings):
                 noise_values = noise_values.unsqueeze(0)
             noise_values = noise_values.to(embeddings.device, dtype=torch.float32)
             noise_embed = self.noise_projector(noise_values)
+            embeddings = embeddings + self.alpha * noise_embed
+        elif uses_concat_noise(self.noise_mode) and noise_ids is not None:
+            # Concat-Linear：7路分桶嵌入拼接后线性映射，保留各维独立表示
+            if noise_ids.dim() == 2:
+                noise_ids = noise_ids.unsqueeze(0)
+            noise_ids = noise_ids.to(embeddings.device)
+            noise_embed = self.concat_embedder(noise_ids)
             embeddings = embeddings + self.alpha * noise_embed
 
         embeddings = self.LayerNorm(embeddings)
@@ -449,11 +472,11 @@ class MLMStageCollator:
                     cleaned.extend([list(PERFECT_VALUES) for _ in range(target_len - len(cleaned))])
                 nv = cleaned
             batch_noise_values.append(nv)
-            if uses_bucket_noise(self.noise_mode):
+            if needs_bucket_ids(self.noise_mode):
                 noise_lengths.append(target_len)
                 flat_noise_values.extend(nv)
 
-        if uses_bucket_noise(self.noise_mode):
+        if needs_bucket_ids(self.noise_mode):
             if self.noise_processor and flat_noise_values:
                 mapped_all = self.noise_processor.map_batch(flat_noise_values)
             else:
@@ -535,7 +558,7 @@ class MLMStageCollator:
             l = min(len(row), seq_len)
             final_noise_values[i, :l, :] = torch.tensor(row[:l], dtype=torch.float32)
         batch["noise_values"] = final_noise_values
-        if uses_bucket_noise(self.noise_mode):
+        if needs_bucket_ids(self.noise_mode):
             final_noise_ids = torch.zeros((len(features), seq_len, len(FEATURES)), dtype=torch.long)
             for i, row in enumerate(batch_noise_ids):
                 l = min(len(row), seq_len)
@@ -609,7 +632,7 @@ class NSPStageCollator:
         }
         perfect_values = torch.tensor(PERFECT_VALUES, dtype=torch.float32).view(1, 1, -1).repeat(bsz, seq_len, 1)
         batch["noise_values"] = perfect_values
-        if uses_bucket_noise(self.noise_mode):
+        if needs_bucket_ids(self.noise_mode):
             if self._cached_perfect_ids_row is None:
                 self._cached_perfect_ids_row = [0] * len(FEATURES)
                 if self.noise_processor:
@@ -642,14 +665,30 @@ def main():
         "--noise_mode",
         type=str,
         default="bucket",
-        choices=["bucket", "linear", "mlp"],
-        help="Noise fusion mode: bucket=离散分桶嵌入, linear=连续值线性投影, mlp=连续值两层 MLP 投影。",
+        choices=["bucket", "linear", "mlp", "concat_linear"],
+        help=(
+            "Noise fusion mode: "
+            "bucket=离散分桶各维求和(Add), "
+            "linear=连续值线性投影, "
+            "mlp=连续值两层MLP投影, "
+            "concat_linear=离散分桶各维拼接后线性映射(Concat+Linear)。"
+        ),
     )
     parser.add_argument(
         "--noise_mlp_hidden_dim",
         type=int,
         default=128,
         help="noise_mode=mlp 时的隐藏层维度。",
+    )
+    parser.add_argument(
+        "--noise_concat_embed_dim",
+        type=int,
+        default=64,
+        help=(
+            "noise_mode=concat_linear 时每路特征嵌入的维度。"
+            "7路拼接后总维度 = 7 * noise_concat_embed_dim，再经 Linear 投影至 hidden_size(768)。"
+            "默认 64（7*64=448 → Linear(448,768)）。"
+        ),
     )
     parser.add_argument("--resume_from_checkpoint", type=str, default=None)
     
@@ -764,6 +803,7 @@ def main():
     config = BertConfig.from_pretrained(model_path)
     config.noise_mode = str(args.noise_mode).lower()
     config.noise_mlp_hidden_dim = int(args.noise_mlp_hidden_dim)
+    config.noise_concat_embed_dim = int(args.noise_concat_embed_dim)
     config.noise_bin_edges = getattr(noise_processor, "bin_edges", {})
     model = BertForDaptMTL.from_pretrained(model_path, config=config)
     

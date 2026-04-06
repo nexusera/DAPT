@@ -69,7 +69,7 @@ Because clinical information often remains inaccessible across healthcare instit
 \section{Introduction}
 In today's healthcare landscape, electronic medical records (EMRs) are ubiquitous. However, they remain isolated across hospitals. Patients can access their information only through paper clinical reports. This necessitates converting these clinical reports into text using optical character recognition (OCR) technology during hospital transfers or when establishing patient records at third-party institutions. The OCR results must then be processed into a semi-structured format.
 
-State-of-the-art optical character recognition (OCR) and mainstream commercial OCR frameworks (such as PP-OCR~\cite{PPOCR2022}) typically integrate mature preprocessing modules. These commonly include image denoising, moiré pattern removal, document skew correction, and curvature correction, significantly enhancing the quality of processed raw images. However, in practical scenarios, recognition biases, semantic truncation, and logical association errors remain unavoidable. This “residual noise” driven by complex scenarios imposes significant robustness challenges on subsequent semi-structured tasks.
+State-of-the-art optical character recognition (OCR) and mainstream commercial OCR frameworks (such as PP-OCR~\cite{PPOCR2022}) typically integrate mature preprocessing modules. These commonly include image denoising, Moore's pattern removal, document skew correction, and curvature correction, significantly enhancing the quality of processed raw images. However, in practical scenarios, recognition biases, semantic truncation, and logical association errors remain unavoidable. This “residual noise” driven by complex scenarios imposes significant robustness challenges on subsequent semi-structured tasks.
 
 Concurrently, BERT-based models are widely used for IE because of their bidirectional attention mechanism, as introduced in ~\cite{bert}, these models are typically pre-trained by two pretraining tasks--- Masked Language Modeling (MLM) and Next Sentence Prediction (NSP). Existing language BERT-based models are typically pre-trained on corpora without OCR-induced noise (e.g., Wikipedia, relevant news, medical guidelines). When directly applied to OCR-derived clinical report with OCR-induced noise, their performance degrades. Moreover, these general pre-trained models understand text solely based on semantics, without leveraging additional information provided by OCR engines (e.g., confidence scores).
 
@@ -90,7 +90,7 @@ Thus, we propose KV-BERT, a noise-resistant pre-training framework for semi-stru
 we make the following contributions:
 We propose a novel noise fusion mechanism, we integrate the confidence statistics from the OCR engine with visual layout features (totaling 7-dimensional features) into the BERT input layer, significantly enhancing the model's performance across various downstream tasks on low-quality OCR text.
 We designed two pre-training tasks tailored for downstream semi-structured tasks: proposing KV-MLM and KV-NSP strategies to incorporate structural prior knowledge from Clinical Reports into the pre-training phase, addressing the limitations of general models in understanding semi-structured data.
-We demonstrated effectiveness through extensive experiments on real medical OCR datasets. Results demonstrate that our approach outperforms both general BERT and Roberta bases, as well as state-of-the-art medical Large Language Models (LLMs) (though by 1-3 orders of less than these LLMs) across multiple downstream tasks. Notably, our model exhibits particularly significant performance gains on noisy data.
+We demonstrated effectiveness through extensive experiments on real medical OCR datasets. We collected clinical reports from the Cancer Patient Management Project and processed 3,582 pages of these reports using Baidu’s OCR API to construct this dataset. Results demonstrate that our approach outperforms both general BERT and Roberta bases, as well as state-of-the-art medical Large Language Models (LLMs) (though by 1-3 orders of magnitude less parameters than these LLMs) across multiple downstream tasks. Notably, our model exhibits particularly significant performance gains on noisy data.
 
 \section{Related Work}
 \subsection{Domain-Adaptive Pre-training}
@@ -226,7 +226,7 @@ If a token belongs to a medical entity (e.g., “adenocarcinoma”, or “腺癌
     \label{fig:kv_nsp}
 \end{figure}
 
-The original NSP task for BERT has been proven too simplistic and detrimental to model training. Existing BERT-based models often modify or abandon the NSP task.
+The original NSP task for BERT has been proven too simplistic and detrimental to model training.～\cite{Roberta} Existing BERT-based models often modify or abandon the NSP task.
 We have redesigned this task based on the structural characteristics of medical records, aiming for the model to learn logical binding relationships between keys and values through this task.
 
 \subsubsection{Problem Formulation}
@@ -258,27 +258,41 @@ In practice, the length of individual samples often exceeds the model's max leng
 
 \subsection{Experimental Setup}
 \subsubsection{Pre-training Data}
-
  The pre-training data comprises medical records processed by OCR, medical textbooks/guidelines, medical papers, Wikipedia entries, and a small amount of general Chinese text. After cleaning and deduplication, a total of 982,183 text samples were obtained (counted by lines, with one sample per line). To control domain proportions, we performed static resampling across sources, yielding 225,481 training texts. Among these, OCR-drived clinical reports accounted for 35.00\%, medical corpora for 46.96\%, and general corpora for 18.02\%. 
  After resampling, we obtained 225,481 pre-training texts (counted by lines, with one text per line). To mitigate information loss from truncation due to the maximum length of 512, we performed character-level sliding window segmentation ($\mathrm{window}=1000$, $\mathrm{stride}=500$) on long texts exceeding the threshold, splitting each long text into multiple chunks. Following sliding window segmentation, the total number of training segments increased from 225,481 to 537,721. Subsequent pre-training encoded these segmented chunks as the basic pre-training text units, truncating each to 512 tokens.
+\subsubsection{OCR Engine Specifications}
+%我们用的是OCR v6
+The OCR-derived clinical report text we used is generated by the Baidu OCR engine. The specific product form we utilize is Baidu General High-Precision OCR API, version 1.0.5 (Core Engine V6), with the model/capability type being General High-Precision. In our engineering implementation, we treat the OCR engine output as a structured result comprising “text + metadata”.
 
-\subsubsection{Fine-tuning（KV-NER）方法与数据}
-为验证预训练模型在真实业务场景中的有效性，我们在下游半结构化抽取任务上采用统一的微调流程。我们将 OCR 页面文本视作序列标注问题，预测“键名（KEY）/键值（VALUE）”两类实体的边界，再通过轻量级规则将其组装为键值对集合，用于任务1的键名发现与任务2的键值对抽取评估。
+It is important to emphasize that the pre-training task proposed in this paper does not depend on any specific OCR engine. Similarly, the concept of noise embedding—“mapping the metadata provided by the OCR engine into an embedding”—is not tied to any particular OCR engine. However, the model trained in this paper does rely on Baidu's OCR engine.
+Should another OCR engine be used in the future, the model can remain universally applicable as long as it provides semantically consistent quality signals and completes statistical normalization/bucket mapping.
+ 
+\subsection{FT(fine-tuning) and dataset}
+To validate the effectiveness of pre-trained models in real-world scenarios, we employ a unified fine-tuning workflow for downstream semi-structured extraction tasks. We treat OCR page text as a sequence annotation problem, predicting boundaries for two entity types (KEY and VALUE) then assemble them into key-value pairs via lightweight rules. These are used for key extraction in Task 1 and key-value pair extraction evaluation in Task 2.
 
-数据来源与格式：下游数据来自真实医疗检验/检查报告的 OCR 结果，并在标注平台以字符级位置标注实体边界。每个样本以“单页/单条 OCR 文本”为单位，包含 OCR 文本、实体标注（起止位置与类别），以及与 OCR 质量相关的噪声特征（对应本文提出的噪声嵌入）。我们将按词或按行统计的噪声向量展开到字符级序列，使其与 OCR 文本严格对齐；若样本不含噪声元信息（或为干净文本），则使用“完美文本”的锚点向量作为缺省噪声输入。
+Data Sources and Formats: FT dataset originates from OCR results of real clinic reports, with entity boundaries annotated at character-level positions on the annotation platform. Each sample consists of a single page OCR text, containing the OCR text, entity annotations (start/end positions and categories), and noise features produced by OCR engine (corresponding to the noise embeddings proposed in this paper). We expand word level or line level noise metadata into character level sequences for strict alignment with OCR text. For samples lacking noise metadata (or clean text), we use anchor vectors from “perfect text” as default noise input.
 
-数据规模与统计：在 Real 数据集上，训练集包含 3,224 页样本，测试集包含 358 页样本。训练集与测试集的文本长度（按字符数统计）分别为：均值 735.49 和 743.25，中位数 714 和 705；第 90 百分位为 1149 和 1122，第 99 百分位为 1673 和 1571。实体标注总量（按标注实例数统计）在训练集与测试集上分别为：KEY 45,684 和 5,102，VALUE 43,432 和 4,836；此外数据中还包含辅助标签 HOSPITAL 2,242 和 239。
+Data Scale and Statistics: On the Real dataset, the training set comprises 3,224 pages, and the test set comprises 358 pages. Text lengths (counted by characters) for training and testing sets: Mean: 735.49 and 743.25 Median: 714 and 705 90th percentile: 1149 and 1122 99th percentile: 1673 and 1571 The total number of entity annotations (counted by annotated instances) in the training and test sets are: KEY 45,684 and 5,102, VALUE 43,432 and 4,836. Additionally, the data includes auxiliary labels HOSPITAL 2,242 and 239.
 
-标签体系与编码：训练时使用 BIO 序列标注体系，并通过标签映射将不同标注别名（中英文、大小写）归一到 KEY 和 VALUE。由于中文采用子词切分，我们启用“标签传播到所有子词”的策略，将同一字符跨度对应的标签同步到被切分后的所有子词 token，以减少边界信息在子词级的丢失。
+%这一部分是ai生成的，需要再打磨
+Labeling System and Encoding: During training, we employ the BIO sequence annotation system and use label mapping to normalize different annotation aliases (Chinese/English, uppercase/lowercase) to KEY and VALUE. Since Chinese text undergoes subword segmentation, we enable the “propagate labels to all subwords” strategy. This synchronizes the label corresponding to a given character span to all segmented subword tokens, minimizing boundary information loss at the subword level.
 
-输入构造（含长文本切片与噪声对齐）：模型最大输入长度设为 512。对于超过最大长度的 OCR 页面文本，我们采用滑窗切片方式构造重叠片段以覆盖跨窗口实体：片段长度为 500，重叠为 50。噪声特征为 7 维向量，先通过与预训练一致的分桶边界离散化为 bin id，再通过查表得到噪声嵌入并与 token 表示相加，从而保证下游阶段的噪声建模与预训练阶段一致。
+Input Construction (Including Long Text Slicing and Noise Alignment): The model's maximum input length is set to 512. For OCR page text exceeding this limit, we employ sliding window slicing to construct overlapping segments covering cross-window entities: segment length is 500 with 50 overlap. The noise feature is a 7-dimensional vector. It is first discretized into bin IDs using the same binning boundaries as the pre-training process. Then, noise embeddings are obtained via lookup tables and added to the token representations. This ensures consistency in noise modeling between the downstream stage and the pre-training stage.
 
-微调模型与优化设置：我们在预训练骨干（MacBERT/对照模型）之上添加序列标注头，可选 BiLSTM（3 层，hidden size 为 384）用于增强局部序列建模，再接线性分类层与 CRF 解码层以建模 BIO 转移约束并输出最优标签序列。优化器为 AdamW，学习率 2e-5，warmup ratio 为 0.1，weight decay 为 0.03；训练 4 个 epoch，batch size 为 8，dropout 为 0.2。为保证对比公平，所有模型在完全一致的数据划分与超参下微调，仅替换初始化的预训练 checkpoint。
+Fine-tuning Model and Optimization Settings: We add a sequence labeling head to the pre-trained backbone (MacBERT/baseline model), optionally incorporating a BiLSTM (3 layers, hidden size 384) to enhance local sequence modeling. This is followed by a linear classification layer and a CRF decoding layer to model BIO transition constraints and output the optimal label sequence. The optimizer is AdamW with a learning rate of 2e-5, warmup ratio of 0.1, and weight decay of 0.03. Training runs for 4 epochs with a batch size of 8 and dropout of 0.2. To ensure fair comparison, all models are fine-tuned under identical data splits and hyperparameters, differing only in the replacement of the initialized pre-training checkpoint.
 
-推理、键值对组装与评测：推理阶段将 CRF 解码得到的实体跨度还原为 KEY/VALUE 片段，并采用“最近邻顺序配对”的轻量规则将键与其后最近的值组成键值对集合。评测时，我们输出标准化的预测结果与由测试集转换得到的标准答案，并在任务1与任务2指标计算前进行一次 span 对齐处理，以消除分词或切片带来的边界抖动对严格匹配评测的影响。
+Inference, Key-Value Pair Assembly, and Evaluation: During inference, entity spans decoded by CRF are restored to KEY/VALUE fragments. A lightweight “nearest-neighbor sequential pairing” rule is applied to form key-value pairs by associating each key with its nearest preceding value. During evaluation, we output standardized predictions alongside ground truth answers derived from the test set. Before calculating metrics for Task 1 and Task 2, we perform span alignment to eliminate boundary jitter from tokenization or segmentation that could affect exact match evaluation.
+%ai生成结束
+
+\subsubsection{Data Sources}
+The OCR medical record data referenced in this paper originates from the company's internal private Clinical Report imaging corpus, consistent with existing research sources within the same business line. The corpus primarily consists of tumor-related Clinical Report images, encompassing report types such as outpatient reports, laboratory test reports, pathology reports, and surgical records. All text was obtained by processing original document images through an OCR engine.
+%医疗指南的来源，没有说明，是否需要修复？
+
 
 \subsection{Downstream Task Definitions}
 % The semi-structured extraction (Task 3 corresponds to Key-Value Pairing) is decomposed into three sub-tasks to accommodate different real-world scenarios.
+We collected clinical reports from the Cancer Patient Management Project and processed 3,582 pages of these reports using Baidu’s OCR API to construct this dataset. The clinical reports were collected through the Cancer Patient Management Project with the patients’ consent.
+
 To accommodate diverse practical scenarios, we decompose semi-structured information extraction into three tasks, where Task~3 is the end-to-end setting.
 
 Let $d$ denote an input OCR-derived clinical report page, $K$ the ground truth key set, and $S$ the ground-truth set of key--value pairs. For Task~2, $k \in K$ denotes a queried key.
@@ -286,6 +300,7 @@ Let $d$ denote an input OCR-derived clinical report page, $K$ the ground truth k
 In \textbf{Task~1 (Open-World Key Discovery)}, the input is $d$ and the output is a predicted key set $\hat{K}$. The model identifies $\hat{K}$ from the OCR-derived text, without a predefined key set. 
 % \textbf{Task~2 (Key-Conditioned Question Answering)} focuses on value extraction: the input is $(d, k)$ where $k$ is a queried key. The output is the corresponding value prediction $\hat{v}$. Tasks~1 and~2 together form a two-stage pipeline for semi-structured information extraction.
 Finally, \textbf{Task~2 (End-to-End Key--Value Pairing)} takes $d$ as input and outputs a predicted set of key--value pairs $\hat{S}=\{(\hat{k},\hat{v})\}$. By jointly identifying keys and their corresponding values, the objective of the model is to learn how to extract $S$ from $d$.
+
 
 \subsubsection{Baselines}
 
@@ -301,12 +316,12 @@ We compare our framework against several competitive Chinese pre-trained models:
 
 Our framework is implemented using HuggingFace Transformers. All models are trained on an \textbf{NVIDIA H200 GPU cluster (8 nodes)}. For pre-training, we use the \textbf{AdamW} optimizer with a learning rate of $8e-5$, while for fine-tuning, the rate is adjusted to $2e-5$. 
 % 中文注释：训练策略采用分阶段模式，先进行 KV-MLM 以稳定 Embedding，再引入 KV-NSP 进行结构化训练。
+The training strategy follows a phased approach: first, KV-MLM is used to stabilize the embeddings, followed by KV-NSP, which employs dynamic negative sampling on key-value pairs for binary classification training. Three training rounds are conducted in the experiments.
 
 \subsection{Main Results}
-为便于阅读表 1 中的指标符号，本文用下标 e 和 a 区分两种匹配判定方式：e 表示精确匹配（Exact Match），a 表示近似匹配（Approx Match）。精确匹配指在统一的文本归一化后（如去首尾空白、统一大小写）预测文本与真值文本完全一致；近似匹配则允许一定的字符扰动，采用归一化编辑距离相似度（NED，相似度越高越接近）并结合长度自适应阈值进行判定（短文本阈值更宽松、长文本更严格）。
 
-在任务 1（键名发现）中，K_e 表示按精确匹配统计得到的键名 F1，K_a 表示按近似匹配统计得到的键名 F1。
-在任务 2（键值配对）中，我们同时考察键名与键值两部分的匹配程度：K_eV_e 表示键名精确匹配且键值精确匹配；K_eV_a 表示键名精确匹配且键值近似匹配；K_aV_a 表示键名近似匹配且键值近似匹配。上述指标均基于精确/近似匹配下的 TP 数量计算精确率、召回率与 F1。
+To facilitate reading the indicator symbols in the table, this paper uses subscripts e and a to distinguish between two matching determination methods. e denotes exact match, while a denotes approximate match. Exact Match refers to complete textual alignment between the predicted text and the ground truth after unified text normalization (e.g., trimming leading/trailing whitespace, case unification). Approximate Match permits certain character perturbations, employing normalized edit distance (NED) similarity combined with a length-adaptive threshold mechanism (more lenient for short texts, stricter for long texts) for determination.
+
 % Table 1: Performance on KV-NER
 
 % \begin{table*}[t]
@@ -384,7 +399,7 @@ Our framework is implemented using HuggingFace Transformers. All models are trai
     \midrule
 
     % Our Main Model
-    \textbf{KV-Bert (Ours)} & Fine-tuning & \textbf{0.7565} & \textbf{0.7579} & \textbf{0.6900} & \textbf{0.7125} & \textbf{0.7132} \\
+    \textbf{KV-Bert (Ours)} & Fine-tuning & \textbf{0.7675} & \textbf{0.7682} & \textbf{0.6919} & \textbf{0.7171} & \textbf{0.7175} \\
     \midrule
 
     % Ablation Study (Shaded)
@@ -392,11 +407,37 @@ Our framework is implemented using HuggingFace Transformers. All models are trai
     \rowcolor{lightgray} \cellcolor{white} \cellcolor{white} w/o KV-NSP & Fine-tuning & 0.7554 & 0.7567 & 0.6889 & 0.7084 & 0.7095 \\
     \rowcolor{lightgray} \cellcolor{white} \cellcolor{white} w/o Noise-Embedding & Fine-tuning & 0.7521 & 0.7540 & 0.6799 & 0.7020 & 0.7036 \\
     
+    \rowcolor{lightgray} \cellcolor{white} \cellcolor{white} linear Noise-Embedding  & Fine-tuning & 0.7625 & 0.7644 & 0.6771 & 0.7069 & 0.7079 \\
+    \rowcolor{lightgray} \cellcolor{white} \cellcolor{white} MLP Noise-Embedding  & Fine-tuning & 0.7691 & 0.7700 & 0.6792 & 0.7084 & 0.7088 \\
+    
+%     bucket  | Ke=0.7675 Ka=0.7682 | KeVe=0.6919 KeVa=0.7171 KaVa=0.7175
+% linear  | Ke=0.7625 Ka=0.7644 | KeVe=0.6771 KeVa=0.7069 KaVa=0.7079
+% mlp     | Ke=0.7691 Ka=0.7700 | KeVe=0.6792 KeVa=0.7084 KaVa=0.7088
+
+% \textbf{KV-Bert (Ours)} & Fine-tuning & \textbf{0.7565} & \textbf{0.7579} & \textbf{0.6900} & \textbf{0.7125} & \textbf{0.7132} \\
+
+% variant   |   Ke    |   Ka    |  KeVe   |  KeVa   |  KaVa
+% ---------------------------------------------------------------
+% plainmlm  | 0.7605 | 0.7615 | 0.6862 | 0.7071 | 0.7078
+% kvmlm     | 0.7614 | 0.7637 | 0.6829 | 0.7082 | 0.7096
+% ---------------------------------------------------------------
+% delta(kv-plain) | +0.0009 | +0.0022 | -0.0033 | +0.0011 | +0.0018
+
+% ratio   Ke      Ka      KeVe    KeVa    KaVa
+% 1_1(kv_bert)     0.7657  0.7676  0.6357  0.6742  0.6754
+% 2_1     
+% 3_1     0.7619  0.7635  0.6838  0.7108  0.7117
+% 1_3     0.7136  0.7138  0.5231  0.5572  0.5574
     \bottomrule
   \end{tabular}%
   }
 \end{table*}
+% task2跑通，结果加上了
+%     KV-Bert(ours)(0.11B) & Fine-tuning  & \textbf{0.7565} & \textbf{0.7579} & 0.8011 & 0.8077 & 0.6838 & 0.7658 & \textbf{0.6900} &  \textbf{0.7125}  &  \textbf{0.7132} \\
 
+%| variant | task1_f1_exact | task1_f1_approx | task3_f1_ee | task3_f1_ea | task3_f1_aa | task2_global_f1_approx | task2_pos_f1_approx |
+% |---|---|---|---|---|---|---|---|
+% | t1 | 0.7778 | 0.7782 | 0.7079 | 0.7416 | 0.7421 | 0.8062 | 0.7193 |
 
 As shown in Tab.~\ref{tab:main_results_reduced}, our model significantly outperforms all baselines. This suggests that by explicitly modeling \textbf{OCR-induced noise}, our model effectively recovers entities that are typically missed by general-purpose models due to character fragmentation or recognition errors.
 
@@ -411,6 +452,16 @@ To evaluate the contribution of each component, we conduct extensive ablation ex
 
 \end{itemize}
 
+\subsection{注意力可解释性分析}
+为增强方法可解释性，我们将注意力可视化作为诊断工具（而非因果解释），并在固定聚合规则下（最后若干层与多头平均）对关键假设进行统计检验。核心结论如下。
+
+\textbf{(1) KV-NSP 注意力诊断（强证据）}：在 KV-NSP 对照实验中，正样本（Key--Value 匹配）相较于倒序负样本与随机负样本，呈现更高的跨段对齐强度（CSAM）。统计结果显示：正样本 vs 倒序负样本在 CSAM 上显著差异（$p=4.87\times10^{-23}$，$d=1.19$），正样本 vs 随机负样本同样显著（$p=9.36\times10^{-5}$，$d=0.44$）；在 Top-k 指标上，正样本 vs 倒序负样本也表现出极显著差异（$p=2.78\times10^{-38}$，$d=1.70$）。该结果与 KV-NSP 的设计目标一致，说明模型确实学习到了更稳定的 Key$\rightarrow$Value 对齐模式。
+
+\textbf{(2) KV-MLM 注意力诊断（可写证据）}：在主模型与 w/o KV-MLM 对照中，实体重建相关注意力分配出现统计显著差异。以 entity 视角为例，主模型在同 value 块注意力质量（same\_value\_block\_mass）上高于对照模型（$p=0.0108$，$d=0.31$），同时对 key 区域注意力质量（to\_key\_mass）低于对照模型（$p=0.0108$，$d=-0.31$），表明 KV-MLM 使模型在实体恢复时更依赖同一 KV 语义块内部上下文；在 boundary 视角下也观察到显著差异（to\_key\_mass：$p=0.0271$，$d=0.30$）。整体上，这些结果支持 KV-MLM 在结构化语义建模中的作用。
+
+\subsection{Ablation Study}
+%这一段是AI写的，先放在这里，后面再润色语言。
+We conducted a true-faithfulness comparison on KV-NER across four models: Full, NoNoise, NoNSP, and NoMLM, using Integrated Gradients with perturbation-based validation. All models were evaluated on the same 358 samples, and all reported metrics were computed in true mode (i.e., based on actual score changes after token perturbation). The Full model achieved the highest deletion_aopc and comprehensiveness (3.9057 and 3.9057), outperforming NoNoise (1.4915), NoMLM (1.1812), and NoNSP (3.3372). This indicates that the top-attributed tokens identified by Full have stronger causal relevance to prediction, as removing them leads to larger score drops. Although NoMLM yields the lowest sufficiency value (0.2220), this likely reflects reliance on a small set of local cues rather than better global explanatory behavior. Taken together with downstream performance, these findings support that the joint design of Noise-Embedding, KV-MLM, and KV-NSP improves evidence focus and yields more verifiable explanation consistency.
 
 % \subsection{Robustness Analysis}
 
