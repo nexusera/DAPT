@@ -12,14 +12,14 @@ from .data_utils import Entity, Relation, Sample, generate_char_labels
 from .chunking import chunk_text_by_tokens
 from .noise_utils import NoiseFeatureProcessor, PERFECT_VALUES
 try:
-    from noise_fusion import aggregate_token_noise_values, uses_bucket_noise, uses_continuous_noise
+    from noise_fusion import aggregate_token_noise_values, uses_bucket_noise, uses_continuous_noise, needs_bucket_ids
 except Exception:  # pragma: no cover
     import sys
     from pathlib import Path
     _ROOT = Path(__file__).resolve().parents[3]
     if str(_ROOT) not in sys.path:
         sys.path.insert(0, str(_ROOT))
-    from noise_fusion import aggregate_token_noise_values, uses_bucket_noise, uses_continuous_noise
+    from noise_fusion import aggregate_token_noise_values, uses_bucket_noise, uses_continuous_noise, needs_bucket_ids
 
 
 @dataclass
@@ -149,7 +149,7 @@ class TokenClassificationDataset(Dataset):
                         )
                         if uses_continuous_noise(self.noise_mode):
                             feature["noise_values"] = torch.tensor(token_noise_values, dtype=torch.float32)
-                        if uses_bucket_noise(self.noise_mode) and self.noise_processor is not None:
+                        if needs_bucket_ids(self.noise_mode) and self.noise_processor is not None:
                             noise_ids_per_token = [
                                 self.noise_processor.values_to_bin_ids(row)
                                 for row in token_noise_values

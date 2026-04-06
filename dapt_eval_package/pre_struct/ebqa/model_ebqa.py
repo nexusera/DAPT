@@ -17,13 +17,19 @@ from transformers import (
     Trainer,
 )
 try:  # pragma: no cover
-    from noise_fusion import ContinuousNoiseProjector, build_feature_ranges, uses_bucket_noise, uses_continuous_noise
+    from noise_fusion import (
+        ContinuousNoiseProjector, build_feature_ranges,
+        uses_bucket_noise, uses_continuous_noise, needs_bucket_ids,
+    )
 except Exception:  # pragma: no cover
     import sys
     _ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
     if _ROOT not in sys.path:
         sys.path.insert(0, _ROOT)
-    from noise_fusion import ContinuousNoiseProjector, build_feature_ranges, uses_bucket_noise, uses_continuous_noise
+    from noise_fusion import (
+        ContinuousNoiseProjector, build_feature_ranges,
+        uses_bucket_noise, uses_continuous_noise, needs_bucket_ids,
+    )
 
 # noise feature meta（7维，与 kv_ner/noise_utils 一致）
 try:  # pragma: no cover - optional dependency
@@ -145,7 +151,9 @@ class NoiseAwareBertForQuestionAnswering(BertForQuestionAnswering):
         self.noise_projector = None
 
         if self.use_noise:
-            if uses_bucket_noise(self.noise_mode):
+            if needs_bucket_ids(self.noise_mode):
+                # bucket 和 concat_linear 均使用离散桶 ID：
+                # 分别查小维度嵌入 → Concat → Linear(7*embed_dim → hidden_size)
                 emb_layers = []
                 for feat in _NOISE_FEATURES:
                     nbin = int(_NOISE_NUM_BINS.get(feat, 0))
@@ -207,7 +215,7 @@ class NoiseAwareBertForQuestionAnswering(BertForQuestionAnswering):
         sequence_output = outputs[0]
 
         if self.use_noise:
-            if uses_bucket_noise(self.noise_mode) and (noise_ids is not None) and self.noise_embeddings is not None:
+            if needs_bucket_ids(self.noise_mode) and (noise_ids is not None) and self.noise_embeddings is not None:
                 if noise_ids.dim() == 2:
                     noise_ids = noise_ids.unsqueeze(-1)
                 while noise_ids.dim() < 3:

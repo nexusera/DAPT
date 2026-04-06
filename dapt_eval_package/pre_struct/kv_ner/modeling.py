@@ -18,13 +18,23 @@ from torchcrf import CRF
 from transformers import AutoConfig, AutoModel
 from .noise_utils import NUM_BINS, FEATURES
 try:
-    from noise_fusion import ContinuousNoiseProjector, build_feature_ranges, uses_bucket_noise, uses_continuous_noise
+    from noise_fusion import (
+        ContinuousNoiseProjector, build_feature_ranges,
+        uses_bucket_noise, uses_continuous_noise, uses_concat_noise,
+        needs_bucket_ids,
+    )
+    from noise_bert_model import BertModelWithNoise, load_bert_with_noise
 except Exception:  # pragma: no cover
     import sys
     _ROOT = Path(__file__).resolve().parents[3]
     if str(_ROOT) not in sys.path:
         sys.path.insert(0, str(_ROOT))
-    from noise_fusion import ContinuousNoiseProjector, build_feature_ranges, uses_bucket_noise, uses_continuous_noise
+    from noise_fusion import (
+        ContinuousNoiseProjector, build_feature_ranges,
+        uses_bucket_noise, uses_continuous_noise, uses_concat_noise,
+        needs_bucket_ids,
+    )
+    from noise_bert_model import BertModelWithNoise, load_bert_with_noise
 
 try:
     from model_path_conf import DEFAULT_MODEL_PATH  # type: ignore
@@ -82,45 +92,42 @@ class BertCrfTokenClassifier(nn.Module):
         self.unfreeze_last_n_layers = (
             int(unfreeze_last_n_layers) if unfreeze_last_n_layers is not None else None
         )
-        self.config = AutoConfig.from_pretrained(
-            model_name_or_path or DEFAULT_MODEL_PATH,
-            output_hidden_states=False,
-        )
         self.model_name_or_path = model_name_or_path or DEFAULT_MODEL_PATH
-        self.bert = AutoModel.from_pretrained(self.model_name_or_path, config=self.config)
+        self.use_noise = bool(use_noise)
+        # noise_embed_dim 保留参数签名但不再使用（早期 late-fusion 遗留，现统一由预训练 config 决定）
+        self.noise_embed_dim = int(noise_embed_dim)
+        self.noise_mlp_hidden_dim = int(noise_mlp_hidden_dim or 0) or None
+
+        if self.use_noise:
+            # ── Early fusion：加载 BertModelWithNoise，与预训练架构完全对齐 ──
+            # 噪声嵌入权重（alpha/noise_embeddings/concat_embedder）从预训练 checkpoint 恢复
+            self.bert = load_bert_with_noise(
+                self.model_name_or_path,
+                noise_mode=noise_mode,
+                noise_concat_embed_dim=getattr(self, "_noise_concat_embed_dim_override", None),
+                noise_mlp_hidden_dim=self.noise_mlp_hidden_dim,
+                noise_bin_edges=noise_bin_edges or {},
+            )
+            self.config = self.bert.config
+            self.noise_mode = str(getattr(self.config, "noise_mode", noise_mode) or noise_mode or "bucket").lower()
+            self.noise_bin_edges = getattr(self.config, "noise_bin_edges", {}) or {}
+        else:
+            # 无噪声：正常加载 AutoModel
+            self.config = AutoConfig.from_pretrained(
+                self.model_name_or_path,
+                output_hidden_states=False,
+            )
+            self.bert = AutoModel.from_pretrained(self.model_name_or_path, config=self.config)
+            self.noise_mode = "bucket"
+            self.noise_bin_edges = {}
+
         hidden_size = self.config.hidden_size
         self.dropout = nn.Dropout(dropout)
-        # Noise fusion
-        self.use_noise = bool(use_noise)
-        self.noise_embed_dim = int(noise_embed_dim)
-        self.noise_mode = str(getattr(self.config, "noise_mode", noise_mode) or noise_mode or "bucket").lower()
-        self.noise_mlp_hidden_dim = int(
-            getattr(self.config, "noise_mlp_hidden_dim", noise_mlp_hidden_dim or 0) or (noise_mlp_hidden_dim or 0)
-        ) or None
-        self.noise_bin_edges = noise_bin_edges or getattr(self.config, "noise_bin_edges", {}) or {}
+        # late-fusion 噪声组件已移除（噪声现在在 BertModelWithNoise 嵌入层内处理）
         self.noise_embeddings = None
         self.noise_proj = None
         self.noise_dropout = None
         self.noise_projector = None
-        if self.use_noise:
-            if uses_bucket_noise(self.noise_mode):
-                emb_layers = []
-                for feat in FEATURES:
-                    nbin = int(NUM_BINS[feat])
-                    emb_layers.append(nn.Embedding(num_embeddings=nbin + 1, embedding_dim=self.noise_embed_dim))
-                self.noise_embeddings = nn.ModuleList(emb_layers)
-                self.noise_proj = nn.Linear(len(FEATURES) * self.noise_embed_dim, hidden_size)
-                self.noise_dropout = nn.Dropout(dropout)
-            elif uses_continuous_noise(self.noise_mode):
-                self.noise_projector = ContinuousNoiseProjector(
-                    hidden_size,
-                    mode=self.noise_mode,
-                    dropout=dropout,
-                    mlp_hidden_dim=self.noise_mlp_hidden_dim,
-                    feature_ranges=build_feature_ranges(self.noise_bin_edges),
-                )
-            else:
-                raise ValueError(f"Unsupported noise_mode: {self.noise_mode}")
         
         # BiLSTM layer (optional)
         self.use_bilstm = bool(use_bilstm)
@@ -223,32 +230,29 @@ class BertCrfTokenClassifier(nn.Module):
         noise_ids: Optional[torch.Tensor] = None,
         noise_values: Optional[torch.Tensor] = None,
     ):
-        # 显式生成 position_ids 以避免 RoBERTa 内部计算错误
         seq_length = input_ids.shape[1]
         device = input_ids.device
         position_ids = torch.arange(seq_length, dtype=torch.long, device=device).unsqueeze(0).expand(input_ids.shape[0], -1)
-        
-        outputs = self.bert(
-            input_ids=input_ids,
-            attention_mask=attention_mask,
-            token_type_ids=token_type_ids,
-            position_ids=position_ids,  # 显式传入正确的 position_ids
-        )
-        sequence_output = self.dropout(outputs[0])
-        # Fuse noise embeddings if provided
+
+        # 噪声通过 BertModelWithNoise 在嵌入层完成 early fusion（与预训练完全一致）
+        # use_noise=False 时 bert 为标准 AutoModel，不接受 noise_* 参数
         if self.use_noise:
-            if uses_bucket_noise(self.noise_mode) and (noise_ids is not None) and self.noise_embeddings is not None:
-                noise_vecs = []
-                for i, emb in enumerate(self.noise_embeddings):
-                    ids_i = noise_ids[:, :, i].clamp(min=0, max=emb.num_embeddings - 1)
-                    noise_vecs.append(emb(ids_i))
-                noise_cat = torch.cat(noise_vecs, dim=-1)
-                noise_h = self.noise_proj(noise_cat)
-                noise_h = self.noise_dropout(noise_h)
-                sequence_output = sequence_output + noise_h
-            elif uses_continuous_noise(self.noise_mode) and (noise_values is not None) and self.noise_projector is not None:
-                noise_h = self.noise_projector(noise_values.to(sequence_output.device, dtype=torch.float32))
-                sequence_output = sequence_output + noise_h
+            outputs = self.bert(
+                input_ids=input_ids,
+                attention_mask=attention_mask,
+                token_type_ids=token_type_ids,
+                position_ids=position_ids,
+                noise_ids=noise_ids,
+                noise_values=noise_values,
+            )
+        else:
+            outputs = self.bert(
+                input_ids=input_ids,
+                attention_mask=attention_mask,
+                token_type_ids=token_type_ids,
+                position_ids=position_ids,
+            )
+        sequence_output = self.dropout(outputs[0])
         
         # Optional BiLSTM layer
         if self.use_bilstm and self.lstm is not None:
@@ -366,8 +370,14 @@ class BertCrfTokenClassifier(nn.Module):
         else:
             torch.save(state_dict, path / "pytorch_model.bin")
         
+        # 保存 BERT config（含噪声字段），供 from_pretrained 重建架构
+        if hasattr(self.bert, "config"):
+            self.bert.config.save_pretrained(str(path))
+
         metadata = {
-            "model_name_or_path": self.model_name_or_path,
+            # 指向当前目录（自包含），不再依赖原始预训练路径
+            "model_name_or_path": str(path),
+            "pretrained_model_path": self.model_name_or_path,  # 仅供追溯
             "dropout": self.dropout.p if isinstance(self.dropout, nn.Dropout) else None,
             "freeze_encoder": self.freeze_encoder,
             "unfreeze_last_n_layers": self.unfreeze_last_n_layers,
@@ -406,8 +416,18 @@ class BertCrfTokenClassifier(nn.Module):
         if config_path.is_file():
             model_cfg = json.loads(config_path.read_text(encoding="utf-8"))
         id2label = {int(v): k for k, v in label2id.items()}
+        # 优先使用 checkpoint 目录本身作为 model_name_or_path（自包含，不依赖原始预训练路径）
+        bert_source = str(path)
+        if not (path / "config.json").is_file():
+            # 旧格式 checkpoint（没有保存 config.json）：回退到存储的原始路径
+            bert_source = model_cfg.get("model_name_or_path") or model_cfg.get("pretrained_model_path") or str(path)
+            logger.warning(
+                f"[from_pretrained] config.json not found in {path}. "
+                f"Falling back to stored model_name_or_path: {bert_source}"
+            )
+
         model = cls(
-            model_name_or_path=model_cfg.get("model_name_or_path"),
+            model_name_or_path=bert_source,
             label2id=label2id,
             id2label=id2label,
             dropout=model_cfg.get("dropout", 0.1),
@@ -455,7 +475,13 @@ class BertCrfTokenClassifier(nn.Module):
         else:
             raise FileNotFoundError(f"Missing weights at {safetensors_path} or {pytorch_path}")
         
-        model.load_state_dict(state)
+        # strict=False：兼容新旧 checkpoint（旧版 late-fusion 的 noise_embeddings.* 会产生
+        # unexpected_keys，新版 early-fusion 的 bert.embeddings.noise_embeddings.* 则正常加载）
+        missing, unexpected = model.load_state_dict(state, strict=False)
+        if missing:
+            logger.warning(f"[from_pretrained] Missing keys ({len(missing)}): {missing[:5]}")
+        if unexpected:
+            logger.warning(f"[from_pretrained] Unexpected keys ({len(unexpected)}): {unexpected[:5]}")
         return model
 
     def _compute_boundary_label_ids(self) -> torch.Tensor:

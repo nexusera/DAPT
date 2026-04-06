@@ -40,10 +40,7 @@ from transformers.models.roberta.modeling_roberta import (
     BaseModelOutputWithPoolingAndCrossAttentions,
     MaskedLMOutput,
 )
-from transformers.models.bert.modeling_bert import (
-    BertEmbeddings,
-    BertPreTrainingHeads
-)
+from transformers.models.bert.modeling_bert import BertPreTrainingHeads
 from torch.nn import CrossEntropyLoss
 
 # 抑制 tokenization 的高频截断提示，避免日志 I/O 拖慢训练
@@ -62,6 +59,7 @@ from noise_fusion import (
     uses_concat_noise,
     needs_bucket_ids,
 )
+from noise_bert_model import BertNoiseEmbeddings, BertModelWithNoise, NUM_BINS
 
 # 引入 KV-NSP 模块
 kv_nsp_dir = os.path.join(current_dir, "kv_nsp")
@@ -181,180 +179,7 @@ def is_main_process():
 # 1. 模型定义 (适配 MacBERT/BERT 架构)
 # ===========================
 
-# 定义 NUM_BINS (与 noise_embeddings.py 保持一致)
-NUM_BINS = {
-    "conf_avg": 64,
-    "conf_min": 64,
-    "conf_var_log": 32,
-    "conf_gap": 32,
-    "punct_err_ratio": 16,
-    "char_break_ratio": 32,
-    "align_score": 64,
-}
-
-class BertNoiseEmbeddings(BertEmbeddings):
-    def __init__(self, config):
-        super().__init__(config)
-        self.noise_dim = len(FEATURES)
-        self.noise_mode = str(getattr(config, "noise_mode", "bucket") or "bucket").lower()
-        self.noise_mlp_hidden_dim = getattr(config, "noise_mlp_hidden_dim", None)
-        self.noise_concat_embed_dim = getattr(config, "noise_concat_embed_dim", 64)
-        self.noise_bin_edges = getattr(config, "noise_bin_edges", None)
-        self.noise_embeddings = None
-        self.noise_projector = None
-        self.concat_embedder = None
-        if uses_bucket_noise(self.noise_mode):
-            self.noise_embeddings = torch.nn.ModuleDict()
-            for feat in FEATURES:
-                n_bins = NUM_BINS.get(feat, 64)
-                self.noise_embeddings[feat] = torch.nn.Embedding(n_bins + 1, config.hidden_size)
-        elif uses_continuous_noise(self.noise_mode):
-            self.noise_projector = ContinuousNoiseProjector(
-                config.hidden_size,
-                mode=self.noise_mode,
-                dropout=getattr(config, "hidden_dropout_prob", 0.1),
-                mlp_hidden_dim=self.noise_mlp_hidden_dim,
-                feature_ranges=self.noise_bin_edges,
-            )
-        elif uses_concat_noise(self.noise_mode):
-            self.concat_embedder = ConcatLinearNoiseEmbedder(
-                hidden_size=config.hidden_size,
-                num_bins_per_feat=NUM_BINS,
-                embed_dim=int(self.noise_concat_embed_dim),
-                dropout=getattr(config, "hidden_dropout_prob", 0.1),
-            )
-        else:
-            raise ValueError(f"Unsupported noise_mode: {self.noise_mode}")
-        self.alpha = torch.nn.Parameter(torch.tensor(0.1, dtype=torch.float32))
-        self._reset_noise_parameters()
-
-    def _reset_noise_parameters(self):
-        if self.noise_embeddings is not None:
-            for emb in self.noise_embeddings.values():
-                torch.nn.init.normal_(emb.weight, mean=0.0, std=0.02)
-
-    def forward(self, input_ids=None, token_type_ids=None, position_ids=None, inputs_embeds=None, past_key_values_length=0, noise_ids=None, noise_values=None):
-        if input_ids is not None:
-            input_shape = input_ids.size()
-        else:
-            input_shape = inputs_embeds.size()[:-1]
-
-        seq_length = input_shape[1]
-
-        if position_ids is None:
-            if input_ids is not None:
-                 # Create position ids from input ids usually, simpler approach for standard BERT:
-                 device = input_ids.device
-            else:
-                 device = inputs_embeds.device
-            
-            position_ids = torch.arange(past_key_values_length, seq_length + past_key_values_length, dtype=torch.long, device=device)
-            position_ids = position_ids.unsqueeze(0).expand(input_shape)
-
-        if token_type_ids is None:
-             device = input_ids.device if input_ids is not None else inputs_embeds.device
-             token_type_ids = torch.zeros(input_shape, dtype=torch.long, device=device)
-
-        if inputs_embeds is None:
-            inputs_embeds = self.word_embeddings(input_ids)
-
-        token_type_embeddings = self.token_type_embeddings(token_type_ids)
-        embeddings = inputs_embeds + token_type_embeddings
-        
-        position_embeddings = self.position_embeddings(position_ids)
-        embeddings += position_embeddings
-
-        if uses_bucket_noise(self.noise_mode) and noise_ids is not None:
-            if noise_ids.dim() == 2:
-                noise_ids = noise_ids.unsqueeze(0)
-            noise_ids = noise_ids.to(embeddings.device)
-            noise_embed = 0.0
-            for i, feat in enumerate(FEATURES):
-                emb_layer = self.noise_embeddings[feat]
-                ids_clamped = noise_ids[:, :, i].clamp(min=0, max=emb_layer.num_embeddings - 1)
-                noise_embed = noise_embed + emb_layer(ids_clamped)
-            embeddings = embeddings + self.alpha * noise_embed
-        elif uses_continuous_noise(self.noise_mode) and noise_values is not None:
-            if noise_values.dim() == 2:
-                noise_values = noise_values.unsqueeze(0)
-            noise_values = noise_values.to(embeddings.device, dtype=torch.float32)
-            noise_embed = self.noise_projector(noise_values)
-            embeddings = embeddings + self.alpha * noise_embed
-        elif uses_concat_noise(self.noise_mode) and noise_ids is not None:
-            # Concat-Linear：7路分桶嵌入拼接后线性映射，保留各维独立表示
-            if noise_ids.dim() == 2:
-                noise_ids = noise_ids.unsqueeze(0)
-            noise_ids = noise_ids.to(embeddings.device)
-            noise_embed = self.concat_embedder(noise_ids)
-            embeddings = embeddings + self.alpha * noise_embed
-
-        embeddings = self.LayerNorm(embeddings)
-        embeddings = self.dropout(embeddings)
-        return embeddings
-
-class BertModelWithNoise(BertModel):
-    def __init__(self, config, add_pooling_layer=True):
-        super().__init__(config, add_pooling_layer=add_pooling_layer)
-        self.embeddings = BertNoiseEmbeddings(config)
-    
-    def forward(self, input_ids=None, attention_mask=None, token_type_ids=None, position_ids=None, 
-                head_mask=None, inputs_embeds=None, encoder_hidden_states=None, encoder_attention_mask=None, 
-                past_key_values=None, use_cache=None, output_attentions=None, output_hidden_states=None, 
-                return_dict=None, noise_ids=None, noise_values=None):
-        
-        return_dict = return_dict if return_dict is not None else self.config.use_return_dict
-        
-        if input_ids is not None and inputs_embeds is not None:
-             raise ValueError("You cannot specify both input_ids and inputs_embeds at the same time")
-        elif input_ids is not None:
-            input_shape = input_ids.size()
-        elif inputs_embeds is not None:
-            input_shape = inputs_embeds.size()[:-1]
-        
-        device = input_ids.device if input_ids is not None else inputs_embeds.device
-
-        if token_type_ids is None:
-            if hasattr(self.embeddings, "token_type_ids"):
-                buffered_token_type_ids = self.embeddings.token_type_ids[:, :input_shape[1]]
-                buffered_token_type_ids_expanded = buffered_token_type_ids.expand(input_shape[0], input_shape[1])
-                token_type_ids = buffered_token_type_ids_expanded
-            else:
-                token_type_ids = torch.zeros(input_shape, dtype=torch.long, device=device)
-
-        embedding_output = self.embeddings(
-            input_ids=input_ids,
-            position_ids=position_ids,
-            token_type_ids=token_type_ids,
-            inputs_embeds=inputs_embeds,
-            past_key_values_length=0,
-            noise_ids=noise_ids,
-            noise_values=noise_values,
-        )
-
-        encoder_outputs = self.encoder(
-            embedding_output,
-            attention_mask=self.get_extended_attention_mask(attention_mask, input_shape, device),
-            head_mask=self.get_head_mask(head_mask, self.config.num_hidden_layers),
-            encoder_hidden_states=encoder_hidden_states,
-            encoder_attention_mask=encoder_attention_mask,
-            output_attentions=output_attentions,
-            output_hidden_states=output_hidden_states,
-            return_dict=return_dict,
-        )
-        
-        sequence_output = encoder_outputs[0]
-        pooled_output = self.pooler(sequence_output) if self.pooler is not None else None
-
-        if not return_dict:
-            return (sequence_output, pooled_output) + encoder_outputs[1:]
-
-        return BaseModelOutputWithPoolingAndCrossAttentions(
-            last_hidden_state=sequence_output,
-            pooler_output=pooled_output,
-            hidden_states=encoder_outputs.hidden_states,
-            attentions=encoder_outputs.attentions,
-            cross_attentions=encoder_outputs.cross_attentions,
-        )
+# BertNoiseEmbeddings / BertModelWithNoise / NUM_BINS 已从 noise_bert_model 导入，此处不再重复定义。
 
 @dataclass
 class MultiTaskOutput(MaskedLMOutput):

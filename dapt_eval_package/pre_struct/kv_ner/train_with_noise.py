@@ -33,14 +33,14 @@ from torch.utils.data import DataLoader, Dataset
 from tqdm import tqdm
 from transformers import AutoTokenizer, get_linear_schedule_with_warmup
 try:
-    from noise_fusion import uses_bucket_noise, uses_continuous_noise
+    from noise_fusion import uses_bucket_noise, uses_continuous_noise, needs_bucket_ids
 except Exception:  # pragma: no cover
     import sys
     from pathlib import Path as _Path
     _ROOT = _Path(__file__).resolve().parents[3]
     if str(_ROOT) not in sys.path:
         sys.path.insert(0, str(_ROOT))
-    from noise_fusion import uses_bucket_noise, uses_continuous_noise
+    from noise_fusion import uses_bucket_noise, uses_continuous_noise, needs_bucket_ids
 
 if __package__ in (None, ""):
     _PACKAGE_ROOT = Path(__file__).resolve().parents[2]
@@ -593,7 +593,7 @@ def _evaluate_model(
             
             # 如果有noise_ids且模型支持，传入（允许样本缺噪声时跳过）
             if use_noise:
-                if uses_bucket_noise(noise_mode) and "noise_ids" in (batch if isinstance(batch, dict) else batch.__dict__):
+                if needs_bucket_ids(noise_mode) and "noise_ids" in (batch if isinstance(batch, dict) else batch.__dict__):
                     raw_noise = batch.get("noise_ids") if isinstance(batch, dict) else batch.noise_ids
                     noise_ids = raw_noise.to(device) if raw_noise is not None else None
                     if noise_ids is not None and model.use_noise and model.noise_embeddings:
@@ -1032,7 +1032,7 @@ def train(args: argparse.Namespace) -> None:
                 "labels": labels,
             }
             # 如果有noise_ids，传入模型
-            if uses_bucket_noise(noise_mode) and hasattr(batch, "noise_ids") and batch.noise_ids is not None:
+            if needs_bucket_ids(noise_mode) and hasattr(batch, "noise_ids") and batch.noise_ids is not None:
                 noise_ids = batch.noise_ids.to(device)
                 if model.use_noise and model.noise_embeddings:
                     with torch.no_grad():

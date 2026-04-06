@@ -22,12 +22,12 @@ import torch
 # Noise support
 from pre_struct.kv_ner.noise_utils import NoiseFeatureProcessor, PERFECT_VALUES
 try:
-    from noise_fusion import aggregate_token_noise_values, uses_bucket_noise, uses_continuous_noise
+    from noise_fusion import aggregate_token_noise_values, uses_bucket_noise, uses_continuous_noise, needs_bucket_ids
 except Exception:  # pragma: no cover
     _REPO_ROOT = Path(__file__).resolve().parents[3]
     if str(_REPO_ROOT) not in sys.path:
         sys.path.insert(0, str(_REPO_ROOT))
-    from noise_fusion import aggregate_token_noise_values, uses_bucket_noise, uses_continuous_noise
+    from noise_fusion import aggregate_token_noise_values, uses_bucket_noise, uses_continuous_noise, needs_bucket_ids
 # Removed EBQA imports
 
 # Setup logging
@@ -249,7 +249,7 @@ def _build_noise_features(offset_mapping, noise_values, processor, noise_mode):
         chunk_char_start=0,
         perfect_values=PERFECT_VALUES,
     )
-    if uses_bucket_noise(noise_mode):
+    if needs_bucket_ids(noise_mode):
         ids = [processor.values_to_bin_ids(row) for row in token_noise_values]
         return {"noise_ids": torch.tensor(ids, dtype=torch.long)}
     if uses_continuous_noise(noise_mode):
