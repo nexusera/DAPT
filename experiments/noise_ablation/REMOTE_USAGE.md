@@ -98,13 +98,18 @@ bash experiments/noise_ablation/run_noise_pretrain_all.sh
 ```
 
 ### 4.3 三卡并行
-tmux attach -t noise_ab
+tmux attach -t noise_ab_true
 
 ```bash
 cd /data/ocean/DAPT
+
 GPU_LIST=2,3,4 PARALLEL=1 RESUME=1 \
 bash experiments/noise_ablation/run_noise_pretrain_all.sh
 ```
+
+GPU_LIST=3,4,5 PARALLEL=1 RESUME=0 CLEAN_BEFORE_RUN=1 \
+DATALOADER_NUM_WORKERS=8 PER_DEVICE_TRAIN_BATCH_SIZE=32 GRADIENT_ACCUMULATION_STEPS=2 \
+bash experiments/noise_ablation/run_noise_pretrain_all.sh | tee runs/noise_ablation_logs/_pretrain_driver.$(date +%F_%H%M%S).log
 
 ### 4.4 常用可选参数
 
@@ -148,6 +153,10 @@ bash experiments/noise_ablation/run_noise_kvner_all.sh
 ```
 
 ### 5.2 三卡并行
+
+cd /data/ocean/DAPT
+GPU_LIST=3,4,5 PARALLEL=1 RESUME=1 \
+bash experiments/noise_ablation/run_noise_kvner_all.sh
 
 ```bash
 cd /data/ocean/DAPT

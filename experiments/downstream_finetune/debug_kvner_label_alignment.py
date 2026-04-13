@@ -10,7 +10,7 @@ Usage:
   python debug_kvner_label_alignment.py \
     --config /data/ocean/DAPT/experiments/downstream_finetune/generated_configs/kv_ner_config_t2.json \
     --split train --max_samples 200
-
+CUDA_VISIBLE_DEVICES=0,1
 It prints:
 - number of samples loaded
 - number of chunks (after optional chunking)

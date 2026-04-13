@@ -1,0 +1,26 @@
+{
+  "ocr_text": "姓名：张三\n性别：男\n年龄：45岁\n临床诊断：肺腺癌",
+  "report_title": "通用病历",
+  "words_result": [
+    {
+      "words": "姓名：张三",
+      "probability": {"average": 0.98, "min": 0.95, "variance": 0.001},
+      "location": {"top": 50, "left": 30, "width": 200, "height": 30}
+    },
+    {
+      "words": "性别：男",
+      "probability": {"average": 0.99, "min": 0.98, "variance": 0.0001},
+      "location": {"top": 85, "left": 30, "width": 150, "height": 30}
+    },
+    {
+      "words": "年龄：45岁",
+      "probability": {"average": 0.97, "min": 0.9, "variance": 0.003},
+      "location": {"top": 120, "left": 30, "width": 180, "height": 30}
+    },
+    {
+      "words": "临床诊断：肺腺癌",
+      "probability": {"average": 0.96, "min": 0.88, "variance": 0.004},
+      "location": {"top": 155, "left": 30, "width": 280, "height": 30}
+    }
+  ]
+}

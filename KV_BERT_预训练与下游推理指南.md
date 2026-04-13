@@ -2,6 +2,10 @@
 
 本文档汇总当前实验仓库中 **KV-BERT**（噪声鲁棒、面向半结构化键值抽取的预训练框架）的**数据准备、预训练、推理与评测**流程，并与 `pipeline_new.md`、`pipeline_xiaorong.md`、`pipeline_task2_xiaorong.md` 及 `paper.md` 中的设定对齐。路径以服务器示例 `/data/ocean/DAPT` 为准，本地开发时可按需替换。
 
+
+
+
+
 ---
 
 ## 1. 方法概览（与论文一致）
@@ -19,11 +23,13 @@
 
 ### 2.1 去重与可选重采样
 
-| 步骤 | 脚本 | 说明 |
-|------|------|------|
-| 提取与 MD5 去重 | `extract_and_dedup_json_v2.py` | 多源 JSON/TXT → 干净文本，如 `train.txt` |
-| 分源重采样（可选） | `resample_mix.py` | 调整临床/书籍/论文/通用等占比 |
-| 长行滑窗（可选） | `chunk_long_lines.py` | 如 window=1000, stride=500，减轻 512 截断 |
+
+| 步骤         | 脚本                             | 说明                                  |
+| ---------- | ------------------------------ | ----------------------------------- |
+| 提取与 MD5 去重 | `extract_and_dedup_json_v2.py` | 多源 JSON/TXT → 干净文本，如 `train.txt`    |
+| 分源重采样（可选）  | `resample_mix.py`              | 调整临床/书籍/论文/通用等占比                    |
+| 长行滑窗（可选）   | `chunk_long_lines.py`          | 如 window=1000, stride=500，减轻 512 截断 |
+
 
 ### 2.2 词表与 Tokenizer
 
@@ -42,7 +48,7 @@
 
 - **OCR 路**（有真实噪声对齐）  
   - 导出文本：`export_ocr_texts.py`  
-  - `build_dataset_final_slim.py`：**`--no_shuffle_split`** 保持与 OCR JSON 顺序一致  
+  - `build_dataset_final_slim.py`：`**--no_shuffle_split`** 保持与 OCR JSON 顺序一致  
   - `add_noise_features.py`：写入 `noise_values`（7 维连续值，按 token/word 对齐）  
   - 校验：`verify_noise_alignment.py`
 - **非 OCR 路**（书籍/指南/百科等）  
@@ -68,19 +74,21 @@ ln -sfn /data/ocean/DAPT/workspace/processed_dataset_merged \
 
 ### 3.2 默认与常用超参（摘录）
 
-| 参数 | 典型值 | 含义 |
-|------|--------|------|
-| `--learning_rate` | 5e-5 | 预训练学习率 |
-| `--num_rounds` | 3 | MLM/NSP 交替轮数 |
-| `--mlm_epochs_per_round` | 1 | 每轮 MLM epoch 数 |
-| `--nsp_epochs_per_round` | 3 | 每轮 KV-NSP epoch 数 |
-| `--mlm_probability` | 0.15 | MLM 掩码比例 |
-| `--max_length` | 512 | 最大序列长度 |
-| `--mlm_masking` | `kv_wwm` / `token` | KV 全词掩码 vs 普通 MLM 消融 |
-| `--noise_mode` | `bucket` / `linear` / `mlp` / `concat_linear` | 噪声嵌入形式 |
-| `--nsp_negative_prob` | 0.5 | KV-NSP 中采负样本的总概率 |
-| `--nsp_reverse_negative_ratio` | 1 | 负样本中「倒序」相对权重 |
-| `--nsp_random_negative_ratio` | 1 | 负样本中「随机 value」相对权重 |
+
+| 参数                             | 典型值                                           | 含义                   |
+| ------------------------------ | --------------------------------------------- | -------------------- |
+| `--learning_rate`              | 5e-5                                          | 预训练学习率               |
+| `--num_rounds`                 | 3                                             | MLM/NSP 交替轮数         |
+| `--mlm_epochs_per_round`       | 1                                             | 每轮 MLM epoch 数       |
+| `--nsp_epochs_per_round`       | 3                                             | 每轮 KV-NSP epoch 数    |
+| `--mlm_probability`            | 0.15                                          | MLM 掩码比例             |
+| `--max_length`                 | 512                                           | 最大序列长度               |
+| `--mlm_masking`                | `kv_wwm` / `token`                            | KV 全词掩码 vs 普通 MLM 消融 |
+| `--noise_mode`                 | `bucket` / `linear` / `mlp` / `concat_linear` | 噪声嵌入形式               |
+| `--nsp_negative_prob`          | 0.5                                           | KV-NSP 中采负样本的总概率     |
+| `--nsp_reverse_negative_ratio` | 1                                             | 负样本中「倒序」相对权重         |
+| `--nsp_random_negative_ratio`  | 1                                             | 负样本中「随机 value」相对权重   |
+
 
 ### 3.3 产物目录
 
@@ -118,10 +126,12 @@ python /data/ocean/DAPT/train_dapt_macbert_staged.py \
 
 ## 4. 下游任务总览
 
-| 任务 | 含义 | 主流程文档 |
-|------|------|------------|
-| Task 1 / 3 | KV 结构化抽取（span 级等） | `pipeline_xiaorong.md` |
-| Task 2 | 基于查询的抽取（EBQA 形式） | `pipeline_task2_xiaorong.md` |
+
+| 任务         | 含义                | 主流程文档                        |
+| ---------- | ----------------- | ---------------------------- |
+| Task 1 / 3 | KV 结构化抽取（span 级等） | `pipeline_xiaorong.md`       |
+| Task 2     | 基于查询的抽取（EBQA 形式）  | `pipeline_task2_xiaorong.md` |
+
 
 更换预训练 checkpoint 时，**统一修改各 JSON 配置中的 `model_name_or_path` / `tokenizer_name_or_path`** 指向新的 `final_staged_model`。
 
@@ -147,7 +157,7 @@ python /data/ocean/DAPT/dapt_eval_package/pre_struct/kv_ner/train_with_noise.py 
   --noise_bins "/data/ocean/DAPT/workspace/noise_bins.json"
 ```
 
-不同预训练变体使用不同 `kv_ner_config_*.json`（如 `staged` / `hybrid` / `mtl` / 消融 `no_nsp` / `no_mlm` / `no_noise` / `noise_*`），保证 **`output_dir` 互不覆盖**。
+不同预训练变体使用不同 `kv_ner_config_*.json`（如 `staged` / `hybrid` / `mtl` / 消融 `no_nsp` / `no_mlm` / `no_noise` / `noise_*`），保证 `**output_dir` 互不覆盖**。
 
 ### 5.3 推理（生成预测与 GT 旁路文件）
 
@@ -159,7 +169,7 @@ python /data/ocean/DAPT/dapt_eval_package/pre_struct/kv_ner/compare_models.py \
   --output_summary /data/ocean/DAPT/runs/macbert_eval_summary.json
 ```
 
-`compare_models.py` 会在 `output_summary` 对应路径生成 **`_preds.jsonl`** 与 **`_gt.jsonl`**，供后续评分。
+`compare_models.py` 会在 `output_summary` 对应路径生成 `**_preds.jsonl**` 与 `**_gt.jsonl**`，供后续评分。
 
 ### 5.4 Task 1：Span 对齐 + 打分
 
@@ -276,17 +286,19 @@ python scorer.py \
 
 ## 7. 关键脚本与配置文件索引
 
-| 类别 | 路径 |
-|------|------|
-| 主预训练 | `train_dapt_macbert_staged.py` |
-| 预训练流程说明 | `pipeline_new.md` |
-| KV-NER 训练/推理 | `dapt_eval_package/pre_struct/kv_ner/train_with_noise.py`、`compare_models.py` |
-| KV-NER 配置 | `dapt_eval_package/pre_struct/kv_ner/kv_ner_config*.json` |
-| EBQA 转换/训练/推理 | `pre_struct/ebqa/convert_ebqa.py`、`train_ebqa.py`、`predict_ebqa.py`、`aggregate_qa_preds_to_doc.py` |
-| EBQA 配置 | `pre_struct/ebqa/ebqa_config*.json` |
-| Task1 span 对齐 | `scripts/align_for_scorer_span.py` |
-| 泄漏/对齐检查（预训练数据） | `scripts/check_pretrain_test_leakage.py`（若需保证划分无泄漏可配合使用） |
-| 论文方法与符号 | `paper.md` |
+
+| 类别             | 路径                                                                                                 |
+| -------------- | -------------------------------------------------------------------------------------------------- |
+| 主预训练           | `train_dapt_macbert_staged.py`                                                                     |
+| 预训练流程说明        | `pipeline_new.md`                                                                                  |
+| KV-NER 训练/推理   | `dapt_eval_package/pre_struct/kv_ner/train_with_noise.py`、`compare_models.py`                      |
+| KV-NER 配置      | `dapt_eval_package/pre_struct/kv_ner/kv_ner_config*.json`                                          |
+| EBQA 转换/训练/推理  | `pre_struct/ebqa/convert_ebqa.py`、`train_ebqa.py`、`predict_ebqa.py`、`aggregate_qa_preds_to_doc.py` |
+| EBQA 配置        | `pre_struct/ebqa/ebqa_config*.json`                                                                |
+| Task1 span 对齐  | `scripts/align_for_scorer_span.py`                                                                 |
+| 泄漏/对齐检查（预训练数据） | `scripts/check_pretrain_test_leakage.py`（若需保证划分无泄漏可配合使用）                                           |
+| 论文方法与符号        | `paper.md`                                                                                         |
+
 
 ---
 
@@ -303,3 +315,14 @@ python scorer.py \
 
 - 本文档由仓库内 `pipeline_new.md`、`pipeline_xiaorong.md`、`pipeline_task2_xiaorong.md` 与 `paper.md` 整理而成；**具体绝对路径、GPU 编号、conda 环境名**请以实际部署为准。
 - 新增预训练消融或下游实验时，优先复制一份 JSON 配置并修改 `output_dir` 与 `model_name_or_path`，避免相互覆盖。
+
+
+
+## 10. 使用注意点
+
+非OCR路可以做shuffle，OCR路不能shuffle，否则可能会出问题。
+
+当前是分阶段训练，做联合训练的话，kv-nsp很容易训崩。因此当前就是交替训练，训练三轮。这里期望能找到一个更好的选择checkpoint的方法（TODO）
+
+
+
