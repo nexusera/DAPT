@@ -43,7 +43,7 @@ class ExtractRequest(BaseModel):
     )
     report_title: Optional[str] = Field(
         default=None,
-        description="报告类型标题（如"凝血功能""病理报告"），最大 64 字符。",
+        description='报告类型标题（如"凝血功能""病理报告"），最大 64 字符。',
         max_length=64,
     )
     words_result: Optional[List[WordResult]] = Field(
