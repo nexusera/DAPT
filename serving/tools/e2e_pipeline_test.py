@@ -171,12 +171,11 @@ def _reconstruct_text_no_location(words_result: List[Dict]) -> str:
 
 def reconstruct_ocr_text(words_result: List[Dict]) -> str:
     """
-    选择合适策略重建 OCR 文本，与 compare_models.py 的推理逻辑对齐。
-    - 有 location：空间重建（同行合并后换行），还原版面结构
-    - 无 location：直接拼接，与 compare_models._extract_ocr_text 一致
+    OCR 文本重建：始终用 ''.join(words)，与 compare_models._extract_ocr_text 完全一致。
+
+    注意：location 信息不影响文本格式，仅用于 noise_extractor 计算 7 维噪声特征。
+    文本格式与噪声特征是两个独立的关注点。
     """
-    if _has_location(words_result):
-        return _reconstruct_text_spatial(words_result)
     return _reconstruct_text_no_location(words_result)
 
 
@@ -292,7 +291,15 @@ def print_result(subdir_name: str, ocr_source: str, payload: Dict, result: Dict,
 
     noise = result.get("noise_summary", {})
     if noise:
-        print(f"  噪声模式: {noise.get('mode', '?')}  |  来源: {noise.get('source', '?')}")
+        has_loc = any("location" in w for w in payload.get("words_result", []))
+        has_prob = any("probability" in w for w in payload.get("words_result", []))
+        noise_src = "words_result(loc+prob)" if (has_loc and has_prob) else \
+                    "words_result(prob_only)" if has_prob else \
+                    "perfect_fallback"
+        print(f"  噪声来源: {noise_src}")
+        print(f"  avg_confidence={noise.get('avg_confidence','?')}  "
+              f"min_confidence={noise.get('min_confidence','?')}  "
+              f"low_conf_ratio={noise.get('low_conf_char_ratio','?')}")
 
     print(f"  OCR文本前120字: {payload['ocr_text'][:120]!r}")
     print(f"{bar}")
