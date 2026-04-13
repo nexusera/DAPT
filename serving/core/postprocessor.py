@@ -18,7 +18,7 @@ for _p in [str(_DAPT_ROOT), str(_EVAL_PKG)]:
     if _p not in sys.path:
         sys.path.insert(0, _p)
 
-from pre_struct.kv_ner.compare_models import (
+from pre_struct.kv_ner.predict import (
     _assemble_pairs,
     _postprocess_value_for_key,
 )
