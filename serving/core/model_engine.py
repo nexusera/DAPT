@@ -136,8 +136,11 @@ class ModelEngine:
             except Exception as exc:
                 logger.warning(f"torch.compile 失败，将使用 eager 模式: {exc}")
 
-        logger.info(f"加载 Tokenizer: {model_dir}")
-        self.tokenizer = AutoTokenizer.from_pretrained(model_dir, use_fast=True)
+        # tokenizer 可能保存在 model_dir/tokenizer/ 子目录（训练时的保存习惯）
+        _tok_dir = Path(model_dir) / "tokenizer"
+        tokenizer_dir = str(_tok_dir) if _tok_dir.is_dir() else model_dir
+        logger.info(f"加载 Tokenizer: {tokenizer_dir}")
+        self.tokenizer = AutoTokenizer.from_pretrained(tokenizer_dir, use_fast=True)
 
         self._ready = True
         logger.info("模型引擎初始化完成")

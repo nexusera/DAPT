@@ -3,7 +3,7 @@
 服务配置，通过环境变量或 .env 文件覆盖默认值。
 
 使用示例：
-    export MODEL_DIR=/data/ocean/DAPT/workspace/output_macbert_kvmlm_staged/final_staged_model
+    export MODEL_DIR=/data/ocean/DAPT/runs/kv_ner_finetuned_noise_bucket/best
     export NOISE_BINS_PATH=/data/ocean/DAPT/workspace/noise_bins.json
     uvicorn serving.app:app --host 0.0.0.0 --port 8000
 """
@@ -25,7 +25,7 @@ class Settings(BaseSettings):
 
     # ── 模型路径 ──────────────────────────────────────────────────────────────
     # 微调后的 KV-NER checkpoint 目录（含 pytorch_model.bin / config.json / tokenizer）
-    model_dir: str = "/data/ocean/DAPT/workspace/output_macbert_kvmlm_staged/final_staged_model"
+    model_dir: str = "/data/ocean/DAPT/runs/kv_ner_finetuned_noise_bucket/best"
 
     # 噪声分桶边界文件（由 noise_feature_processor.py 预计算）
     noise_bins_path: str = "/data/ocean/DAPT/workspace/noise_bins.json"

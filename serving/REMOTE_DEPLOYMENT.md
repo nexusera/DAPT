@@ -43,77 +43,56 @@ git pull
 
 ---
 
-## 3. 方式 A：Conda 环境部署（推荐，与训练环境隔离）
+## 3. 方式 A：Conda 环境部署（推荐）
 
-### 3.1 确认 Conda 可用
+> **当前服务器已有可用的训练环境 `medical_bert`**，模型加载已验证通过。  
+> **直接复用该环境**，只需额外安装几个纯服务层的包，无需新建环境。
 
-```bash
-conda --version        # 若无，按 https://docs.anaconda.com/miniconda/ 安装 Miniconda
-nvidia-smi             # 确认 GPU 驱动正常，记下 CUDA 版本（如 12.4）
-python --version       # 只是查看系统 Python，不重要
-```
-
-### 3.2 创建并激活 Conda 环境
-
-> **当前服务器环境**：CUDA 12.8 驱动（570.158.01），系统 Python 3.13.5（太新，ML 包兼容性差）。  
-> **必须**在 conda 里指定 Python 3.10/3.11，并安装 cu124 轮子（驱动向下兼容 runtime 12.4）。
+### 3.1 激活已有环境并补装服务依赖
 
 ```bash
-# 创建名为 kv-bert-serving 的环境（Python 3.10，勿用系统 3.13）
-conda create -n kv-bert-serving python=3.10 -y
-conda activate kv-bert-serving
+conda activate medical_bert
 
-# 安装 PyTorch（CUDA 12.4 轮子，与 CUDA 12.8 驱动兼容）
-pip install torch==2.5.1 --index-url https://download.pytorch.org/whl/cu124
-
-# 验证 GPU 可见（注意：GPU 0-4,6 已被 VLLM 占满，必须指定空闲卡）
-CUDA_VISIBLE_DEVICES=5 python -c "import torch; print('CUDA:', torch.cuda.is_available(), '| version:', torch.version.cuda, '| GPU:', torch.cuda.get_device_name(0))"
-```
-
-### 3.3 安装服务依赖
-
-```bash
-cd /data/ocean/DAPT
-
-# 安装 serving 层依赖（torch 已装，其余包跟进）
-pip install -r serving/requirements.txt
+# 补装服务层依赖（FastAPI、uvicorn、pydantic-settings、safetensors）
+# safetensors 必须安装：模型使用 model.safetensors 格式
+pip install fastapi uvicorn pydantic-settings safetensors
 
 # 安装测试依赖（可选）
-pip install -r serving/requirements-dev.txt
+pip install pytest requests
 ```
 
-> **`torchcrf` 兼容说明**：PyPI 上存在两个包名，二者实现相同：
-> - `torchcrf`（本项目 requirements 使用）
-> - `pytorch-crf`（同一作者，更新更频繁）
->
-> 如遇安装失败或 import 报错，改用：
+> **如果需要全新隔离环境**（可选）：
 > ```bash
-> pip install pytorch-crf
+> conda create -n kv-bert-serving python=3.10 -y
+> conda activate kv-bert-serving
+> pip install torch==2.5.1 --index-url https://download.pytorch.org/whl/cu124
+> pip install -r /data/ocean/DAPT/serving/requirements.txt
+> pip install safetensors
 > ```
-> 安装后 import 均为 `from torchcrf import CRF`，无需改代码。
 
-依赖自洽性验证：
+### 3.2 依赖自洽性验证
 
 ```bash
 python -c "
-import torch, transformers, torchcrf, fastapi, pydantic
+import torch, transformers, torchcrf, fastapi, pydantic, safetensors
 print('torch:', torch.__version__)
 print('transformers:', transformers.__version__)
 print('torchcrf: OK')
 print('fastapi:', fastapi.__version__)
 print('pydantic:', pydantic.__version__)
+print('safetensors: OK')
 "
 ```
 
-### 3.4 环境变量
+### 3.3 环境变量
 
 将 **模型目录** 与 **noise_bins.json** 换成你在远端的真实路径：
 
 ```bash
-# ⚠️ 关键：GPU 0-4,6 已被 VLLM 占满，必须指定空闲卡（5 或 7）
-export CUDA_VISIBLE_DEVICES=5
+#必须指定空闲卡
+export CUDA_VISIBLE_DEVICES=1
 
-export MODEL_DIR=/data/ocean/DAPT/workspace/output_macbert_kvmlm_staged/final_staged_model
+export MODEL_DIR=/data/ocean/DAPT/runs/kv_ner_finetuned_noise_bucket/best
 export NOISE_BINS_PATH=/data/ocean/DAPT/workspace/noise_bins.json
 export DEVICE=cuda
 
@@ -128,13 +107,13 @@ export DEVICE=cuda
 
 > 建议将这些 `export` 写入 `~/.bashrc` 或项目下的 `.env` 文件，重新登录后自动生效。
 
-### 3.5 启动服务
+### 3.4 启动服务
 
 在 **`DAPT` 目录**下执行（保证能 import `serving` 与仓库根目录模块）：
 
 ```bash
 # 确认 conda 环境已激活
-conda activate kv-bert-serving
+conda activate medical_bert
 
 cd /data/ocean/DAPT
 export PYTHONPATH="/data/ocean/DAPT:/data/ocean/DAPT/dapt_eval_package:${PYTHONPATH}"
@@ -148,13 +127,13 @@ uvicorn serving.app:app --host 0.0.0.0 --port 8000 --workers 1
 - 后台持久运行可用 `nohup` 或 `screen`（见下文 §3.6）。
 - 仅内网调试可加 `--reload`，生产勿用。
 
-### 3.6 后台持久运行（screen / nohup）
+### 3.5 后台持久运行（screen / nohup）
 
 **方式一：screen**（推荐，可随时 attach 查看日志）
 
 ```bash
 screen -S kv-bert-serving
-conda activate kv-bert-serving
+conda activate medical_bert
 cd /data/ocean/DAPT
 export PYTHONPATH="/data/ocean/DAPT:/data/ocean/DAPT/dapt_eval_package:${PYTHONPATH}"
 export MODEL_DIR=...  # 同上
@@ -174,7 +153,7 @@ echo "PID=$!"
 tail -f /tmp/kv-bert-serving.log   # 查看启动日志
 ```
 
-### 3.7 快速探活
+### 3.6 快速探活
 
 ```bash
 curl -s http://127.0.0.1:8000/health
@@ -221,7 +200,7 @@ docker run --gpus all --rm -p 8000:8000 \
 服务启动后（**确保 conda 环境已激活**）：
 
 ```bash
-conda activate kv-bert-serving
+conda activate medical_bert
 cd /data/ocean/DAPT
 export PYTHONPATH="/data/ocean/DAPT:/data/ocean/DAPT/dapt_eval_package"
 python serving/test_api.py --base-url http://127.0.0.1:8000
@@ -252,7 +231,7 @@ curl -s -X POST http://127.0.0.1:8000/api/v1/extract \
 ### 5.3 自动化单元/集成测试（pytest）
 
 ```bash
-conda activate kv-bert-serving
+conda activate medical_bert
 ```
 
 **使用仓库内自带样例**（`serving/tests/fixtures/sample_ocr_request.json`）：
@@ -295,12 +274,11 @@ git pull
 # ② 确认可用 GPU（选 5 或 7）
 nvidia-smi --query-gpu=index,memory.used,memory.free --format=csv
 
-# ③ 创建 conda 环境（只做一次，指定 Python 3.10，不用系统 3.13）
-conda create -n kv-bert-serving python=3.10 -y
-conda activate kv-bert-serving
+# ③ 激活已有训练环境（已验证模型可正常加载）
+conda activate medical_bert
 
-# ④ 安装 PyTorch（cu124 轮子兼容 CUDA 12.8 驱动）
-pip install torch==2.5.1 --index-url https://download.pytorch.org/whl/cu124
+# ④ 补装服务层依赖（safetensors 必须，模型为 .safetensors 格式）
+pip install fastapi uvicorn pydantic-settings safetensors pytest requests
 
 # ⑤ 验证 GPU（必须指定空闲卡，否则 VLLM 占用的 GPU 0 会报错）
 CUDA_VISIBLE_DEVICES=5 python -c "
@@ -310,15 +288,12 @@ print('GPU:', torch.cuda.get_device_name(0))
 print('Free mem:', round(torch.cuda.mem_get_info()[0]/1e9, 1), 'GB')
 "
 
-# ⑥ 安装服务依赖
-pip install -r /data/ocean/DAPT/serving/requirements-dev.txt
+# ⑥ 验证所有依赖自洽
+python -c "import torch, transformers, torchcrf, fastapi, pydantic, safetensors; print('ALL OK')"
 
-# ⑦ 验证所有依赖自洽
-python -c "import torch, transformers, torchcrf, fastapi, pydantic; print('ALL OK')"
-
-# ⑧ 设置环境变量
+# ⑦ 设置环境变量
 export CUDA_VISIBLE_DEVICES=5          # 使用空闲的 GPU 5
-export MODEL_DIR=/data/ocean/DAPT/workspace/output_macbert_kvmlm_staged/final_staged_model
+export MODEL_DIR=/data/ocean/DAPT/runs/kv_ner_finetuned_noise_bucket/best
 export NOISE_BINS_PATH=/data/ocean/DAPT/workspace/noise_bins.json
 export DEVICE=cuda
 export PYTHONPATH="/data/ocean/DAPT:/data/ocean/DAPT/dapt_eval_package"
