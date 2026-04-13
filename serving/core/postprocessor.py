@@ -60,7 +60,7 @@ def assemble_kv(
     )
 
     # ── 构造 kv_pairs（含 value 后处理） ────────────────────────────────────
-        kv_pairs: List[Dict] = []
+    kv_pairs: List[Dict] = []
     for entry in assembled["pairs"]:
         key_ent = entry["key"]
         key_text: str = key_ent.get("text", "")
