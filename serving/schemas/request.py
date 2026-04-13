@@ -37,7 +37,12 @@ class WordResult(BaseModel):
 class ExtractRequest(BaseModel):
     ocr_text: str = Field(
         ...,
-        description="OCR 识别的页面全文，保留原始换行。长度 1~10000 字符。",
+        description=(
+            "OCR 识别的页面全文。长度 1~10000 字符。"
+            "构造方式：将 words_result 中每条 words 字段直接拼接（无分隔符），"
+            "即 ''.join(w['words'] for w in words_result)，"
+            "与 compare_models.py _extract_ocr_text 保持一致。"
+        ),
         min_length=1,
         max_length=10_000,
     )

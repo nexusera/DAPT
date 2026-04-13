@@ -161,19 +161,19 @@ def _reconstruct_text_spatial(words_result: List[Dict]) -> str:
 
 def _reconstruct_text_no_location(words_result: List[Dict]) -> str:
     """
-    无 location 信息时：与预训练 export_ocr_texts.py 保持一致，用空格拼接。
-    预训练文本格式：'姓名 王柏青 性别 男 年龄 72岁'（空格分隔，所有 words 连为一行）
-    这是模型在预训练和微调时实际见过的文本格式。
+    无 location 信息时：与 compare_models.py _extract_ocr_text 完全一致，直接拼接无分隔符。
+    NER 微调推理格式：'姓名：王柏青性别：男年龄：72岁'（零分隔，所有 words 直接拼接）
+    这是 compare_models.py 中 _extract_ocr_text() 的实现：return "".join(words)
     """
-    words = [w.get("words", "").strip() for w in words_result if w.get("words", "").strip()]
-    return " ".join(words)
+    words = [w.get("words", "") for w in words_result if w.get("words", "")]
+    return "".join(words)
 
 
 def reconstruct_ocr_text(words_result: List[Dict]) -> str:
     """
-    选择合适策略重建 OCR 文本。
+    选择合适策略重建 OCR 文本，与 compare_models.py 的推理逻辑对齐。
     - 有 location：空间重建（同行合并后换行），还原版面结构
-    - 无 location：空格拼接，与预训练文本格式一致
+    - 无 location：直接拼接，与 compare_models._extract_ocr_text 一致
     """
     if _has_location(words_result):
         return _reconstruct_text_spatial(words_result)
