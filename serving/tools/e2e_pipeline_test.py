@@ -119,6 +119,90 @@ def get_ocr_result(
     return None, "none"
 
 
+# ─── OCR 文本重建 ─────────────────────────────────────────────────────────────
+
+def _has_location(words_result: List[Dict]) -> bool:
+    return any("location" in w for w in words_result)
+
+
+def _reconstruct_text_spatial(words_result: List[Dict]) -> str:
+    """
+    有 location 信息时：按空间位置重建文本，同一行的 OCR 块用空格合并，不同行用换行。
+    判断"同行"：两个 block 的 top 差值 < min(height1, height2) * 0.6
+    """
+    blocks = []
+    for w in words_result:
+        text = w.get("words", "").strip()
+        if not text:
+            continue
+        loc = w.get("location", {})
+        top = float(loc.get("top", 0))
+        height = float(loc.get("height", 20))
+        left = float(loc.get("left", 0))
+        blocks.append({"text": text, "top": top, "height": height, "left": left})
+    if not blocks:
+        return ""
+    blocks.sort(key=lambda b: (b["top"], b["left"]))
+    lines_out: List[str] = []
+    cur_line: List[str] = [blocks[0]["text"]]
+    cur_top = blocks[0]["top"]
+    cur_h = blocks[0]["height"]
+    for b in blocks[1:]:
+        if abs(b["top"] - cur_top) < min(cur_h, b["height"]) * 0.6:
+            cur_line.append(b["text"])
+        else:
+            lines_out.append(" ".join(cur_line))
+            cur_line = [b["text"]]
+            cur_top = b["top"]
+            cur_h = b["height"]
+    lines_out.append(" ".join(cur_line))
+    return "\n".join(lines_out)
+
+
+def _reconstruct_text_semantic(words_result: List[Dict]) -> str:
+    """
+    无 location 信息时：语义拼接策略。
+    将"孤立短词（无冒号/无标点结尾）+ 下一行"合并为同行，
+    尽量还原 "姓名：王柏青" 这类自然格式，减少跨行 KEY-VALUE 断裂。
+    """
+    import re
+    lines = [w.get("words", "").strip() for w in words_result if w.get("words", "").strip()]
+    if not lines:
+        return ""
+
+    # 触发合并的条件：当前行是"纯 KEY 片段"（短、含冒号/无冒号但像字段名）
+    def _is_naked_key(s: str) -> bool:
+        # 以冒号结尾（字段名行）→ 下一行大概率是值
+        if s.endswith(("：", ":")):
+            return True
+        # 很短（≤5字）且不含数字/标点 → 孤立字段名
+        if len(s) <= 5 and not re.search(r"[\d\.\-/（）()【】\[\]]", s):
+            return True
+        return False
+
+    merged: List[str] = []
+    i = 0
+    while i < len(lines):
+        cur = lines[i]
+        if _is_naked_key(cur) and i + 1 < len(lines):
+            nxt = lines[i + 1]
+            # 如果下一行也像字段名，不合并（避免 KEY+KEY 拼接）
+            if not _is_naked_key(nxt):
+                merged.append(cur + nxt)
+                i += 2
+                continue
+        merged.append(cur)
+        i += 1
+    return "\n".join(merged)
+
+
+def reconstruct_ocr_text(words_result: List[Dict]) -> str:
+    """选择合适策略重建 OCR 文本。"""
+    if _has_location(words_result):
+        return _reconstruct_text_spatial(words_result)
+    return _reconstruct_text_semantic(words_result)
+
+
 # ─── 构造 API 请求体 ───────────────────────────────────────────────────────────
 
 def build_payload(ocr: Dict, report_title: Optional[str] = None) -> Optional[Dict]:
@@ -127,8 +211,7 @@ def build_payload(ocr: Dict, report_title: Optional[str] = None) -> Optional[Dic
     if not words_result:
         return None
 
-    lines = [w.get("words", "").strip() for w in words_result if w.get("words", "").strip()]
-    ocr_text = "\n".join(lines)
+    ocr_text = reconstruct_ocr_text(words_result)
     if not ocr_text:
         return None
 
