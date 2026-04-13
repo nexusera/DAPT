@@ -90,13 +90,10 @@ def build_request_from_baidu_ocr(data: Dict) -> Optional[Dict]:
     if not words_result:
         return None
 
-    # ocr_text：按换行拼接每行识别文本
-    lines = []
-    for item in words_result:
-        w = item.get("words", "").strip()
-        if w:
-            lines.append(w)
-    ocr_text = "\n".join(lines)
+    # ocr_text：用空格拼接（与预训练 export_ocr_texts.py 一致）
+    # 预训练文本格式：'姓名 王柏青 性别 男 年龄 72岁'
+    words = [item.get("words", "").strip() for item in words_result if item.get("words", "").strip()]
+    ocr_text = " ".join(words)
     if not ocr_text.strip():
         return None
 

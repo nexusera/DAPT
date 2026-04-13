@@ -159,48 +159,25 @@ def _reconstruct_text_spatial(words_result: List[Dict]) -> str:
     return "\n".join(lines_out)
 
 
-def _reconstruct_text_semantic(words_result: List[Dict]) -> str:
+def _reconstruct_text_no_location(words_result: List[Dict]) -> str:
     """
-    无 location 信息时：语义拼接策略。
-    将"孤立短词（无冒号/无标点结尾）+ 下一行"合并为同行，
-    尽量还原 "姓名：王柏青" 这类自然格式，减少跨行 KEY-VALUE 断裂。
+    无 location 信息时：与预训练 export_ocr_texts.py 保持一致，用空格拼接。
+    预训练文本格式：'姓名 王柏青 性别 男 年龄 72岁'（空格分隔，所有 words 连为一行）
+    这是模型在预训练和微调时实际见过的文本格式。
     """
-    import re
-    lines = [w.get("words", "").strip() for w in words_result if w.get("words", "").strip()]
-    if not lines:
-        return ""
-
-    # 触发合并的条件：当前行是"纯 KEY 片段"（短、含冒号/无冒号但像字段名）
-    def _is_naked_key(s: str) -> bool:
-        # 以冒号结尾（字段名行）→ 下一行大概率是值
-        if s.endswith(("：", ":")):
-            return True
-        # 很短（≤5字）且不含数字/标点 → 孤立字段名
-        if len(s) <= 5 and not re.search(r"[\d\.\-/（）()【】\[\]]", s):
-            return True
-        return False
-
-    merged: List[str] = []
-    i = 0
-    while i < len(lines):
-        cur = lines[i]
-        if _is_naked_key(cur) and i + 1 < len(lines):
-            nxt = lines[i + 1]
-            # 如果下一行也像字段名，不合并（避免 KEY+KEY 拼接）
-            if not _is_naked_key(nxt):
-                merged.append(cur + nxt)
-                i += 2
-                continue
-        merged.append(cur)
-        i += 1
-    return "\n".join(merged)
+    words = [w.get("words", "").strip() for w in words_result if w.get("words", "").strip()]
+    return " ".join(words)
 
 
 def reconstruct_ocr_text(words_result: List[Dict]) -> str:
-    """选择合适策略重建 OCR 文本。"""
+    """
+    选择合适策略重建 OCR 文本。
+    - 有 location：空间重建（同行合并后换行），还原版面结构
+    - 无 location：空格拼接，与预训练文本格式一致
+    """
     if _has_location(words_result):
         return _reconstruct_text_spatial(words_result)
-    return _reconstruct_text_semantic(words_result)
+    return _reconstruct_text_no_location(words_result)
 
 
 # ─── 构造 API 请求体 ───────────────────────────────────────────────────────────
