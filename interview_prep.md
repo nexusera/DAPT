@@ -19,6 +19,7 @@
    - [3.2 词表扩充与新词 Embedding 初始化](#32-词表扩充与新词-embedding-初始化)
    - [3.3 预训练规模与训练超参数](#33-预训练规模与训练超参数)
    - [3.4 下游任务数据集构建](#34-下游任务数据集构建)
+   - [标注体系、微调与输入输出详解](#标注体系微调与输入输出详解)
    - [3.5 评测流程](#35-评测流程)
 5. [四、常见延伸追问与参考回答](#四常见延伸追问与参考回答)
 
@@ -460,7 +461,7 @@ OCR 路在数据集构建后强制执行 `verify_noise_alignment.py`，校验文
 
 ---
 
-### 3.2 预训练规模与训练超参数
+### 3.3 预训练规模与训练超参数
 
 | 参数 | 值 |
 |---|---|
@@ -495,7 +496,7 @@ OCR 路在数据集构建后强制执行 `verify_noise_alignment.py`，校验文
 
 ---
 
-### 3.3 下游任务数据集构建
+### 3.4 下游任务数据集构建
 
 #### Task 1/3 —— KV-NER（命名实体识别范式）
 
@@ -554,7 +555,90 @@ QA 级预测（数千行，每行一个 question-document 对）
 
 ---
 
-### 3.4 评测流程
+#### 标注体系、微调与输入输出详解
+
+**总体**：下游分两条线——**Task 1/3 用 KV-NER（序列标注）**，**Task 2 用 EBQA（抽取式问答）**。二者共用同一份带 OCR 噪声的标注 JSON，但任务形式与损失函数不同。
+
+---
+
+**一、KV-NER（Task 1 / Task 3）**
+
+**1）是不是 BIO？**
+
+严格说是 **BIOE（Begin–Inside–End–Outside）**，代码里 `build_bio_label_list` 实际调用 `build_bioe_label_list`：对每个粗粒度实体类型生成 `B-`、`I-`、`E-` 三类标签，再加全局 `O`。单字符 span 只标 `E-TYPE`，不标 `B/I`。
+
+以配置中的 `label_map`为例（键名→`KEY`，值→`VALUE`，医院相关→`HOSPITAL`），展开后的标签集合形如：
+
+`B-KEY, I-KEY, E-KEY, B-VALUE, I-VALUE, E-VALUE, B-HOSPITAL, I-HOSPITAL, E-HOSPITAL, O`（具体顺序由类型名排序后展开，见 `data_utils.build_bioe_label_list`）。
+
+**2）标注如何变成训练样本？**
+
+- 从 Label Studio JSON / JSONL 读出实体 `Entity(start, end, label)`（字符级偏移）。
+- `generate_char_labels` 为整段文本生成**逐字符**的 BIOE 字符串列表。
+- `TokenClassificationDataset` 用 **Fast Tokenizer** 对文本（或 chunk）编码，`return_offsets_mapping=True`，再按 `offset_mapping` 把字符标签**对齐到每个 subword token**（`label_all_tokens=true` 时子词继承对应字符 span 的标签策略，见 `dataset._align_labels`）。
+- 长文档可启用 **token 级滑窗 chunk**（如 `chunk_size=500`、`chunk_overlap=50`，不超过 `max_seq_length`），与推理时 `compare_models.py` 的滑窗策略一致。
+
+**3）模型结构与损失**
+
+- 类名：`BertCrfTokenClassifier`：`NoiseAware` BERT 编码器 →可选 **BiLSTM** → `Linear` 发射分数 → **CRF** 解码整条合法标签序列。
+- CRF 层对非法 BIOE 转移施加约束（`_apply_bio_constraints`），比纯 argmax 更稳。
+- 可选辅助损失：`boundary_loss`、`token_ce_loss`、`end_boundary_loss`（配置里权重可为 0，纯 CRF 为主）。
+
+**4）微调方式（工程上）**
+
+- 脚本：`dapt_eval_package/pre_struct/kv_ner/train_with_noise.py`，**PyTorch 手写训练循环**（非 HuggingFace `Trainer`）：`DataLoader` + `AdamW` + `get_linear_schedule_with_warmup`。
+- 配置：JSON（如 `kv_ner_config_macbert.json`）指定 `model_name_or_path`、`data_path`、`learning_rate`、`train_batch_size`、BiLSTM 与 `noise_mode` 等。
+- 若传入 `--noise_bins`，`NoiseCollator` 会把字符/词级 OCR 噪声对齐为 `noise_ids` / `noise_values` 传入与预训练同构的噪声嵌入。
+
+**5）输入 / 输出张量（训练一步）**
+
+| 字段 | 含义 |
+|---|---|
+| `input_ids` | `[B, L]`，单句整文编码（无句对），`[CLS]…[SEP]` + padding |
+| `attention_mask` | `[B, L]` |
+| `token_type_ids` | `[B, L]`，通常为全 0（单段） |
+| `labels` | `[B, L]`，每 token 一个标签 id，padding 位置在 loss 里被 mask 掉 |
+| `noise_ids` / `noise_values` | 可选，`[B, L, 7]`，与预训练一致 |
+
+**推理输出**：对每个 token 得到标签序列，经 CRF / 解码与 `offset_mapping` **还原为字符级 span列表**（键名 span、值 span 等），再序列化为 JSONL 供 `align_for_scorer_span.py` 与官方 `scorer.py` 使用。
+
+---
+
+**二、EBQA（Task 2）**
+
+**1）任务范式**
+
+**抽取式问答（SQuAD 风格）**：问题 = 标准字段名（`question_key`），段落 = 整份报告 OCR 文本（`context`）。模型预测答案在 context 中的 **start / end token 位置**；无该字段时对应样本的答案 span 为空或特殊处理（由数据构造与 collator 约定）。
+
+**2）模型**
+
+- `NoiseAwareBertForQuestionAnswering`（或等价封装在 `EBQAModel` 中）：在 BERT 之上接 **span 双指针头**（`start_logits`, `end_logits`），与 `transformers.AutoModelForQuestionAnswering` 接口一致；可融合 token 级噪声嵌入。
+
+**3）微调方式**
+
+- 脚本：`pre_struct/ebqa/train_ebqa.py`，**PyTorch `DataLoader` + 自定义训练循环**；底层用 HuggingFace 的 `AutoConfig` / QA 模型与 `get_linear_schedule_with_warmup`。
+- 数据：`convert_ebqa.py` 产出的 JSONL，`EnhancedQADataset` + `QACollator`；验证集常按 `report_index` 哈希稳定划分，避免同一报告泄漏。
+
+**4）输入 / 输出**
+
+| 阶段 | 输入 | 输出 |
+|---|---|---|
+| 训练 | `input_ids`（`[CLS] question [SEP] context [SEP]`）、`attention_mask`、`token_type_ids`（0/1 区分问句与上下文）、`start_positions` / `end_positions`；可选 `noise_ids` | loss（答案起止位置的交叉熵） |
+| 推理 | 同上（无 label） | 每个样本的 `start`/`end` 索引及 span 文本、置信度；再经 `aggregate_qa_preds_to_doc.py` 聚合成文档级 `pred_pairs` |
+
+---
+
+**三、一句话对比（面试口播）**
+
+| 维度 | KV-NER | EBQA |
+|---|---|---|
+| 范式 | 序列标注（BIOE + CRF） | 抽取式 QA（span） |
+| 粒度 | 同时标出 KEY / VALUE / HOSPITAL 等实体边界 | 给定键名，只抽该键对应的 value span |
+| 微调入口 | `train_with_noise.py` + `kv_ner_config*.json` | `train_ebqa.py` + `ebqa_config*.json` |
+
+---
+
+### 3.5 评测流程
 
 **Task 1/3（KV-NER）**：
 ```
