@@ -194,8 +194,13 @@ def build_payload(ocr: Dict, report_title: Optional[str] = None) -> Optional[Dic
     clean_words = []
     for item in words_result:
         entry: Dict[str, Any] = {"words": item.get("words", "")}
-        if isinstance(item.get("probability"), dict):
-            entry["probability"] = {k: item["probability"].get(k) for k in ["average", "min", "variance"]}
+        prob = item.get("probability")
+        if isinstance(prob, dict):
+            # 标准百度 accurate 接口：{"average":..., "min":..., "variance":...}
+            entry["probability"] = {k: prob.get(k) for k in ["average", "min", "variance"]}
+        elif isinstance(prob, (int, float)):
+            # baidu_ocr.py 封装的内部接口返回单一浮点置信度
+            entry["probability"] = {"average": float(prob), "min": float(prob), "variance": 0.0}
         if isinstance(item.get("location"), dict):
             entry["location"] = {k: item["location"].get(k) for k in ["top", "left", "width", "height"]}
         clean_words.append(entry)
@@ -245,7 +250,14 @@ def check_service_ready(api_url: str, max_wait_s: int = 60) -> bool:
 
 # ─── 结果展示 ─────────────────────────────────────────────────────────────────
 
-def print_result(subdir_name: str, ocr_source: str, payload: Dict, result: Dict, elapsed_ms: float):
+def print_result(
+    subdir_name: str,
+    ocr_source: str,
+    payload: Dict,
+    result: Dict,
+    elapsed_ms: float,
+    debug_entities: bool = False,
+):
     """格式化打印单次测试结果。"""
     bar = "─" * 60
     print(f"\n{bar}")
@@ -258,8 +270,8 @@ def print_result(subdir_name: str, ocr_source: str, payload: Dict, result: Dict,
     kv = result.get("kv_pairs", [])
     structured = result.get("structured", {})
     hospital = result.get("hospital")
-    kwv = result.get("key_without_value", [])
-    vwk = result.get("value_without_key", [])
+    kwv = result.get("key_without_value", []) or []
+    vwk = result.get("value_without_key", []) or []
 
     if hospital:
         print(f"  医院: {hospital}")
@@ -267,27 +279,24 @@ def print_result(subdir_name: str, ocr_source: str, payload: Dict, result: Dict,
     if structured:
         print(f"  结构化字段 ({len(structured)} 项):")
         for k, v in list(structured.items())[:20]:
-            print(f"    {k}: {v}")
+            flag = " [回链]" if any(p.get("_backlinked") and p.get("key") == k for p in kv) else ""
+            print(f"    {k}: {v}{flag}")
         if len(structured) > 20:
             print(f"    ... (共 {len(structured)} 项)")
     elif kv:
         print(f"  KV 配对 ({len(kv)} 对):")
         for pair in kv[:20]:
-            print(f"    [{pair.get('key', '')}] → {pair.get('value', '')}")
+            flag = " [回链]" if pair.get("_backlinked") else ""
+            print(f"    [{pair.get('key', '')}] → {pair.get('value', '')}{flag}")
         if len(kv) > 20:
             print(f"    ... (共 {len(kv)} 对)")
     else:
         print("  [无 KV 输出]")
 
     if kwv:
-        print(f"  无值的 KEY: {kwv[:5]}")
+        print(f"  ⚠ 无值的 KEY: {kwv[:8]}")
     if vwk:
-        print(f"  无 KEY 的 VALUE: {vwk[:5]}")
-
-    timing = result.get("timing", {})
-    if timing:
-        parts = [f"{k}={v}ms" for k, v in timing.items()]
-        print(f"  内部耗时: {', '.join(parts)}")
+        print(f"  ⚠ 无 KEY 的 VALUE: {vwk[:8]}")
 
     noise = result.get("noise_summary", {})
     if noise:
@@ -301,7 +310,22 @@ def print_result(subdir_name: str, ocr_source: str, payload: Dict, result: Dict,
               f"min_confidence={noise.get('min_confidence','?')}  "
               f"low_conf_ratio={noise.get('low_conf_char_ratio','?')}")
 
-    print(f"  OCR文本前120字: {payload['ocr_text'][:120]!r}")
+    print(f"  OCR文本前150字: {payload['ocr_text'][:150]!r}")
+
+    # ── Debug：显示原始实体（仅 --debug_entities 时） ─────────────────────────
+    if debug_entities:
+        entities = result.get("entities", [])
+        if entities:
+            print(f"\n  【Debug 实体列表】共 {len(entities)} 个:")
+            for ent in entities:
+                t = ent.get("type", "?")
+                txt = ent.get("text", "")
+                s = ent.get("start", 0)
+                e = ent.get("end", 0)
+                print(f"    [{t:8s}] [{s:4d}:{e:4d}] {txt!r}")
+        else:
+            print("  【Debug 实体列表】无实体（include_entities 未开启？）")
+
     print(f"{bar}")
 
 
@@ -332,6 +356,8 @@ def main():
     parser.add_argument("--save_dir", default=None, help="保存请求体和响应 JSON 的目录（可选）")
     parser.add_argument("--no_wait", action="store_true", help="不等待服务就绪，直接发请求")
     parser.add_argument("--report_title", default=None, help="手动指定 report_title 字段")
+    parser.add_argument("--debug_entities", action="store_true",
+                        help="打印模型原始实体列表（用于诊断 model vs 后处理问题）")
     args = parser.parse_args()
 
     # 等待服务就绪
@@ -388,7 +414,8 @@ def main():
             continue
 
         # Step 4: 展示结果
-        print_result(subdir.name, ocr_source, payload, result, elapsed_ms)
+        print_result(subdir.name, ocr_source, payload, result, elapsed_ms,
+                     debug_entities=args.debug_entities)
 
         # Step 5: 可选保存
         if save_dir:

@@ -27,11 +27,23 @@ def _compute_word_noise(
     """
     为一个 words_result 条目计算 7 维噪声特征（词级）。
     缺失字段时对应维度退化为完美值。
+
+    probability 兼容两种格式：
+      - dict: {"average": 0.99, "min": 0.95, "variance": 0.001}  （百度 accurate 模式）
+      - float: 0.99  （baidu_ocr.py 封装的内部接口，或旧版缓存）
     """
-    prob = word_item.get("probability") or {}
-    avg = float(prob.get("average") or 0.0)
-    mn = float(prob.get("min") or 0.0)
-    var = float(prob.get("variance") or 0.0)
+    prob_raw = word_item.get("probability")
+    if isinstance(prob_raw, dict):
+        avg = float(prob_raw.get("average") or 0.0)
+        mn = float(prob_raw.get("min") or 0.0)
+        var = float(prob_raw.get("variance") or 0.0)
+    elif isinstance(prob_raw, (int, float)):
+        # 单一置信度：avg=min=该值，方差视为 0
+        avg = float(prob_raw)
+        mn = float(prob_raw)
+        var = 0.0
+    else:
+        avg = mn = var = 0.0
 
     # 置信度相关
     var_log = math.log10(var + 1e-12)

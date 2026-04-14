@@ -41,6 +41,13 @@ _POST_CFG_KEYS = (
     "value_crossline_fallback_len",
     "value_len_cap",
     "value_stop_punct",
+    # 边界扩展
+    "adjust_boundaries",
+    "adjust_max_shift",
+    "adjust_chars",
+    # 孤儿回链
+    "enable_backlink",
+    "backlink_window",
 )
 
 

@@ -43,6 +43,19 @@ class Settings(BaseSettings):
     value_len_cap: int = 64
     value_stop_punct: str = "。；;，,\n"
 
+    # VALUE 实体边界扩展（修复模型截断的日期/数字型 value）
+    # adjust_boundaries=True：推理后向左右扩展 VALUE 边界到相邻的数字/日期字符
+    adjust_boundaries: bool = True
+    # 最大扩展步长（字符数）
+    adjust_max_shift: int = 12
+    # 允许扩展的字符集（日期、数字、小数点等）
+    adjust_chars: str = "0123456789./年月日时分秒-"
+
+    # 孤儿 KEY-VALUE 回链：key_without_value 与 value_without_key 按位置匹配
+    enable_backlink: bool = True
+    # 回链最大距离（字符数）：orphan VALUE 起点距离 KEY 结束不超过此值才回链
+    backlink_window: int = 300
+
     # ── 服务行为 ──────────────────────────────────────────────────────────────
     # 请求体最大字节数
     max_request_body_bytes: int = 5 * 1024 * 1024  # 5 MB
