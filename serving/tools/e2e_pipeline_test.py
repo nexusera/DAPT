@@ -203,6 +203,21 @@ def build_payload(ocr: Dict, report_title: Optional[str] = None) -> Optional[Dic
             entry["probability"] = {"average": float(prob), "min": float(prob), "variance": 0.0}
         if isinstance(item.get("location"), dict):
             entry["location"] = {k: item["location"].get(k) for k in ["top", "left", "width", "height"]}
+        # 传递字符级 probability（与训练数据 compute_noise_from_ocr.py 保持一致）
+        # baidu_ocr.py disp_chars=true 时返回 chars 列表，含每个字符的 prob 和 location
+        chars_raw = item.get("chars")
+        if isinstance(chars_raw, list) and chars_raw:
+            clean_chars = []
+            for ch in chars_raw:
+                if not isinstance(ch, dict):
+                    continue
+                c_entry: Dict[str, Any] = {"char": ch.get("char", "")}
+                c_prob = ch.get("probability")
+                if isinstance(c_prob, (int, float)):
+                    c_entry["probability"] = float(c_prob)
+                clean_chars.append(c_entry)
+            if clean_chars:
+                entry["chars"] = clean_chars
         clean_words.append(entry)
 
     payload: Dict[str, Any] = {

@@ -26,24 +26,43 @@ def _compute_word_noise(
 ) -> List[float]:
     """
     为一个 words_result 条目计算 7 维噪声特征（词级）。
-    缺失字段时对应维度退化为完美值。
 
-    probability 兼容两种格式：
-      - dict: {"average": 0.99, "min": 0.95, "variance": 0.001}  （百度 accurate 模式）
-      - float: 0.99  （baidu_ocr.py 封装的内部接口，或旧版缓存）
+    与训练预处理脚本 compute_noise_from_ocr.py 对齐：
+      - 优先使用 chars 字段的逐字符 probability（精细，含字间方差）
+      - 其次使用 probability 字段（word 级）
+        · dict: {"average":..., "min":..., "variance":...}  （百度 accurate 标准接口）
+        · float: 0.99  （baidu_ocr.py 封装的内部接口）
+      - 若均缺失，各维度退化为 0
     """
+    # 采集概率样本：word 级 + char 级（compute_noise_from_ocr.py 同策略）
+    probs: List[float] = []
+
     prob_raw = word_item.get("probability")
     if isinstance(prob_raw, dict):
-        avg = float(prob_raw.get("average") or 0.0)
-        mn = float(prob_raw.get("min") or 0.0)
-        var = float(prob_raw.get("variance") or 0.0)
+        p = prob_raw.get("average")
+        if isinstance(p, (int, float)):
+            probs.append(float(p))
     elif isinstance(prob_raw, (int, float)):
-        # 单一置信度：avg=min=该值，方差视为 0
-        avg = float(prob_raw)
-        mn = float(prob_raw)
-        var = 0.0
-    else:
+        probs.append(float(prob_raw))
+
+    # 字符级 probability（disp_chars=true 时 baidu_ocr.py 返回 chars 列表）
+    chars = word_item.get("chars") or []
+    for ch in chars:
+        if not isinstance(ch, dict):
+            continue
+        cp = ch.get("probability")
+        if isinstance(cp, (int, float)):
+            probs.append(float(cp))
+
+    if not probs:
         avg = mn = var = 0.0
+    else:
+        avg = sum(probs) / len(probs)
+        mn = min(probs)
+        if len(probs) >= 2:
+            var = sum((p - avg) ** 2 for p in probs) / len(probs)
+        else:
+            var = 0.0
 
     # 置信度相关
     var_log = math.log10(var + 1e-12)
