@@ -28,7 +28,7 @@ def ocr(base64_img,mode:Literal["accurate","general_v6"]="accurate"):
         "languagetype": "CHN_ENG",
         
         # --- 表格参数 (按需开启) ---
-        # "line_probability": "true",        # =true则返回行置信度
+        "line_probability": "true",          # =true则返回行置信度（noise embedding 必须）
         "imgDirection": "setImgDirFlag",     # 选填，开启方向判断
         # "RecOnly": "setRecOnlyFlag",       # 可选，跳过检测，直接当作单行识别
         # "LineDirection": "setLineDirFlag", # 选填，文本行级别的方向矫正
