@@ -24,3 +24,26 @@ python fetch_and_merge_baidu_ocr.py \
 python compute_noise_from_ocr.py \
   --inputs biaozhu_with_ocr/real_train_with_ocr.json biaozhu_with_ocr/real_test_with_ocr.json \
   --output_dir biaozhu_with_ocr_noise_prepared
+
+---
+
+## 常见问题：ocr_text 与 OCR 拼接串不一致
+
+**原因（已修复）**：旧版 `fetch_and_merge_baidu_ocr.py` 只写入 `ocr_raw`，**不更新**顶层 `ocr_text`。  
+标注 JSON 里自带的 `ocr_text` 往往来自标注平台/旧 OCR，与**当前图片**调百度得到的 `words_result` 拼出来的字符串不是同一条 → 约一半样本出现「正文与噪声字符错位」。
+
+**当前行为**：合并 OCR 成功后默认执行  
+`ocr_text = "".join(words_result[].words)`；若与旧值不同，旧值备份到 `ocr_text_before_ocr_sync`。  
+仅当必须兼容旧流程时使用 `--no_sync_ocr_text`（不推荐）。
+
+**⚠️ 标注偏移**：若 `transferred_annotations` 等字段的 **字符级 start/end** 是相对**旧** `ocr_text` 标的，同步后偏移可能错位，需要抽样校验或做 span 映射/重标。若标注主要依赖 **box 像素框** 而非字符下标，影响因导出脚本而异，亦需评测集验证。
+
+4. 合并后建议审计（可选）
+
+```bash
+python3 scripts/inspect_kvbert_data_formats.py --audit \
+  --test_json biaozhu_with_ocr_noise_prepared/real_test_with_ocr.json \
+  --train_json biaozhu_with_ocr_noise_prepared/real_train_with_ocr.json
+```
+
+目标：`ocr_text≠join(words)` 应为 **0**。

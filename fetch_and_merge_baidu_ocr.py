@@ -16,6 +16,8 @@
 - 标注条目的 data.image 形如 "/data/local-files/?d=semi_pic/huizhenbingli/U.../file.jpeg"，
   会自动截取 ?d= 之后的相对路径，并与 --image_root 拼成实际文件路径。
 - 输出会把每条标注对象附加字段 "ocr_raw"，内容为百度返回的完整 JSON。
+- 默认会同步顶层 ocr_text：ocr_text = "".join(words_result[].words)，与噪声展开、Serving、compare_models 一致；
+  若与旧 ocr_text 不同，旧值写入 ocr_text_before_ocr_sync。可用 --no_sync_ocr_text 关闭（不推荐）。
 - 为避免压测接口，提供 --limit / --offset / --sleep 控制调用数量与间隔。
 - 默认走官方 openapi（需 api_key/secret_key）；如需改用本地 baidu_ocr.py 封装的 .com 域名接口，
     可加 --use_local_baidu，并可通过 --local_mode 传入 baidu_ocr.ocr 的 mode。
@@ -146,6 +148,27 @@ def call_baidu_ocr(ocr_url: str, token: str, image_path: Path) -> Dict[str, Any]
     return resp.json()
 
 
+def sync_ocr_text_from_words_result(item: Dict[str, Any], *, legacy_key: str = "ocr_text_before_ocr_sync") -> None:
+    """
+    用本次 OCR 的 words_result 拼出唯一正文，与 noise 展开、NER Serving 输入约定一致。
+
+    若与原有 ocr_text 不一致，将旧值备份到 legacy_key（便于审计），再覆盖 ocr_text。
+    """
+    ocr = item.get("ocr_raw")
+    if not isinstance(ocr, dict):
+        return
+    wr = ocr.get("words_result")
+    if not isinstance(wr, list) or not wr:
+        return
+    joined = "".join(str(w.get("words", "")) for w in wr if isinstance(w, dict))
+    if not joined:
+        return
+    old = item.get("ocr_text")
+    if old is not None and str(old) != joined:
+        item[legacy_key] = old
+    item["ocr_text"] = joined
+
+
 def process_items(
     items: List[Dict[str, Any]],
     roots: List[Path],
@@ -154,6 +177,7 @@ def process_items(
     offset: int,
     sleep_seconds: float,
     missing_log: Optional[Path],
+    sync_ocr_text: bool = True,
 ) -> None:
     """就地为每条标注附加 ocr_raw。ocr_caller 接收 Path 返回 OCR JSON。"""
     total = len(items)
@@ -163,27 +187,32 @@ def process_items(
 
     for idx in range(start, end):
         item = items[idx]
+        image_field: Optional[str] = None
         # [修改] 查找 image_field
         # 1. 尝试从 relative_image_path 获取
-        if "relative_image_path" in item and item["relative_image_path"]:
-             image_field = item["relative_image_path"]
+        if item.get("relative_image_path"):
+            image_field = str(item["relative_image_path"])
 
         # 2. 优先尝试从 record_id 获取 (作为最后的 fallback)
         #    Pattern: {record_id}.jpg 
-        if not image_field and "record_id" in item:
-             image_field = f"{item['record_id']}.jpg"
+        if not image_field and item.get("record_id") is not None:
+            image_field = f"{item['record_id']}.jpg"
         
         # 3. 尝试从 source_image 获取 (顶层)
-        if not image_field and "source_image" in item:
-             image_field = item["source_image"]
+        if not image_field and item.get("source_image"):
+            image_field = str(item["source_image"])
         
         # 4. 尝试从 ocr_raw 获取
-        if not image_field and "ocr_raw" in item and isinstance(item["ocr_raw"], dict):
-             image_field = item["ocr_raw"].get("source_image")
+        if not image_field and isinstance(item.get("ocr_raw"), dict):
+            raw_si = item["ocr_raw"].get("source_image")
+            if raw_si:
+                image_field = str(raw_si)
 
         # 5. 尝试从 data.image 获取 (旧格式)
         if not image_field:
-             image_field = item.get("data", {}).get("image")
+            di = item.get("data", {}).get("image") if isinstance(item.get("data"), dict) else None
+            if di:
+                image_field = str(di)
 
         # [DEBUG]
         if not image_field:
@@ -225,6 +254,8 @@ def process_items(
         try:
             ocr_result = ocr_caller(img_path)
             item["ocr_raw"] = ocr_result
+            if sync_ocr_text:
+                sync_ocr_text_from_words_result(item)
             print(f"[{idx+1}/{end}] ok -> {rel}")
         except Exception as exc:  # noqa: BLE001
             print(f"[ERROR] 调用 OCR 失败 idx={idx} path={img_path} err={exc}", file=sys.stderr)
@@ -254,6 +285,11 @@ def main():
     ap.add_argument("--limit", type=int, default=0, help="最多处理条数，0 表示全量")
     ap.add_argument("--offset", type=int, default=0, help="起始索引（0-based）")
     ap.add_argument("--sleep", type=float, default=0.5, help="每次调用后的休眠秒数")
+    ap.add_argument(
+        "--no_sync_ocr_text",
+        action="store_true",
+        help="不根据 ocr_raw.words_result 覆盖 ocr_text（会破坏与噪声字符对齐，仅兼容旧流程）",
+    )
     args = ap.parse_args()
 
     items = load_annotations(args.anno_json)
@@ -292,6 +328,7 @@ def main():
         offset=args.offset,
         sleep_seconds=args.sleep,
         missing_log=missing_log,
+        sync_ocr_text=not args.no_sync_ocr_text,
     )
 
     save_annotations(args.output, items)
