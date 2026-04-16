@@ -124,6 +124,37 @@ def summarize_api_request(req: Dict[str, Any], label: str, verbose: bool) -> Non
         _jprint(req, max_chars=3500)
 
 
+def audit_finetune_consistency(path: Path, label: str, max_examples: int = 8) -> None:
+    """
+    扫描微调 JSON：ocr_text 必须与 ''.join(words_result[].words) 一致，
+    否则字符级噪声 noise_values（由 words 展开）与 BERT 输入 ocr_text 错位。
+    """
+    if not path.is_file():
+        print(f"WARN: audit 跳过（文件不存在）: {path}", file=sys.stderr)
+        return
+    data = _load_json_array(path)
+    mismatches: List[tuple] = []
+    for i, item in enumerate(data):
+        d = _data_block(item)
+        text = str(d.get("ocr_text") or item.get("ocr_text") or "")
+        ocr = d.get("ocr_raw") or item.get("ocr_raw") or {}
+        wr = ocr.get("words_result") if isinstance(ocr, dict) else None
+        if not isinstance(wr, list):
+            continue
+        joined = "".join(str(w.get("words", "")) for w in wr if isinstance(w, dict))
+        if text != joined:
+            rid = item.get("record_id") or item.get("id")
+            mismatches.append((i, len(text), len(joined), rid))
+
+    print(f"\n{'='*60}\nAUDIT: {label}\n文件: {path}\n总条数: {len(data)}  |  ocr_text≠join(words): {len(mismatches)}")
+    if mismatches:
+        print("说明: 训练时 Sample.text 取 ocr_text，noise 由 words 展开；不一致会导致噪声与字符对不齐。")
+        for row in mismatches[:max_examples]:
+            print(f"  index={row[0]}  len(ocr_text)={row[1]}  len(join)={row[2]}  record_id={row[3]}")
+        if len(mismatches) > max_examples:
+            print(f"  ... 另有 {len(mismatches) - max_examples} 条未列出")
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="探查 KV-BERT 微调 JSON 与接口请求格式")
     parser.add_argument(
@@ -158,6 +189,11 @@ def main() -> int:
     )
     parser.add_argument("--index", type=int, default=0, help="微调 JSON 中查看的样本下标")
     parser.add_argument("-v", "--verbose", action="store_true", help="打印 annotations / 首条 word 全文")
+    parser.add_argument(
+        "--audit",
+        action="store_true",
+        help="扫描 test_json（及 train_json 若指定）中 ocr_text 与 join(words) 是否一致",
+    )
     args = parser.parse_args()
 
     script_dir = Path(__file__).resolve().parent
@@ -167,6 +203,9 @@ def main() -> int:
         return 1
 
     test_path = dapt_root / args.test_json
+    if args.audit and test_path.is_file():
+        audit_finetune_consistency(test_path, "评测/测试集")
+
     if not test_path.is_file():
         print(f"WARN: 未找到测试集: {test_path}", file=sys.stderr)
     else:
@@ -181,6 +220,8 @@ def main() -> int:
 
     if args.train_json.strip():
         train_path = dapt_root / args.train_json
+        if args.audit and train_path.is_file():
+            audit_finetune_consistency(train_path, "训练集")
         if train_path.is_file():
             data = _load_json_array(train_path)
             idx = max(0, min(args.index, len(data) - 1))
