@@ -1,3 +1,5 @@
+**完整背景、审计命令、标注校验与分步流程**：见 [`docs/OCR_TEXT_AND_NOISE_ALIGNMENT.md`](docs/OCR_TEXT_AND_NOISE_ALIGNMENT.md)。
+
 请在服务器的 DAPT 目录下依次运行以下三组命令：
 
 1. 处理训练集 (Train)
