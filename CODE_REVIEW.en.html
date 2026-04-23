@@ -1,0 +1,256 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<title>KV-BERT / DAPT — Code Review Report (English)</title>
+<style>
+  :root {
+    --bg:#fafbfc; --fg:#1f2328; --muted:#57606a; --accent:#0969da;
+    --crit:#cf222e; --high:#bc4c00; --med:#9a6700; --low:#1a7f37; --code-bg:#f6f8fa;
+  }
+  html,body{background:var(--bg);color:var(--fg);margin:0;padding:0;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Helvetica,Arial,sans-serif;line-height:1.55;}
+  main{max-width:920px;margin:0 auto;padding:32px 24px 64px 24px;}
+  h1{font-size:1.9rem;border-bottom:2px solid #d0d7de;padding-bottom:.4em;margin-top:0;}
+  h2{font-size:1.4rem;border-bottom:1px solid #d0d7de;padding-bottom:.25em;margin-top:2em;}
+  h3{font-size:1.15rem;margin-top:1.4em;}
+  table{border-collapse:collapse;width:100%;margin:.8em 0 1.4em 0;font-size:.94rem;}
+  th,td{border:1px solid #d0d7de;padding:.45em .6em;vertical-align:top;text-align:left;}
+  th{background:#eaeef2;}
+  tr:nth-child(even) td{background:#f6f8fa;}
+  code,pre{font-family:"SF Mono","Monaco","Menlo",Consolas,monospace;}
+  code{background:var(--code-bg);padding:.1em .35em;border-radius:3px;font-size:.9em;}
+  pre{background:var(--code-bg);padding:12px 14px;border-radius:6px;overflow-x:auto;line-height:1.45;font-size:.86rem;}
+  .sev-crit{color:var(--crit);font-weight:700;}
+  .sev-high{color:var(--high);font-weight:700;}
+  .sev-med{color:var(--med);font-weight:700;}
+  .sev-low{color:var(--low);font-weight:700;}
+  .muted{color:var(--muted);}
+  .meta{color:var(--muted);font-size:.92rem;margin-bottom:1.6em;}
+  .scorecard td:nth-child(2){text-align:center;font-weight:600;}
+  blockquote{border-left:4px solid #d0d7de;color:var(--muted);margin:0;padding:.4em 1em;}
+  .tag{display:inline-block;padding:.1em .5em;border-radius:10px;font-size:.78rem;font-weight:600;color:#fff;margin-right:.3em;}
+  .tag-crit{background:var(--crit);} .tag-high{background:var(--high);} .tag-med{background:var(--med);} .tag-low{background:var(--low);} .tag-ok{background:#6e7781;}
+</style>
+</head>
+<body>
+<main>
+
+<h1>KV-BERT / DAPT — Code Review Report <span class="muted">(English)</span></h1>
+
+<p class="meta">
+<strong>Repository:</strong> <code>/Users/user/Documents/DAPT</code><br/>
+<strong>Branch:</strong> <code>feature/noise-embedding</code> (296 files / ~2 M lines ahead of <code>main</code>; real source ≈ 15–20 k LoC)<br/>
+<strong>HEAD:</strong> <code>fcf1d61</code> — "docs: add OCR_TEXT_AND_NOISE_ALIGNMENT guide"<br/>
+<strong>Date:</strong> 2026-04-23<br/>
+<strong>Scope:</strong> Pretraining pipeline + downstream NER/EBQA + FastAPI serving + ablation experiments.
+</p>
+
+<h2>1. Executive Summary</h2>
+<p><strong>KV-BERT</strong> is a noise-robust, domain-adaptive pretraining framework for semi-structured Key-Value extraction in OCR-derived Chinese clinical reports, by Hao Li et al. (AI Starfish). It contributes three techniques: <strong>KV-MLM</strong> (entity-boundary WWM), <strong>KV-NSP</strong> (binary Key↔Value matching with hard/easy negatives), and <strong>Noise-Embedding</strong> (7-D OCR-quality features discretised via binning and summed into the embedding layer). The project now targets <strong>MacBERT</strong> as base model (swapped from RoBERTa) and has a full pipeline from raw OCR dumps to a Dockerised FastAPI service.</p>
+<p><em>Overall quality: senior research-engineer level with publication-track ambition, but engineering hygiene has not kept up with feature velocity.</em></p>
+
+<table class="scorecard">
+<thead><tr><th>Dimension</th><th>Score (1–5)</th><th>Notes</th></tr></thead>
+<tbody>
+<tr><td>Architecture &amp; ML design</td><td>4.5</td><td>Thoughtful noise-binning design, clean 3-contribution story, strong ablation coverage.</td></tr>
+<tr><td>Correctness</td><td>3</td><td>Critical <code>main</code> bugs fixed, but one dimension-mismatch bug introduced; shape checks still thin.</td></tr>
+<tr><td>Code hygiene / DRY</td><td>2</td><td>≥60 % copy-paste across 11 training scripts; no shared utilities module.</td></tr>
+<tr><td>Documentation</td><td>4</td><td>Bilingual docstrings, paper draft, pipeline docs, integration guides.</td></tr>
+<tr><td>Portability</td><td>2</td><td>Hard-coded <code>/data/ocean/DAPT/...</code> paths everywhere; sys.path hacks in 6+ scripts.</td></tr>
+<tr><td>Test coverage</td><td>1.5</td><td>Only 2 serving integration tests; no unit tests for noise, modeling, or evaluation.</td></tr>
+<tr><td>Production readiness (serving)</td><td>2</td><td>Works, but no auth, no rate limit, permissive CORS, unpinned Docker base.</td></tr>
+</tbody>
+</table>
+
+<h2>2. What Changed Since <code>main</code></h2>
+<p>The <code>main</code>-branch review identified five issues; four are now resolved:</p>
+<table>
+<thead><tr><th>Issue on <code>main</code></th><th>Status on <code>feature/noise-embedding</code></th></tr></thead>
+<tbody>
+<tr><td>Per-split index / OCR alignment bug in <code>add_noise_features.py</code></td><td class="sev-low">✅ Fixed — <code>global_idx = split_offsets[split] + idx</code> (lines 165–182, 268–271).</td></tr>
+<tr><td>SymSpell built with <code>max_dictionary_edit_distance=32</code></td><td class="sev-low">✅ Removed — entire SymSpell / Levenshtein path dropped in favour of binning.</td></tr>
+<tr><td><code>char_break_norm=24</code> saturating the feature</td><td class="sev-low">✅ Removed — <code>char_break_ratio</code> now hard-clipped to 0.25 (<code>noise_feature_processor.py:42</code>).</td></tr>
+<tr><td>Missing seq-len assertion in <code>RobertaNoiseEmbeddings.forward</code></td><td class="sev-low">✅ Fixed — length inferred from <code>input_shape[1]</code> (<code>noise_bert_model.py:123</code>).</td></tr>
+<tr><td>Deprecated <code>evaluation_strategy=</code> in <code>kv_nsp/run_train.py</code></td><td class="sev-med">⚠️ Partial — main pretraining scripts migrated, but <code>kv_nsp/run_train.py:192</code> and <code>kv_nsp/run_train_with_noise.py:472</code> still use the old kwarg.</td></tr>
+</tbody>
+</table>
+
+<h2>3. Project Architecture</h2>
+<pre>
+ raw JSON / OCR dumps (multi-source)
+        │
+        ▼                                     extract_and_dedup_json_v2.py (MD5 dedupe)
+ train.txt + per-source splits
+        │
+        ▼                                     resample_mix.py  +  chunk_long_lines.py
+ train_resampled.txt → train_chunked.txt
+        │
+        ▼                                     train_ocr_clean.py  +  filter_vocab_with_llm.py
+ medical_vocab_ocr_only/vocab.txt  → kept_vocab.txt
+        │
+        ▼                                     final_merge_v9_regex_split_slim.py
+ my-medical-tokenizer/  +  vocab_for_jieba.txt (generate_jieba_vocab.py)
+        │
+        ▼                                     build_dataset_final_slim.py (Jieba-aligned WWM)
+ processed_dataset/  (input_ids + word_ids)
+        │
+        ▼                                     NoiseFeatureProcessor.fit_bins → noise_bins.json
+        ▼                                     add_noise_features.py
+ processed_dataset_with_noise/  (+ noise_values = 7-D per token)
+        │
+        ▼                                     train_dapt_macbert_staged.py  (8×H200, staged MLM↔NSP)
+ output_macbert_kvmlm_staged/final_staged_model/
+        │
+        ├─────►  Downstream fine-tuning:  dapt_eval_package/pre_struct/kv_ner/train_with_noise.py
+        │                                 dapt_eval_package/pre_struct/ebqa/train_ebqa.py
+        │
+        ├─────►  Ablations: experiments/{mlm,noise,nsp_ratio,tokenizer}_ablation/*
+        │
+        ├─────►  Interpretability: experiments/interpretability/{attention,IG}/*
+        │
+        └─────►  Serving: serving/ (FastAPI + BertCRF + batching + noise extraction)
+</pre>
+<p class="muted">Scale (paper claims): 982 k raw lines → 225 k resampled → 537 k chunks; 3 582 OCR pages annotated (3 224 train / 358 test).</p>
+
+<h2>4. Strengths</h2>
+<ol>
+  <li><strong>Principled noise modeling</strong> — binning via <code>NoiseFeatureProcessor</code> with an anchor bin for "perfect text" cleanly maps OCR metadata into BERT embedding space and stays compatible with clean-text samples.</li>
+  <li><strong>Three well-separated contributions</strong> (KV-MLM / KV-NSP / Noise-Embedding) each with dedicated ablation directories — <code>no_mlm</code>, <code>no_nsp</code>, <code>no_noise</code>, <code>noise_{bucket,linear,mlp,concat_linear}</code>, <code>nsp_ratio_{1:1,3:1,1:3}</code>.</li>
+  <li><strong>Fixed the critical alignment bug</strong> from <code>main</code>: per-split offsets now keep OCR alignment correct across train/test splits.</li>
+  <li><strong>Multiple training regimes</strong> — staged, multi-task, hybrid-masking — covering common DAPT strategies.</li>
+  <li><strong>Complete lifecycle</strong> — data cleaning, tokenizer training, pretraining, downstream fine-tuning (KV-NER, EBQA), interpretability (attention, IG), and productionised serving.</li>
+  <li><strong>Paper-ready documentation</strong> — <code>paper.md</code> (LLNCS LaTeX), <code>pipeline_new.md</code>, <code>PRETRAINED_MODELS_SUMMARY.md</code>, <code>interview_prep.md</code>, <code>KV_BERT_预训练与下游推理指南.md</code>.</li>
+  <li><strong>Pragmatic training tricks</strong> — <code>bf16</code>, <code>tf32</code>, <code>group_by_length</code>, gradient checkpointing, staged curriculum.</li>
+</ol>
+
+<h2>5. Issues by Severity</h2>
+
+<h3><span class="tag tag-crit">CRITICAL</span></h3>
+<table>
+<thead><tr><th>#</th><th>File : Line</th><th>Issue</th></tr></thead>
+<tbody>
+<tr><td class="sev-crit">C1</td><td><code>add_noise_features.py:96</code></td><td><code>build_zero_feats</code> still returns <code>[[0.0]*5 ...]</code> / <code>[[False]*5 ...]</code>, but <code>FEATURES</code> now has <strong>7</strong> entries. On the fallback path (missing / malformed OCR at line 195), the sample ends up with a 5-D <code>noise_values</code> while normal samples have 7-D. HF <code>save_to_disk</code> either raises on schema drift or silently coerces — both bad. Fix: <code>[[0.0]*len(FEATURES) for _ in range(seq_len)]</code>.</td></tr>
+<tr><td class="sev-crit">C2</td><td>All <code>train_dapt_*.py</code></td><td>≈60–70 % duplicated code across 11 training scripts. <code>PrecomputedWWMCollator</code>, <code>PerplexityCallback</code>, <code>RobertaModelWithNoise</code>, <code>MLMStageCollator</code>, <code>DynamicNSPDataset</code> each re-defined 3–6 times. Extract into a <code>pretraining_common.py</code>.</td></tr>
+</tbody>
+</table>
+
+<h3><span class="tag tag-high">HIGH</span></h3>
+<table>
+<thead><tr><th>#</th><th>File : Line</th><th>Issue</th></tr></thead>
+<tbody>
+<tr><td class="sev-high">H1</td><td><code>noise_bert_model.py:147–154</code></td><td>Bucket-mode forward does not assert <code>noise_ids.shape[-1] == len(FEATURES)</code>. A 5-D fallback vector (C1) or truncated cache silently indexes wrong embedding matrix.</td></tr>
+<tr><td class="sev-high">H2</td><td><code>noise_bert_model.py:156–162</code></td><td>Continuous/linear/mlp mode does not validate <code>noise_values</code> dtype or shape.</td></tr>
+<tr><td class="sev-high">H3</td><td><code>noise_fusion.py:~126</code></td><td><code>nan_to_num</code> applied <em>after</em> <code>clamp</code>; NaNs propagate through clamp first.</td></tr>
+<tr><td class="sev-high">H4</td><td><code>kv_ner/evaluate.py</code> vs <code>evaluate_with_dapt_noise.py</code></td><td>~1 000 lines of near-identical prediction/assembly/metrics — high risk of metric drift between noise-on and noise-off experiments.</td></tr>
+<tr><td class="sev-high">H5</td><td><code>data_utils.py:226–228</code>, <code>train_with_noise.py:325–333</code>, <code>compare_models.py:81–98</code></td><td><code>_expand_word_noise_to_chars()</code> reimplemented <strong>three times</strong>.</td></tr>
+<tr><td class="sev-high">H6</td><td><code>train_with_noise.py:602–603</code></td><td>Type-unsafe batch extraction: <code>batch.get("noise_ids") if isinstance(batch, dict) else batch.noise_ids</code>.</td></tr>
+<tr><td class="sev-high">H7</td><td><code>kv_nsp/run_train.py:192</code>, <code>run_train_with_noise.py:472</code></td><td>Deprecated <code>evaluation_strategy=</code> — removed in <code>transformers ≥ 4.46</code>.</td></tr>
+<tr><td class="sev-high">H8</td><td><code>da_core/dataset.py:901, 919</code></td><td>Debug <code>print()</code> on every sample with <code>ridx &lt; 5</code>; left from debugging session.</td></tr>
+<tr><td class="sev-high">H9</td><td><code>serving/app.py:114</code></td><td><code>allow_origins=["*"]</code> + <code>allow_headers=["*"]</code> — any origin hits the GPU inference endpoint.</td></tr>
+<tr><td class="sev-high">H10</td><td><code>serving/</code> (all routers)</td><td>No authentication, no rate limiting, no request-ID propagation.</td></tr>
+<tr><td class="sev-high">H11</td><td><code>serving/routers/extract.py:178</code></td><td><code>detail=str(exc)</code> leaks model paths / CUDA errors / internal structure.</td></tr>
+<tr><td class="sev-high">H12</td><td><code>serving/core/postprocessor.py:149</code></td><td><code>full_text[v_start:v_end]</code> reached without re-checking <code>vals</code> non-empty — potential <code>IndexError</code>.</td></tr>
+<tr><td class="sev-high">H13</td><td><code>serving/core/batch_engine.py:132–140</code></td><td>Batch deadline anchored to <em>first</em> request. Slow trickles miss the window because the timer never resets.</td></tr>
+<tr><td class="sev-high">H14</td><td>Whole repo</td><td><strong>No unit tests</strong> outside <code>serving/test_api.py</code> + <code>serving/tests/test_extract_from_file.py</code>.</td></tr>
+</tbody>
+</table>
+
+<h3><span class="tag tag-med">MEDIUM</span></h3>
+<table>
+<thead><tr><th>#</th><th>File : Line</th><th>Issue</th></tr></thead>
+<tbody>
+<tr><td>M1</td><td>Training scripts</td><td><code>ddp_find_unused_parameters</code> is <code>False</code> in <code>train_dapt_distributed.py:395</code> but <code>True</code> in <code>train_dapt_mtl.py:566</code> and <code>train_dapt_staged.py:477</code>. In staged/MTL runs, heads may be conditionally active — <code>False</code> can raise a DDP error mid-run.</td></tr>
+<tr><td>M2</td><td><code>train_dapt_mtl.py:568</code></td><td><code>save_safetensors=False</code> hard-coded — disables safer serialisation without reason.</td></tr>
+<tr><td>M3</td><td>1 000+ line files</td><td><code>train_ebqa.py</code> (1 829), <code>da_core/dataset.py</code> (1 371), <code>train_with_noise.py</code> (1 169), <code>evaluate.py</code> (1 154), <code>model_ebqa.py</code> (994), <code>compare_models.py</code> (969).</td></tr>
+<tr><td>M4</td><td>Repo-wide</td><td>Hard-coded absolute paths <code>/data/ocean/DAPT/...</code>, <code>/home/ocean/...</code>, <code>/data/hxzh/...</code>.</td></tr>
+<tr><td>M5</td><td>6+ scripts</td><td><code>sys.path.append(current_dir)</code> scattered — fragile to CWD; breaks if imported as package.</td></tr>
+<tr><td>M6</td><td><code>serving/Dockerfile</code></td><td>Base image <code>nvcr.io/nvidia/pytorch:24.03-py3</code> <strong>unpinned</strong>.</td></tr>
+<tr><td>M7</td><td><code>serving/requirements.txt</code></td><td>Dependencies <strong>unpinned</strong>.</td></tr>
+<tr><td>M8</td><td><code>serving/Dockerfile</code></td><td><code>COPY . /app</code> pulls entire repo into production image — add <code>.dockerignore</code>.</td></tr>
+<tr><td>M9</td><td><code>serving/schemas/request.py</code></td><td><code>noise_values</code> input has no numeric range validation — NaN/inf could pollute calculations.</td></tr>
+<tr><td>M10</td><td><code>serving/app.py:121–135</code></td><td>Generic <code>Exception</code> handler may mask FastAPI's 422 validation responses.</td></tr>
+<tr><td>M11</td><td><code>serving/app.py:67–69</code></td><td>Lifespan-hook exceptions swallowed silently.</td></tr>
+<tr><td>M12</td><td><code>serving/routers/extract.py:70</code></td><td>Local <code>request_id</code> generation without upstream tracing correlation.</td></tr>
+<tr><td>M13</td><td><code>compute_noise_from_ocr.py</code> vs <code>noise_feature_processor.py</code> vs <code>add_noise_features.py</code></td><td>Same feature extraction implemented three times.</td></tr>
+<tr><td>M14</td><td><code>train_dapt_distributed.py:384</code> vs <code>train_dapt_macbert_staged.py:591</code></td><td>Inconsistent guards when loading noise processor.</td></tr>
+<tr><td>M15</td><td>Git history</td><td>Four consecutive fix commits on OCR↔dataset alignment (<code>78476fa</code>, <code>f01f729</code>, <code>fcf1d61</code>, <code>54ac0a3</code>) — add an automated alignment check to CI.</td></tr>
+</tbody>
+</table>
+
+<h3><span class="tag tag-low">MINOR</span></h3>
+<table>
+<thead><tr><th>#</th><th>File : Line</th><th>Issue</th></tr></thead>
+<tbody>
+<tr><td>N1</td><td><code>kv_ner/modeling.py:97–98</code></td><td>Stale comment: "noise_embed_dim preserved but no longer used" — parameter still in signature.</td></tr>
+<tr><td>N2</td><td>Repo-wide</td><td>Mixed error-handling: some functions raise, others silently return <code>None</code>.</td></tr>
+<tr><td>N3</td><td><code>noise_feature_processor.py:157</code></td><td><code>to_id</code> returns <code>digitize + 1</code> for non-zero; callers must size embeddings as <code>NUM_BINS + 1</code> — document the invariant.</td></tr>
+<tr><td>N4</td><td>Repo root</td><td>No <code>requirements.txt</code> — only <code>serving/requirements.txt</code>.</td></tr>
+<tr><td>N5</td><td><code>paper.md</code></td><td>Anonymised block plus author block both present; tidy before non-anonymous export.</td></tr>
+<tr><td>N6</td><td><code>dapt_eval_package/pre_struct/.DS_Store</code></td><td><code>.DS_Store</code> committed.</td></tr>
+</tbody>
+</table>
+
+<h2>6. File-By-File Highlights</h2>
+<table>
+<thead><tr><th>Group</th><th>Representative files</th><th>Health</th></tr></thead>
+<tbody>
+<tr><td>Data ingestion</td><td><code>extract_and_dedup_json_v2.py</code>, <code>resample_mix.py</code>, <code>chunk_long_lines.py</code></td><td>OK</td></tr>
+<tr><td>Vocab / Tokenizer</td><td><code>train_ocr_clean.py</code>, <code>filter_vocab_with_llm.py</code>, <code>final_merge_v9_regex_split_slim.py</code>, <code>generate_jieba_vocab.py</code></td><td>OK (LLM filter lacks checkpoint)</td></tr>
+<tr><td>Dataset construction</td><td><code>build_dataset_final_slim.py</code>, <code>add_noise_features.py</code></td><td class="sev-crit">C1</td></tr>
+<tr><td>Noise core</td><td><code>noise_feature_processor.py</code>, <code>noise_embeddings.py</code>, <code>noise_bert_model.py</code>, <code>noise_fusion.py</code></td><td class="sev-high">H1–H3</td></tr>
+<tr><td>Pretraining scripts (11)</td><td><code>train_dapt_distributed.py</code>, <code>train_dapt_macbert_staged.py</code>, <code>…_no_mlm/no_nsp/no_noise/mtl/hybrid/staged</code></td><td class="sev-crit">C2</td></tr>
+<tr><td>KV-NSP</td><td><code>kv_nsp/{dataset_with_noise.py, run_train_with_noise.py, negative_sampling.py}</code></td><td class="sev-high">H7</td></tr>
+<tr><td>Downstream fine-tuning</td><td><code>dapt_eval_package/pre_struct/kv_ner/*</code>, <code>ebqa/*</code></td><td class="sev-high">H4, H5, H6, H8, M3</td></tr>
+<tr><td>Ablation shells</td><td><code>experiments/{mlm,noise,nsp_ratio,tokenizer}_ablation/*.sh</code></td><td>Shell-heavy; reasonable.</td></tr>
+<tr><td>Interpretability</td><td><code>experiments/interpretability/*</code></td><td>Research-grade.</td></tr>
+<tr><td>Serving</td><td><code>serving/app.py</code>, <code>serving/core/*</code>, <code>serving/routers/*</code></td><td class="sev-high">H9–H13, M6–M12</td></tr>
+<tr><td>Verification</td><td><code>verify_noise_alignment.py</code>, <code>scripts/validate_ner_spans_after_ocr_sync.py</code>, <code>scripts/check_pretrain_test_leakage.py</code></td><td>Good these exist.</td></tr>
+</tbody>
+</table>
+
+<h2>7. Prioritised Recommendations</h2>
+
+<h3>Before the next pretraining / ablation re-run</h3>
+<ol>
+<li><span class="sev-crit">C1</span> — Fix <code>add_noise_features.py:96</code> to use <code>len(FEATURES)</code> (= 7).</li>
+<li><span class="sev-high">H1</span> — Add <code>assert noise_ids.shape[-1] == len(FEATURES)</code> in <code>noise_bert_model.py</code> forward.</li>
+<li><span class="sev-high">H7</span> — Migrate <code>kv_nsp/run_train*.py</code> from <code>evaluation_strategy=</code> to <code>eval_strategy=</code>.</li>
+<li><span class="sev-high">H8</span> — Remove debug <code>print()</code> from <code>da_core/dataset.py</code>.</li>
+<li>Confirm <strong>M1</strong> — audit <code>ddp_find_unused_parameters</code> flag vs each script's actual parameter graph.</li>
+</ol>
+
+<h3>Before handing off outside the current team</h3>
+<ol start="6">
+<li><span class="sev-crit">C2</span> — Create <code>pretraining_common.py</code> (collator, callback, model wrappers).</li>
+<li><span class="sev-high">H4 / H5</span> — Single shared <code>noise_utils.py</code> and <code>evaluate_core.py</code>.</li>
+<li><span class="sev-high">H14</span> — Add <code>tests/</code>: noise-processor quantile round-trip, WWM collator shape/count, NSP negative-sampling distribution, end-to-end <code>add_noise_features</code> on a 5-sample fixture.</li>
+<li><strong>M4 / M5</strong> — Introduce <code>config.yaml</code> / <code>.env</code>; remove <code>sys.path.append</code> hacks.</li>
+<li><strong>M6 / M7 / M8</strong> — Pin Docker base and dependencies; add <code>.dockerignore</code>.</li>
+</ol>
+
+<h3>Before exposing <code>serving/</code> outside the internal network</h3>
+<ol start="11">
+<li><span class="sev-high">H9</span> — Tighten CORS to specific origins.</li>
+<li><span class="sev-high">H10</span> — Add API-key auth and a token-bucket rate limit.</li>
+<li><span class="sev-high">H11</span> — Sanitise error responses; log internally, return opaque errors externally.</li>
+<li><span class="sev-high">H12 / H13</span> — Fix postprocessor <code>IndexError</code> path and reset batch-deadline on each new arrival.</li>
+<li><strong>M9</strong> — Validate <code>noise_values</code> numeric range; reject NaN/inf.</li>
+</ol>
+
+<h3>Quality of life</h3>
+<ol start="16">
+<li>Split 1 000+ line files (<code>train_ebqa.py</code>, <code>da_core/dataset.py</code>, <code>train_with_noise.py</code>, <code>evaluate.py</code>).</li>
+<li>Add a <code>CI.yml</code> that at minimum runs <code>pyflakes</code>, the new unit tests, and a lint pass.</li>
+<li>Squash the four consecutive sync/alignment "fix" commits into one logical change before the next PR.</li>
+</ol>
+
+<h2>8. Verdict</h2>
+<blockquote>
+<p><strong>For a research group:</strong> this is a strong, publication-ready codebase. The ML story is coherent, the ablation grid thorough, the paper draft substantive, and the <code>main</code>-branch critical bugs are fixed.</p>
+<p><strong>For a production handover:</strong> not yet ready. The new dimension-mismatch bug (C1) can silently corrupt a training run, the ~70 % duplication across training scripts means any fix must be applied in many places, the FastAPI service has no auth, and the pipeline has no unit tests.</p>
+<p><strong>Short recommendation:</strong> fix C1 and H1 today, then budget 2–3 days to de-duplicate the training scripts and add a minimal test suite before the next full-scale pretraining run.</p>
+</blockquote>
+
+</main>
+</body>
+</html>

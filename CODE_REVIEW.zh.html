@@ -1,0 +1,256 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8"/>
+<title>KV-BERT / DAPT — 代码评审报告（中文）</title>
+<style>
+  :root {
+    --bg:#fafbfc; --fg:#1f2328; --muted:#57606a; --accent:#0969da;
+    --crit:#cf222e; --high:#bc4c00; --med:#9a6700; --low:#1a7f37; --code-bg:#f6f8fa;
+  }
+  html,body{background:var(--bg);color:var(--fg);margin:0;padding:0;
+    font-family:-apple-system,BlinkMacSystemFont,"PingFang SC","Microsoft YaHei","Segoe UI",Helvetica,Arial,sans-serif;line-height:1.65;}
+  main{max-width:920px;margin:0 auto;padding:32px 24px 64px 24px;}
+  h1{font-size:1.9rem;border-bottom:2px solid #d0d7de;padding-bottom:.4em;margin-top:0;}
+  h2{font-size:1.4rem;border-bottom:1px solid #d0d7de;padding-bottom:.25em;margin-top:2em;}
+  h3{font-size:1.15rem;margin-top:1.4em;}
+  table{border-collapse:collapse;width:100%;margin:.8em 0 1.4em 0;font-size:.95rem;}
+  th,td{border:1px solid #d0d7de;padding:.45em .6em;vertical-align:top;text-align:left;}
+  th{background:#eaeef2;}
+  tr:nth-child(even) td{background:#f6f8fa;}
+  code,pre{font-family:"SF Mono","Monaco","Menlo",Consolas,monospace;}
+  code{background:var(--code-bg);padding:.1em .35em;border-radius:3px;font-size:.9em;}
+  pre{background:var(--code-bg);padding:12px 14px;border-radius:6px;overflow-x:auto;line-height:1.45;font-size:.86rem;}
+  .sev-crit{color:var(--crit);font-weight:700;}
+  .sev-high{color:var(--high);font-weight:700;}
+  .sev-med{color:var(--med);font-weight:700;}
+  .sev-low{color:var(--low);font-weight:700;}
+  .muted{color:var(--muted);}
+  .meta{color:var(--muted);font-size:.92rem;margin-bottom:1.6em;}
+  .scorecard td:nth-child(2){text-align:center;font-weight:600;}
+  blockquote{border-left:4px solid #d0d7de;color:var(--muted);margin:0;padding:.4em 1em;}
+  .tag{display:inline-block;padding:.1em .5em;border-radius:10px;font-size:.78rem;font-weight:600;color:#fff;margin-right:.3em;}
+  .tag-crit{background:var(--crit);} .tag-high{background:var(--high);} .tag-med{background:var(--med);} .tag-low{background:var(--low);}
+</style>
+</head>
+<body>
+<main>
+
+<h1>KV-BERT / DAPT — 代码评审报告 <span class="muted">（中文）</span></h1>
+
+<p class="meta">
+<strong>仓库：</strong><code>/Users/user/Documents/DAPT</code><br/>
+<strong>分支：</strong><code>feature/noise-embedding</code>（相较 <code>main</code> 多 296 个文件 / 约 200 万行，实际源码约 1.5–2 万行）<br/>
+<strong>HEAD：</strong><code>fcf1d61</code> — "docs: add OCR_TEXT_AND_NOISE_ALIGNMENT guide"<br/>
+<strong>日期：</strong>2026-04-23<br/>
+<strong>评审范围：</strong>预训练管线 + 下游 NER/EBQA + FastAPI 服务 + 消融实验
+</p>
+
+<h2>1. 总体结论</h2>
+<p><strong>KV-BERT</strong> 是由 Hao Li 等人（AI Starfish）提出的、面向 OCR 中文临床报告的半结构化键值抽取的噪声鲁棒领域自适应预训练框架。论文贡献三项：<strong>KV-MLM</strong>（按医学实体 / 键值边界的全词掩码）、<strong>KV-NSP</strong>（在键值对上做二分类，带硬负 / 随机负样本）、以及 <strong>Noise-Embedding</strong>（7 维 OCR 质量特征经分桶离散化后求和注入 embedding 层）。基座模型已从 RoBERTa 切换为 <strong>MacBERT</strong>，整条管线从原始 OCR JSON 一直走到 Docker 化的 FastAPI 服务。</p>
+<p><em>总体评价：资深科研工程师水平，目标是发表论文；但工程卫生没有跟上功能扩张。</em></p>
+
+<table class="scorecard">
+<thead><tr><th>维度</th><th>评分（1–5）</th><th>说明</th></tr></thead>
+<tbody>
+<tr><td>架构 &amp; ML 设计</td><td>4.5</td><td>分桶 + anchor bin 思路清晰；三项贡献互相独立；消融覆盖充分。</td></tr>
+<tr><td>正确性</td><td>3</td><td><code>main</code> 的严重 bug 已修，但在 <code>add_noise_features.py</code> 引入新的 5↔7 维度错配；shape 校验仍较弱。</td></tr>
+<tr><td>代码卫生 / DRY</td><td>2</td><td>11 份训练脚本之间 ≥60% 是拷贝代码；没有公共工具模块。</td></tr>
+<tr><td>文档</td><td>4</td><td>中英双语 docstring；paper 初稿；管线文档与集成指南齐全。</td></tr>
+<tr><td>可移植性</td><td>2</td><td><code>/data/ocean/DAPT/...</code> 绝对路径遍布全仓；6+ 脚本内嵌 <code>sys.path.append</code>。</td></tr>
+<tr><td>测试覆盖</td><td>1.5</td><td>仅 serving 侧 2 个集成测试；噪声、建模、评测无任何单测。</td></tr>
+<tr><td>生产可用度（serving）</td><td>2</td><td>功能可跑，但无鉴权、无限流、CORS 全放开、Docker base 未 pin。</td></tr>
+</tbody>
+</table>
+
+<h2>2. 相较 <code>main</code> 的改进</h2>
+<table>
+<thead><tr><th><code>main</code> 上的问题</th><th><code>feature/noise-embedding</code> 状态</th></tr></thead>
+<tbody>
+<tr><td><code>add_noise_features.py</code> 按拆分索引对齐错位</td><td class="sev-low">✅ 已修 — <code>global_idx = split_offsets[split] + idx</code>（165–182、268–271 行）。</td></tr>
+<tr><td>SymSpell 用 <code>max_dictionary_edit_distance=32</code> 建索引</td><td class="sev-low">✅ 已移除 — 整段 SymSpell / Levenshtein 代码被删，改走分桶路线。</td></tr>
+<tr><td><code>char_break_norm=24</code> 导致特征饱和</td><td class="sev-low">✅ 已移除 — <code>char_break_ratio</code> 被硬截断到 0.25（<code>noise_feature_processor.py:42</code>）。</td></tr>
+<tr><td><code>RobertaNoiseEmbeddings.forward</code> 缺 seq-len 校验</td><td class="sev-low">✅ 已修 — 直接由 <code>input_shape[1]</code> 推出（<code>noise_bert_model.py:123</code>）。</td></tr>
+<tr><td><code>kv_nsp/run_train.py</code> 用已弃用的 <code>evaluation_strategy=</code></td><td class="sev-med">⚠️ 部分修 — 主预训练脚本已迁移，但 <code>kv_nsp/run_train.py:192</code>、<code>kv_nsp/run_train_with_noise.py:472</code> 仍用旧关键字。</td></tr>
+</tbody>
+</table>
+
+<h2>3. 项目架构</h2>
+<pre>
+ 原始 JSON / OCR（多源）
+        │
+        ▼                                     extract_and_dedup_json_v2.py （MD5 去重）
+ train.txt + 按源拆分文件
+        │
+        ▼                                     resample_mix.py  +  chunk_long_lines.py
+ train_resampled.txt → train_chunked.txt
+        │
+        ▼                                     train_ocr_clean.py  +  filter_vocab_with_llm.py
+ medical_vocab_ocr_only/vocab.txt → kept_vocab.txt
+        │
+        ▼                                     final_merge_v9_regex_split_slim.py
+ my-medical-tokenizer/  +  vocab_for_jieba.txt （generate_jieba_vocab.py）
+        │
+        ▼                                     build_dataset_final_slim.py （Jieba 对齐 WWM）
+ processed_dataset/  (input_ids + word_ids)
+        │
+        ▼                                     NoiseFeatureProcessor.fit_bins → noise_bins.json
+        ▼                                     add_noise_features.py
+ processed_dataset_with_noise/   (+ noise_values = 每 token 7 维)
+        │
+        ▼                                     train_dapt_macbert_staged.py  (8×H200, 分阶段 MLM↔NSP)
+ output_macbert_kvmlm_staged/final_staged_model/
+        │
+        ├─────►  下游微调：dapt_eval_package/pre_struct/kv_ner/train_with_noise.py
+        │                  dapt_eval_package/pre_struct/ebqa/train_ebqa.py
+        │
+        ├─────►  消融实验：experiments/{mlm,noise,nsp_ratio,tokenizer}_ablation/*
+        │
+        ├─────►  可解释性：experiments/interpretability/{attention,IG}/*
+        │
+        └─────►  在线服务：serving/ (FastAPI + BertCRF + 批推理 + 噪声抽取)
+</pre>
+<p class="muted">数据规模（paper 口径）：原始 98.2 万行 → 重采样 22.5 万 → 切片 53.7 万；标注 3 582 页 OCR（训练 3 224 / 测试 358）。</p>
+
+<h2>4. 亮点</h2>
+<ol>
+  <li><strong>噪声建模思路扎实</strong> —— <code>NoiseFeatureProcessor</code> 的分桶设计 + 为 "完美文本" 保留 anchor bin，使 OCR 元数据能以干净-文本相容的方式融入 BERT embedding。</li>
+  <li><strong>三项贡献切分明确</strong> —— KV-MLM / KV-NSP / Noise-Embedding 各自对应 <code>no_mlm</code>、<code>no_nsp</code>、<code>no_noise</code>、<code>noise_{bucket,linear,mlp,concat_linear}</code>、<code>nsp_ratio_{1:1,3:1,1:3}</code> 等独立消融目录。</li>
+  <li><strong>关键对齐 bug 已修</strong> —— 每个拆分独立的索引 offset 让 OCR 对齐在 train/test 上都正确。</li>
+  <li><strong>多种训练范式</strong> —— staged / MTL / hybrid-masking 皆已落地，覆盖 DAPT 常见套路。</li>
+  <li><strong>从数据到上线的全生命周期</strong> —— 数据清洗、分词器训练、预训练、下游微调（KV-NER / EBQA）、可解释性分析（attention / IG）、产品化 serving 全都有。</li>
+  <li><strong>论文级文档</strong> —— <code>paper.md</code>（LLNCS LaTeX）、<code>pipeline_new.md</code>、<code>PRETRAINED_MODELS_SUMMARY.md</code>、<code>interview_prep.md</code>、<code>KV_BERT_预训练与下游推理指南.md</code>。</li>
+  <li><strong>实用训练技巧</strong> —— <code>bf16</code>、<code>tf32</code>、<code>group_by_length</code>、梯度检查点、阶段性 curriculum。</li>
+</ol>
+
+<h2>5. 问题清单（按严重度）</h2>
+
+<h3><span class="tag tag-crit">关键</span></h3>
+<table>
+<thead><tr><th>#</th><th>位置</th><th>问题</th></tr></thead>
+<tbody>
+<tr><td class="sev-crit">C1</td><td><code>add_noise_features.py:96</code></td><td><code>build_zero_feats</code> 仍返回 <code>[[0.0]*5 ...]</code> 与 <code>[[False]*5 ...]</code>，但 <code>FEATURES</code> 已有 <strong>7</strong> 项。fallback 路径（第 195 行，OCR 缺失 / 格式异常）会得到 <strong>5 维</strong> <code>noise_values</code>，正常样本是 7 维。HF <code>save_to_disk</code> 要么因 schema 漂移报错，要么静默错齐 —— 两种都糟。修：<code>[[0.0]*len(FEATURES) for _ in range(seq_len)]</code>。</td></tr>
+<tr><td class="sev-crit">C2</td><td>所有 <code>train_dapt_*.py</code></td><td>≈60–70% 的代码重复 —— <code>PrecomputedWWMCollator</code>、<code>PerplexityCallback</code>、<code>RobertaModelWithNoise</code>、<code>MLMStageCollator</code>、<code>DynamicNSPDataset</code> 各自被重新实现 3–6 次。应抽出 <code>pretraining_common.py</code>。</td></tr>
+</tbody>
+</table>
+
+<h3><span class="tag tag-high">高</span></h3>
+<table>
+<thead><tr><th>#</th><th>位置</th><th>问题</th></tr></thead>
+<tbody>
+<tr><td class="sev-high">H1</td><td><code>noise_bert_model.py:147–154</code></td><td>桶模式 forward 未校验 <code>noise_ids.shape[-1] == len(FEATURES)</code>。若出现 5 维 fallback（C1）或缓存截断，将静默索引错误 embedding 矩阵。</td></tr>
+<tr><td class="sev-high">H2</td><td><code>noise_bert_model.py:156–162</code></td><td>连续 / linear / mlp 模式同样没有验证 <code>noise_values</code> 的 dtype 或 shape。</td></tr>
+<tr><td class="sev-high">H3</td><td><code>noise_fusion.py:~126</code></td><td><code>nan_to_num</code> 在 <code>clamp</code> <em>之后</em> 才调用，NaN 会先流经 clamp；应先清 NaN 再 clamp。</td></tr>
+<tr><td class="sev-high">H4</td><td><code>kv_ner/evaluate.py</code> vs <code>evaluate_with_dapt_noise.py</code></td><td>约 1 000 行接近相同的预测 / 组合 / 指标代码散在两份文件里，噪声开 / 关两组实验之间极易出现指标漂移。</td></tr>
+<tr><td class="sev-high">H5</td><td><code>data_utils.py:226–228</code>、<code>train_with_noise.py:325–333</code>、<code>compare_models.py:81–98</code></td><td><code>_expand_word_noise_to_chars()</code> 在 <strong>三份</strong> 文件里重复实现。</td></tr>
+<tr><td class="sev-high">H6</td><td><code>train_with_noise.py:602–603</code></td><td>取 batch 时类型不安全：<code>batch.get("noise_ids") if isinstance(batch, dict) else batch.noise_ids</code>。</td></tr>
+<tr><td class="sev-high">H7</td><td><code>kv_nsp/run_train.py:192</code>、<code>run_train_with_noise.py:472</code></td><td>仍用已弃用的 <code>evaluation_strategy=</code>（<code>transformers ≥ 4.46</code> 已移除）。</td></tr>
+<tr><td class="sev-high">H8</td><td><code>da_core/dataset.py:901, 919</code></td><td>调试用 <code>print()</code> 尚未清理，污染日志且拖慢推理。</td></tr>
+<tr><td class="sev-high">H9</td><td><code>serving/app.py:114</code></td><td><code>allow_origins=["*"]</code> + <code>allow_headers=["*"]</code> —— 任意来源都可以调用 GPU 推理接口。</td></tr>
+<tr><td class="sev-high">H10</td><td><code>serving/</code>（所有路由）</td><td>无鉴权、无限流、无请求 ID 上下游串联。</td></tr>
+<tr><td class="sev-high">H11</td><td><code>serving/routers/extract.py:178</code></td><td><code>detail=str(exc)</code> 把模型路径、CUDA 错误等内部结构直接回给调用方。</td></tr>
+<tr><td class="sev-high">H12</td><td><code>serving/core/postprocessor.py:149</code></td><td>过滤后未再次检查 <code>vals</code> 是否为空，可能抛 <code>IndexError</code>。</td></tr>
+<tr><td class="sev-high">H13</td><td><code>serving/core/batch_engine.py:132–140</code></td><td>批窗口 deadline 锁在"第一条请求"的到达时间，后续慢到的请求会因超时错过本批。</td></tr>
+<tr><td class="sev-high">H14</td><td>全仓库</td><td>除 <code>serving/test_api.py</code> 和 <code>serving/tests/test_extract_from_file.py</code> 之外 <strong>完全没有单元测试</strong>。</td></tr>
+</tbody>
+</table>
+
+<h3><span class="tag tag-med">中</span></h3>
+<table>
+<thead><tr><th>#</th><th>位置</th><th>问题</th></tr></thead>
+<tbody>
+<tr><td>M1</td><td>多份训练脚本</td><td><code>ddp_find_unused_parameters</code> 在 <code>train_dapt_distributed.py:395</code> 为 <code>False</code>、在 <code>train_dapt_mtl.py:566</code>、<code>train_dapt_staged.py:477</code> 为 <code>True</code>。staged/MTL 中 head 可能有条件地未参与，错误设为 <code>False</code> 会在 step &gt; 0 时抛 DDP 错。</td></tr>
+<tr><td>M2</td><td><code>train_dapt_mtl.py:568</code></td><td>硬编码 <code>save_safetensors=False</code>。</td></tr>
+<tr><td>M3</td><td>超长文件</td><td><code>train_ebqa.py</code>（1 829）、<code>da_core/dataset.py</code>（1 371）、<code>train_with_noise.py</code>（1 169）、<code>evaluate.py</code>（1 154）、<code>model_ebqa.py</code>（994）、<code>compare_models.py</code>（969）。</td></tr>
+<tr><td>M4</td><td>全仓库</td><td>绝对路径 <code>/data/ocean/DAPT/...</code>、<code>/home/ocean/...</code>、<code>/data/hxzh/...</code> 遍地。</td></tr>
+<tr><td>M5</td><td>6+ 脚本</td><td><code>sys.path.append(current_dir)</code> 写法散落，对 cwd 敏感。</td></tr>
+<tr><td>M6</td><td><code>serving/Dockerfile</code></td><td>base 镜像 <code>nvcr.io/nvidia/pytorch:24.03-py3</code> 未 pin digest。</td></tr>
+<tr><td>M7</td><td><code>serving/requirements.txt</code></td><td>依赖没有版本锁。</td></tr>
+<tr><td>M8</td><td><code>serving/Dockerfile</code></td><td><code>COPY . /app</code> 把 notebook / fixture / tools 全部拉进生产镜像。</td></tr>
+<tr><td>M9</td><td><code>serving/schemas/request.py</code></td><td><code>noise_values</code> 缺数值范围校验。</td></tr>
+<tr><td>M10</td><td><code>serving/app.py:121–135</code></td><td>通用 <code>Exception</code> 处理器可能遮蔽 FastAPI 自身的 422 校验响应。</td></tr>
+<tr><td>M11</td><td><code>serving/app.py:67–69</code></td><td>lifespan 钩子内的异常被静默吞掉。</td></tr>
+<tr><td>M12</td><td><code>serving/routers/extract.py:70</code></td><td><code>request_id</code> 本地生成，没有上游追踪关联。</td></tr>
+<tr><td>M13</td><td><code>compute_noise_from_ocr.py</code> vs <code>noise_feature_processor.py</code> vs <code>add_noise_features.py</code></td><td>同一套特征抽取代码存在三份。</td></tr>
+<tr><td>M14</td><td><code>train_dapt_distributed.py:384</code> vs <code>train_dapt_macbert_staged.py:591</code></td><td>加载 noise processor 的前置检查一份有、一份没有。</td></tr>
+<tr><td>M15</td><td>git 历史</td><td>连续 4 次 fix 围绕 OCR↔dataset 对齐（<code>78476fa</code>、<code>f01f729</code>、<code>fcf1d61</code>、<code>54ac0a3</code>），建议把"对齐不变量"写进 CI 检查。</td></tr>
+</tbody>
+</table>
+
+<h3><span class="tag tag-low">轻微</span></h3>
+<table>
+<thead><tr><th>#</th><th>位置</th><th>问题</th></tr></thead>
+<tbody>
+<tr><td>N1</td><td><code>kv_ner/modeling.py:97–98</code></td><td>过时注释："noise_embed_dim preserved but no longer used"——参数仍在签名里。</td></tr>
+<tr><td>N2</td><td>全仓库</td><td>错误处理风格混杂：有的抛异常，有的静默 <code>return None</code>。</td></tr>
+<tr><td>N3</td><td><code>noise_feature_processor.py:157</code></td><td><code>to_id</code> 对非零值返回 <code>digitize + 1</code>，embedding 表需要开 <code>NUM_BINS + 1</code>；应文档化。</td></tr>
+<tr><td>N4</td><td>仓库根</td><td>缺少 <code>requirements.txt</code> —— 只有 <code>serving/requirements.txt</code>。</td></tr>
+<tr><td>N5</td><td><code>paper.md</code></td><td>匿名块和作者块同时存在。</td></tr>
+<tr><td>N6</td><td><code>dapt_eval_package/pre_struct/.DS_Store</code></td><td>提交了 <code>.DS_Store</code>。</td></tr>
+</tbody>
+</table>
+
+<h2>6. 分组健康度</h2>
+<table>
+<thead><tr><th>分组</th><th>代表文件</th><th>状态</th></tr></thead>
+<tbody>
+<tr><td>数据摄入</td><td><code>extract_and_dedup_json_v2.py</code>、<code>resample_mix.py</code>、<code>chunk_long_lines.py</code></td><td>良好</td></tr>
+<tr><td>词表 / Tokenizer</td><td><code>train_ocr_clean.py</code>、<code>filter_vocab_with_llm.py</code>、<code>final_merge_v9_regex_split_slim.py</code>、<code>generate_jieba_vocab.py</code></td><td>良好（LLM 过滤缺断点续跑）</td></tr>
+<tr><td>数据集构建</td><td><code>build_dataset_final_slim.py</code>、<code>add_noise_features.py</code></td><td class="sev-crit">C1</td></tr>
+<tr><td>噪声核心</td><td><code>noise_feature_processor.py</code>、<code>noise_embeddings.py</code>、<code>noise_bert_model.py</code>、<code>noise_fusion.py</code></td><td class="sev-high">H1–H3</td></tr>
+<tr><td>预训练脚本 (11)</td><td><code>train_dapt_distributed.py</code>、<code>train_dapt_macbert_staged.py</code>、<code>…_no_mlm/no_nsp/no_noise/mtl/hybrid/staged</code></td><td class="sev-crit">C2</td></tr>
+<tr><td>KV-NSP</td><td><code>kv_nsp/{dataset_with_noise.py, run_train_with_noise.py, negative_sampling.py}</code></td><td class="sev-high">H7</td></tr>
+<tr><td>下游微调</td><td><code>dapt_eval_package/pre_struct/kv_ner/*</code>、<code>ebqa/*</code></td><td class="sev-high">H4, H5, H6, H8, M3</td></tr>
+<tr><td>消融脚本</td><td><code>experiments/{mlm,noise,nsp_ratio,tokenizer}_ablation/*.sh</code></td><td>以 shell 居多，整体可控</td></tr>
+<tr><td>可解释性</td><td><code>experiments/interpretability/*</code></td><td>研究级</td></tr>
+<tr><td>在线服务</td><td><code>serving/app.py</code>、<code>serving/core/*</code>、<code>serving/routers/*</code></td><td class="sev-high">H9–H13, M6–M12</td></tr>
+<tr><td>校验脚本</td><td><code>verify_noise_alignment.py</code>、<code>scripts/validate_ner_spans_after_ocr_sync.py</code>、<code>scripts/check_pretrain_test_leakage.py</code></td><td>有这些脚本是好事</td></tr>
+</tbody>
+</table>
+
+<h2>7. 按优先级的推荐</h2>
+
+<h3>下一次预训练 / 重跑消融之前必做</h3>
+<ol>
+<li><span class="sev-crit">C1</span> — 修 <code>add_noise_features.py:96</code>，改为 <code>len(FEATURES)</code>（=7）。</li>
+<li><span class="sev-high">H1</span> — 在 <code>noise_bert_model.py</code> forward 中加 <code>assert noise_ids.shape[-1] == len(FEATURES)</code>。</li>
+<li><span class="sev-high">H7</span> — <code>kv_nsp/run_train*.py</code> 从 <code>evaluation_strategy=</code> 迁移到 <code>eval_strategy=</code>。</li>
+<li><span class="sev-high">H8</span> — 清掉 <code>da_core/dataset.py</code> 的调试 <code>print()</code>。</li>
+<li>审查 <strong>M1</strong> — 逐个脚本核对 <code>ddp_find_unused_parameters</code> 与真实 head 计算图的一致性。</li>
+</ol>
+
+<h3>交付给外部团队之前必做</h3>
+<ol start="6">
+<li><span class="sev-crit">C2</span> — 新建 <code>pretraining_common.py</code>（collator、callback、模型包装），删除重复实现。</li>
+<li><span class="sev-high">H4 / H5</span> — 落地统一的 <code>noise_utils.py</code> 与 <code>evaluate_core.py</code>。</li>
+<li><span class="sev-high">H14</span> — 建 <code>tests/</code>，最少包括：noise processor 分位数往返、WWM collator 形状/数量、NSP 负采样分布、<code>add_noise_features</code> 端到端回归。</li>
+<li><strong>M4 / M5</strong> — 引入 <code>config.yaml</code> / <code>.env</code>，去掉 <code>sys.path.append</code> 写法。</li>
+<li><strong>M6 / M7 / M8</strong> — pin Docker base 与依赖版本，加 <code>.dockerignore</code>。</li>
+</ol>
+
+<h3>在把 <code>serving/</code> 暴露到内网之外之前必做</h3>
+<ol start="11">
+<li><span class="sev-high">H9</span> — 收紧 CORS 到具体域名。</li>
+<li><span class="sev-high">H10</span> — 加 API key 鉴权与 token bucket 限流。</li>
+<li><span class="sev-high">H11</span> — 清洗错误响应：内部详写日志、对外只返回不透明错误。</li>
+<li><span class="sev-high">H12 / H13</span> — 修 postprocessor 的 <code>IndexError</code> 路径；批 deadline 每次新请求都要重置。</li>
+<li><strong>M9</strong> — <code>noise_values</code> 做数值范围校验，拒绝 NaN/inf。</li>
+</ol>
+
+<h3>生活质量改进</h3>
+<ol start="16">
+<li>拆分超过 1 000 行的文件（<code>train_ebqa.py</code>、<code>da_core/dataset.py</code>、<code>train_with_noise.py</code>、<code>evaluate.py</code>）。</li>
+<li>加一个 <code>CI.yml</code>，至少跑 <code>pyflakes</code> / 新增单测 / 全文件 lint。</li>
+<li>下一个 PR 之前把连续四次的 sync/对齐 fix commit 压成一个逻辑变更。</li>
+</ol>
+
+<h2>8. 结论</h2>
+<blockquote>
+<p><strong>科研团队视角：</strong>这是一份可发表、论据齐备的代码库。ML 故事顺、消融矩阵扎实、paper 初稿已经成形，<code>main</code> 分支上那几个严重 bug 也都修了。</p>
+<p><strong>生产交接视角：</strong>还没到位。新引入的 5↔7 维错配（C1）可以静默污染一次训练；11 份训练脚本的 ~70% 重复意味着任何一次修改都要手动同步很多份；FastAPI 服务没鉴权；整个管线没有单元测试。把 C1、C2、H1、H4/H5、H9–H11、H14 解决之后，项目就能从"在我的 GPU 集群上能跑"进化到"另一个团队可以安心接手"。</p>
+<p><strong>一句话建议：</strong>今天就修 C1 和 H1；接着预算 2–3 天用于训练脚本去重 + 一套最小单测，然后再启动下一轮全量预训练。</p>
+</blockquote>
+
+</main>
+</body>
+</html>
