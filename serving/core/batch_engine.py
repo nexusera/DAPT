@@ -126,7 +126,12 @@ class DynamicBatchEngine:
                 return
 
             batch: List[_InferItem] = [first]
-            deadline = first.enqueued_at + self.max_wait_ms / 1000.0
+            # H13: deadline 以"首个请求入队时刻"为基准，每收到一个新请求便向后滚动
+            # 一个窗口长度（但不超过 2× max_wait_ms），避免缓慢到来的请求因
+            # 剩余时间耗尽而被漏批。
+            _wait_s = self.max_wait_ms / 1000.0
+            _max_deadline_s = first.enqueued_at + 2.0 * _wait_s
+            deadline = first.enqueued_at + _wait_s
 
             # 在窗口期内尽量多收集请求
             while len(batch) < self.max_batch_size:
@@ -136,6 +141,8 @@ class DynamicBatchEngine:
                 try:
                     extra = await asyncio.wait_for(self._queue.get(), timeout=remaining_s)
                     batch.append(extra)
+                    # H13: 收到新请求，把 deadline 向后滚动一个窗口，但不超过上限
+                    deadline = min(_max_deadline_s, time.perf_counter() + _wait_s)
                 except asyncio.TimeoutError:
                     break
                 except asyncio.CancelledError:

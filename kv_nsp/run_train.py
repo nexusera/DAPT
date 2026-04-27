@@ -189,7 +189,7 @@ def main() -> None:
         per_device_eval_batch_size=args.per_device_eval_batch_size,
         learning_rate=args.learning_rate,
         weight_decay=args.weight_decay,
-        evaluation_strategy=args.eval_strategy,
+        eval_strategy=args.eval_strategy,  # H7: evaluation_strategy= 在 transformers>=4.46 已移除
         logging_steps=args.logging_steps,
         save_total_limit=args.save_total_limit,
         warmup_ratio=args.warmup_ratio,

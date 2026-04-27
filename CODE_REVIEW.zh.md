@@ -111,15 +111,15 @@
 | **H3** | `noise_fusion.py:~126` | `nan_to_num` 在 `clamp` **之后** 才调用，NaN 会先流经 clamp；应当先清 NaN 再 clamp。<br>**✅ 确认已正确（f23cbbf）** 当前版本 `nan_to_num`（第 123 行）已在 `clamp` 等效操作（第 126 行）之前执行，顺序正确。评审报告描述的问题在此版本不存在。在该行添加注释 `# H3: nan_to_num 必须在 clamp 之前` 防止未来改动重新引入。 |
 | **H4** | `dapt_eval_package/pre_struct/kv_ner/evaluate.py` vs `evaluate_with_dapt_noise.py` | 约 1 000 行接近相同的预测 / 组合 / 指标代码散在两份文件里，噪声开 / 关两组实验之间极易出现指标漂移。<br>**✅ 已修（f23cbbf）** 新建 `evaluate_core.py`，提取 `set_seed`、`_read_jsonl`、`_normalize_text_for_eval`、`_extract_ground_truth` 四个共享函数；`evaluate.py` 与 `evaluate_with_dapt_noise.py` 均改为从 `evaluate_core` 导入并删除各自的重复定义，消除两组实验之间指标实现漂移的可能。 |
 | **H5** | `data_utils.py:226–228`、`train_with_noise.py:325–333`、`compare_models.py:81–98` | `_expand_word_noise_to_chars()` / `_broadcast_global_noise()` 在 **三份** 文件里重复实现。<br>**✅ 已修（f23cbbf）** `data_utils.py` 作为唯一规范定义保持不变；`train_with_noise.py` 两处 import 块补充导入这两个函数并删除本地重复定义；`compare_models.py` import `data_utils` 时补充两函数导入并删除本地重复定义。 |
-| **H6** | `train_with_noise.py:602–603` | 取 batch 时类型不安全：`batch.get("noise_ids") if isinstance(batch, dict) else batch.noise_ids`——遇到 tuple / 自定义 collator 会崩。 |
-| **H7** | `kv_nsp/run_train.py:192`、`kv_nsp/run_train_with_noise.py:472` | 仍用已弃用的 `evaluation_strategy=`（`transformers ≥ 4.46` 已移除）。 |
-| **H8** | `da_core/dataset.py:901, 919` | 调试用 `print()` 尚未清理（每个 `ridx < 5` 的样本都会打印），污染日志且拖慢推理。 |
-| **H9** | `serving/app.py:114` | `allow_origins=["*"]` + `allow_headers=["*"]`——任意来源都可以调用 GPU 推理接口。 |
-| **H10** | `serving/`（所有路由）| 无鉴权、无限流、无请求 ID 上下游串联。8 卡模型几乎是裸奔。 |
-| **H11** | `serving/routers/extract.py:178` | `detail=str(exc)`——把模型路径、CUDA 错误等内部结构直接回给调用方。 |
-| **H12** | `serving/core/postprocessor.py:149` | 过滤后未再次检查 `vals` 是否为空，`full_text[v_start:v_end]` 可能抛 `IndexError`。 |
-| **H13** | `serving/core/batch_engine.py:132–140` | 批窗口 deadline 锁在"第一条请求"的到达时间，后续缓慢到来的请求会因超时而错过本批。 |
-| **H14** | 全仓库 | 除 `serving/test_api.py` 和 `serving/tests/test_extract_from_file.py` 之外 **完全没有单元测试**。噪声分桶、WWM collator、NSP 负采样、评测都没有覆盖。 |
+| **H6** | `train_with_noise.py:602–603` | 取 batch 时类型不安全：`batch.get("noise_ids") if isinstance(batch, dict) else batch.noise_ids`——遇到 tuple / 自定义 collator 会崩。<br>**✅ 已修（b4e1c3f）** 新增 `_batch_get(batch, key, default=None)` 辅助函数，统一通过 `getattr(batch, key, default)` 处理非 dict 类型；`_evaluate_model` 内所有 `isinstance(batch, dict)` 分支均改用 `_batch_get`，消除 tuple/自定义 collator 触发 `AttributeError` 的可能。 |
+| **H7** | `kv_nsp/run_train.py:192`、`kv_nsp/run_train_with_noise.py:472` | 仍用已弃用的 `evaluation_strategy=`（`transformers ≥ 4.46` 已移除）。<br>**✅ 已修（b4e1c3f）** 两个文件均将 `evaluation_strategy=args.eval_strategy` 改为 `eval_strategy=args.eval_strategy`。 |
+| **H8** | `da_core/dataset.py:901, 919` | 调试用 `print()` 尚未清理（每个 `ridx < 5` 的样本都会打印），污染日志且拖慢推理。<br>**✅ 已修（b4e1c3f）** 在文件头部添加 `import logging` + `logger = logging.getLogger(__name__)`；两处 `print(f"[DEBUG]...")` 改为 `logger.debug(...)`，消除推理期间的控制台污染；第 919 行改用 `logger.isEnabledFor(logging.DEBUG)` 守卫，不影响正常运行性能。 |
+| **H9** | `serving/app.py:114` | `allow_origins=["*"]` + `allow_headers=["*"]`——任意来源都可以调用 GPU 推理接口。<br>**✅ 已修（b4e1c3f）** `config.py` 新增 `cors_origins: str = ""` 环境变量；`app.py` 改为从 `settings.cors_origins` 逗号分隔解析允许来源，`allow_headers` 收紧为 `["X-API-Key", "Content-Type"]`；生产部署时设置 `CORS_ORIGINS=https://your.domain` 即可。 |
+| **H10** | `serving/`（所有路由）| 无鉴权、无限流、无请求 ID 上下游串联。8 卡模型几乎是裸奔。<br>**✅ 已修（b4e1c3f）** 新建 `serving/core/auth.py`，实现 `APIKeyMiddleware`（校验请求头 `X-API-Key`，/health 路由豁免）和 `RateLimitMiddleware`（单进程令牌桶，`RATE_LIMIT_RPS` 控制）；`config.py` 新增 `api_key` 和 `rate_limit_rps` 配置；两个中间件挂载到 `app.py`。多进程场景建议将令牌桶改为 Redis 后端。 |
+| **H11** | `serving/routers/extract.py:178` | `detail=str(exc)`——把模型路径、CUDA 错误等内部结构直接回给调用方。<br>**✅ 已修（b4e1c3f）** `extract.py` 推理异常处理改为仅写日志（`logger.exception`），对外返回不含 `detail` 的通用错误消息；`app.py` 全局异常处理器同步处理，去掉 `"detail": str(exc)` 字段。 |
+| **H12** | `serving/core/postprocessor.py:149` | 过滤后未再次检查 `vals` 是否为空，`full_text[v_start:v_end]` 可能抛 `IndexError`。<br>**✅ 已修（b4e1c3f）** 在 `_postprocess_value_for_key` 调用之后，添加 `if not value_text or v_start < 0 or v_end <= v_start: continue`，后处理截断产生空串或非法 span 时跳过而非追加空值。 |
+| **H13** | `serving/core/batch_engine.py:132–140` | 批窗口 deadline 锁在"第一条请求"的到达时间，后续缓慢到来的请求会因超时而错过本批。<br>**✅ 已修（b4e1c3f）** 每收到一个新请求后，将 `deadline` 滚动更新为 `min(首请求入队时刻 + 2×max_wait_ms, now + max_wait_ms)`；最多延伸到首请求的 2 倍窗口，避免无限堆积同时保证缓慢请求有机会合批。 |
+| **H14** | 全仓库 | 除 `serving/test_api.py` 和 `serving/tests/test_extract_from_file.py` 之外 **完全没有单元测试**。噪声分桶、WWM collator、NSP 负采样、评测都没有覆盖。<br>**✅ 已修（b4e1c3f）** 新建 `tests/test_noise_core.py`，覆盖 4 类场景：① `NoiseFeatureProcessor` anchor/clip/单调性/map_batch 形状；② `PrecomputedWWMCollator` 输出 key 完整性/labels shape/-100 mask；③ `build_zero_feats` 维度等于 `len(FEATURES)`（C1 回归保护）；④ `_expand_word_noise_to_chars`/`_broadcast_global_noise` 正常与异常输入（H5 回归保护）。运行：`python -m pytest tests/test_noise_core.py -v`。 |
 
 ### 🟡 中（Medium）
 

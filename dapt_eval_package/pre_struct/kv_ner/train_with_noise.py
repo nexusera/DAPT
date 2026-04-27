@@ -130,6 +130,13 @@ def _normalize_label(raw: str, label_map: Dict[str, str]) -> Optional[str]:
 # 通过上方的 import 引入，此处不再重复定义。
 
 
+def _batch_get(batch, key, default=None):
+    """H6: 统一从 dict / 对象两种 batch 中安全取值，避免 tuple 等类型触发 AttributeError。"""
+    if isinstance(batch, dict):
+        return batch.get(key, default)
+    return getattr(batch, key, default)
+
+
 def set_seed(seed: int) -> None:
     random.seed(seed)
     np.random.seed(seed)
@@ -559,36 +566,37 @@ def _evaluate_model(
 
     with torch.no_grad():
         for batch in tqdm(dataloader, desc="Evaluating", leave=False):
-            input_ids = batch["input_ids"].to(device) if isinstance(batch, dict) else batch.input_ids.to(device)
-            attention_mask = batch["attention_mask"].to(device, dtype=torch.long) if isinstance(batch, dict) else batch.attention_mask.to(device, dtype=torch.long)
-            token_type_ids = batch.get("token_type_ids", torch.zeros_like(input_ids)).to(device, dtype=torch.long) if isinstance(batch, dict) else batch.token_type_ids.to(device, dtype=torch.long)
-            labels = batch["labels"].to(device) if isinstance(batch, dict) else batch.labels.to(device)
+            # H6: 统一使用 _batch_get，支持 dict / 对象两种 batch 格式，避免 tuple 崩溃
+            input_ids = _batch_get(batch, "input_ids").to(device)
+            attention_mask = _batch_get(batch, "attention_mask").to(device, dtype=torch.long)
+            _tt = _batch_get(batch, "token_type_ids")
+            token_type_ids = (_tt if _tt is not None else torch.zeros_like(input_ids)).to(device, dtype=torch.long)
+            labels = _batch_get(batch, "labels").to(device)
 
             kwargs = {
                 "input_ids": input_ids,
                 "attention_mask": attention_mask,
                 "token_type_ids": token_type_ids,
             }
-            
-            # 如果有noise_ids且模型支持，传入（允许样本缺噪声时跳过）
+
             if use_noise:
-                if needs_bucket_ids(noise_mode) and "noise_ids" in (batch if isinstance(batch, dict) else batch.__dict__):
-                    raw_noise = batch.get("noise_ids") if isinstance(batch, dict) else batch.noise_ids
-                    noise_ids = raw_noise.to(device) if raw_noise is not None else None
-                    if noise_ids is not None and model.use_noise and model.noise_embeddings:
-                        with torch.no_grad():
-                            for fi, emb in enumerate(model.noise_embeddings):
-                                max_id = int(torch.max(noise_ids[:, :, fi]).item())
-                                if max_id >= emb.num_embeddings:
-                                    raise ValueError(
-                                        f"noise_ids feature {fi} has max id {max_id} >= num_embeddings {emb.num_embeddings}"
-                                    )
+                if needs_bucket_ids(noise_mode):
+                    raw_noise = _batch_get(batch, "noise_ids")
+                    if raw_noise is not None:
+                        noise_ids = raw_noise.to(device)
+                        if model.use_noise and model.noise_embeddings:
+                            with torch.no_grad():
+                                for fi, emb in enumerate(model.noise_embeddings):
+                                    max_id = int(torch.max(noise_ids[:, :, fi]).item())
+                                    if max_id >= emb.num_embeddings:
+                                        raise ValueError(
+                                            f"noise_ids feature {fi} has max id {max_id} >= num_embeddings {emb.num_embeddings}"
+                                        )
                         kwargs["noise_ids"] = noise_ids
-                elif uses_continuous_noise(noise_mode) and "noise_values" in (batch if isinstance(batch, dict) else batch.__dict__):
-                    raw_noise = batch.get("noise_values") if isinstance(batch, dict) else batch.noise_values
-                    noise_values = raw_noise.to(device, dtype=torch.float32) if raw_noise is not None else None
-                    if noise_values is not None:
-                        kwargs["noise_values"] = noise_values
+                elif uses_continuous_noise(noise_mode):
+                    raw_noise = _batch_get(batch, "noise_values")
+                    if raw_noise is not None:
+                        kwargs["noise_values"] = raw_noise.to(device, dtype=torch.float32)
 
             decoded = model.predict(**kwargs)
 
@@ -602,13 +610,10 @@ def _evaluate_model(
                 predictions.append(seq_list)
             references.extend(labels.cpu().tolist())
             
-            # 处理attention_mask（可能是dict或对象）
-            if isinstance(batch, dict):
-                masks.extend(batch["attention_mask"].cpu().tolist())
-                offsets.extend(batch.get("offset_mapping", torch.zeros_like(input_ids)).cpu().tolist())
-            else:
-                masks.extend(batch.attention_mask.cpu().tolist())
-                offsets.extend(batch.offset_mapping.cpu().tolist())
+            # H6: 使用 _batch_get 统一处理，attention_mask 已在上方取出
+            masks.extend(attention_mask.cpu().tolist())
+            _om = _batch_get(batch, "offset_mapping")
+            offsets.extend((_om if _om is not None else torch.zeros_like(input_ids)).cpu().tolist())
 
     return compute_ner_metrics(predictions, references, masks, id2label, offsets=offsets)
 

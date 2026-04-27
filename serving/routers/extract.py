@@ -170,11 +170,11 @@ async def extract(request: Request, body: ExtractRequest) -> JSONResponse:
         return JSONResponse(resp.model_dump(exclude_none=False))
 
     except Exception as exc:
-        logger.exception(f"[{request_id}] 推理异常: {exc}")
+        # H11: 内部细节只写日志，不透传 detail=str(exc)，防止暴露模型路径/CUDA 错误
+        logger.exception("[%s] 推理异常: %s", request_id, exc)
         return _make_error(
             request_id,
             "MODEL_ERROR",
-            "模型推理内部异常",
-            detail=str(exc),
+            "模型推理内部异常，请联系管理员",
             status_code=500,
         )

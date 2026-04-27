@@ -16,8 +16,11 @@ _PKG_ROOT = os.path.abspath(os.path.join(_PRE_STRUCT_ROOT, ".."))      # dapt_ev
 for _p in (_HERE, _PRE_STRUCT_ROOT, _PKG_ROOT, os.getcwd()):
     if _p not in sys.path:
         sys.path.append(_p)
+import logging
 from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
 from multiprocessing import cpu_count
+
+logger = logging.getLogger(__name__)
 from functools import lru_cache
 
 os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
@@ -898,7 +901,7 @@ class EnhancedQADataset(Dataset):
         out: List[Dict] = []
         report = self._get_report_text(rec)
         if not report:
-            if ridx < 5: print(f"[DEBUG] ridx={ridx} NO REPORT TEXT found.")
+            logger.debug("[H8] ridx=%d NO REPORT TEXT found.", ridx)
             return out
 
         tok = self._get_tok()
@@ -908,7 +911,7 @@ class EnhancedQADataset(Dataset):
 
         # 发问键集合：结构映射优先 / 或仅结构
         keys = self._question_keys_for(rec)
-        if ridx < 5:
+        if logger.isEnabledFor(logging.DEBUG):  # H8: 改为 logger.debug，消除推理期间的日志污染
             t_dbg = (
                 rec.get("report_title")
                 or rec.get("report_titles")
@@ -916,7 +919,7 @@ class EnhancedQADataset(Dataset):
                 or rec.get("title")
                 or "N/A"
             )
-            print(f"[DEBUG] ridx={ridx} title='{t_dbg}' keys#={len(keys)} Keys[:3]={keys[:3]}")
+            logger.debug("[H8] ridx=%d title='%s' keys#=%d keys[:3]=%s", ridx, t_dbg, len(keys), keys[:3])
 
         if not keys:  # 早期返回，避免无效处理
             return []

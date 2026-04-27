@@ -83,6 +83,17 @@ class Settings(BaseSettings):
     # ── 设备 ──────────────────────────────────────────────────────────────────
     device: str = "cuda"  # "cuda" | "cpu"
 
+    # ── CORS（H9） ────────────────────────────────────────────────────────────
+    # 允许跨域来源，逗号分隔；空字符串表示拒绝所有跨域请求（生产建议显式填写域名）
+    # 示例：CORS_ORIGINS=https://app.example.com,https://admin.example.com
+    cors_origins: str = ""
+
+    # ── 鉴权（H10） ───────────────────────────────────────────────────────────
+    # API Key，非空时要求请求头携带 X-API-Key: <值>；空字符串表示不启用鉴权（仅内网使用）
+    api_key: str = ""
+    # 令牌桶限流：每秒最大请求数（0 表示不限流）
+    rate_limit_rps: int = 0
+
     # ── DAPT 代码库根路径（用于 sys.path 注入） ─────────────────────────────
     dapt_root: str = str(Path(__file__).resolve().parents[1])
 

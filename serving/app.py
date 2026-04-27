@@ -39,6 +39,7 @@ for _p in [str(_DAPT_ROOT), str(_EVAL_PKG)]:
 
 from serving.config import settings
 from serving.core.model_engine import engine
+from serving.core.auth import APIKeyMiddleware, RateLimitMiddleware  # H10
 import serving.core.batch_engine as _be_module
 from serving.routers import extract as extract_router
 from serving.routers import health as health_router
@@ -108,27 +109,35 @@ app = FastAPI(
     redoc_url="/redoc",
 )
 
-# CORS（按需收紧）
+# H10: 限流中间件（先注册先执行，放在最外层）
+app.add_middleware(RateLimitMiddleware, rate_limit_rps=settings.rate_limit_rps)
+
+# H10: API Key 鉴权中间件
+app.add_middleware(APIKeyMiddleware, api_key=settings.api_key)
+
+# H9: CORS — 从环境变量 CORS_ORIGINS 读取允许来源，空字符串表示拒绝所有跨域
+_cors_origins = [o.strip() for o in settings.cors_origins.split(",") if o.strip()]
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=_cors_origins,       # 不再硬编码 ["*"]
     allow_methods=["GET", "POST"],
-    allow_headers=["*"],
+    allow_headers=["X-API-Key", "Content-Type"],
+    allow_credentials=False,
 )
 
 
 # ── 全局 JSON 解析异常处理 ────────────────────────────────────────────────────
 @app.exception_handler(Exception)
 async def global_exception_handler(request: Request, exc: Exception) -> JSONResponse:
-    logger.exception(f"未捕获异常: {exc}")
+    # H11: 内部细节只写日志，不透传给调用方，避免暴露模型路径/CUDA 错误等内部信息
+    logger.exception("未捕获异常 [path=%s]: %s", request.url.path, exc)
     return JSONResponse(
         {
             "request_id": "unknown",
             "status": "error",
             "error": {
                 "code": "INTERNAL_ERROR",
-                "message": "服务内部错误",
-                "detail": str(exc),
+                "message": "服务内部错误，请联系管理员",
             },
         },
         status_code=500,

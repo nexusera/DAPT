@@ -153,6 +153,10 @@ def assemble_kv(
             key_text, value_text, v_start, v_end, full_text, cfg
         )
 
+        # H12: 后处理可能截断 value_text 至空串，或产生非法 span，需再次检查
+        if not value_text or v_start < 0 or v_end <= v_start:
+            continue
+
         k_start = int(key_ent.get("start", 0))
         k_end = int(key_ent.get("end", 0))
 
