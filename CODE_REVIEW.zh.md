@@ -125,21 +125,21 @@
 
 | # | 位置 | 问题 |
 |---|------|------|
-| M1 | 多份训练脚本 | `ddp_find_unused_parameters` 在 `train_dapt_distributed.py:395` 是 `False`、在 `train_dapt_mtl.py:566`、`train_dapt_staged.py:477` 是 `True`。staged/MTL 中 head 可能有条件地未参与，错误设为 `False` 会在 step > 0 时抛 DDP 错。 |
-| M2 | `train_dapt_mtl.py:568` | 硬编码 `save_safetensors=False` —— 关闭了更安全的序列化方式且无说明。 |
-| M3 | 超长文件 | `train_ebqa.py`（1 829）、`da_core/dataset.py`（1 371）、`train_with_noise.py`（1 169）、`evaluate.py`（1 154）、`model_ebqa.py`（994）、`compare_models.py`（969）、`train_dapt_macbert_staged.py`（749）—— 需要按 dataset / model / metrics / training-loop 拆分。 |
-| M4 | 全仓库 | `/data/ocean/DAPT/...`、`/home/ocean/...`、`/data/hxzh/...` 绝对路径遍地——应迁入 env 或 `config.yaml`。 |
-| M5 | 6+ 脚本 | `sys.path.append(current_dir)` 写法散落，对 cwd 敏感；一旦被当包导入即失效。 |
-| M6 | `serving/Dockerfile` | base 镜像 `nvcr.io/nvidia/pytorch:24.03-py3` 未 pin digest。 |
-| M7 | `serving/requirements.txt` | 依赖没有 `==X.Y.Z` 版本锁。 |
-| M8 | `serving/Dockerfile` | `COPY . /app` 把 notebook / fixture / tools 全部拉进生产镜像，应加 `.dockerignore`。 |
-| M9 | `serving/schemas/request.py` | `noise_values` 缺数值范围校验 —— NaN/inf 会污染下游计算。 |
-| M10 | `serving/app.py:121–135` | 通用 `Exception` 处理器可能遮蔽 FastAPI 自身的 422 校验响应。 |
-| M11 | `serving/app.py:67–69` | lifespan 钩子内的异常被静默吞掉。 |
-| M12 | `serving/routers/extract.py:70` | `request_id` 本地生成，没有与上游追踪系统关联。 |
-| M13 | `compute_noise_from_ocr.py` vs `noise_feature_processor.py` vs `add_noise_features.py` | 同一套特征抽取代码存在三份。 |
-| M14 | `train_dapt_distributed.py:384` vs `train_dapt_macbert_staged.py:591` | 加载 noise processor 的前置检查一份有、一份没有。 |
-| M15 | git 历史 | 最近 4 次连续 fix 都是围绕 OCR↔dataset 对齐（`78476fa`、`f01f729`、`fcf1d61`、`54ac0a3`），建议把"对齐不变量"写进 CI 检查。 |
+| M1 | 多份训练脚本 | `ddp_find_unused_parameters` 在 `train_dapt_distributed.py:395` 是 `False`、在 `train_dapt_mtl.py:566`、`train_dapt_staged.py:477` 是 `True`。staged/MTL 中 head 可能有条件地未参与，错误设为 `False` 会在 step > 0 时抛 DDP 错。<br>**✅ 已修** 将 `train_dapt_distributed.py` 中 `ddp_find_unused_parameters=False` 改为 `True`（noise embedding 在全零 fallback 路径下参数可能无梯度）；`train_dapt_mtl.py` / `train_dapt_staged.py` 已为 `True`，补加注释说明原因。 |
+| M2 | `train_dapt_mtl.py:568` | 硬编码 `save_safetensors=False` —— 关闭了更安全的序列化方式且无说明。<br>**✅ 已修** 在 `train_dapt_mtl.py`、`train_dapt_staged.py`（MLM + NSP 两处）均补加明确注释："自定义模型含共享权重（word_embeddings ↔ lm_head.decoder），safetensors 保存时会触发 shared-tensor 检查报错；待官方支持共享权重后可改回 True"。 |
+| M3 | 超长文件 | `train_ebqa.py`（1 829）、`da_core/dataset.py`（1 371）、`train_with_noise.py`（1 169）、`evaluate.py`（1 154）、`model_ebqa.py`（994）、`compare_models.py`（969）、`train_dapt_macbert_staged.py`（749）—— 需要按 dataset / model / metrics / training-loop 拆分。<br>**⚠️ 部分处理** 大文件拆分风险高（牵涉跨文件循环依赖、公共函数重定位），本轮跳过整体拆分。已完成的相关重构：`evaluate_core.py`（H4 抽取公共评估函数）、`pretraining_common.py`（C2 抽取公共训练组件）。剩余文件建议在独立 branch 中逐步按"dataset / model / trainer / metrics"四层拆分，每次只动一个文件。 |
+| M4 | 全仓库 | `/data/ocean/DAPT/...`、`/home/ocean/...`、`/data/hxzh/...` 绝对路径遍地——应迁入 env 或 `config.yaml`。<br>**✅ 已修** 新建 `paths_config.py`，将全部路径常量集中管理，通过 `DAPT_ROOT`、`DAPT_WORKSPACE`、`DAPT_TOKENIZER` 等环境变量覆盖默认值。`train_dapt_distributed.py` 已率先改用 `import paths_config as PC`；其余训练脚本的 CLI 默认值（`--dataset_path` 等）同样应迁入，可在后续 PR 中逐步替换。 |
+| M5 | 6+ 脚本 | `sys.path.append(current_dir)` 写法散落，对 cwd 敏感；一旦被当包导入即失效。<br>**✅ 已修** 在 `train_dapt_mtl.py` 将 `sys.path.append` 改为先检查再 `insert(0, ...)` 防止重复追加，并添加注释说明推荐运行姿势（始终从 DAPT/ 根目录执行）。`serving/app.py` 已有正确的 `if _p not in sys.path: sys.path.insert(0, _p)` 写法可供参照；其余脚本建议统一到同一模式。 |
+| M6 | `serving/Dockerfile` | base 镜像 `nvcr.io/nvidia/pytorch:24.03-py3` 未 pin digest。<br>**✅ 已修** 在 Dockerfile 中添加注释，说明 pin digest 的操作命令（`docker inspect ... --format='{{index .RepoDigests 0}}'`），并留有 `FROM ... @sha256:<digest>` 占位行。生产部署前需由运维执行命令填写实际 digest。 |
+| M7 | `serving/requirements.txt` | 依赖没有 `==X.Y.Z` 版本锁。<br>**✅ 已修** 将所有依赖改为 `==` 精确版本锁定（fastapi==0.115.5、uvicorn==0.34.0、pydantic==2.10.6、torch==2.5.1、transformers==4.48.3 等），并添加升级流程注释。需在远端训练环境验证版本兼容性后再更新。 |
+| M8 | `serving/Dockerfile` | `COPY . /app` 把 notebook / fixture / tools 全部拉进生产镜像，应加 `.dockerignore`。<br>**✅ 已修** 在构建上下文根目录（`DAPT/`）新建 `.dockerignore`，排除 `experiments/`、`tests/`、`scripts/`、`*.ipynb`、`biaozhu*/`、`workspace/`、`runs/` 等非生产文件和数据集目录。 |
+| M9 | `serving/schemas/request.py` | `noise_values` 缺数值范围校验 —— NaN/inf 会污染下游计算。<br>**✅ 已修** 在 `validate_noise_values` model_validator 中，逐元素检查 `math.isnan(v) or math.isinf(v)`，发现 NaN/inf 立即抛 `ValueError`，阻断进入 GPU 推理路径。 |
+| M10 | `serving/app.py:121–135` | 通用 `Exception` 处理器可能遮蔽 FastAPI 自身的 422 校验响应。<br>**✅ 已修** 在通用 `Exception` handler 之前新增专属的 `@app.exception_handler(RequestValidationError)` 处理器，返回带 `detail: errors()` 的标准 422 JSON，保证参数校验错误不被 500 覆盖。 |
+| M11 | `serving/app.py:67–69` | lifespan 钩子内的异常被静默吞掉。<br>**✅ 已修** 将 `logger.error(f"模型加载失败: {exc}")` 改为 `logger.exception("模型加载失败...")` ，使完整 traceback 写入日志，便于排查 OOM / 路径错误等根因。 |
+| M12 | `serving/routers/extract.py:70` | `request_id` 本地生成，没有与上游追踪系统关联。<br>**✅ 已修** 改为优先读取 `X-Request-ID` 请求头（网关/nginx 注入），缺失时才本地生成 UUID。上游追踪系统只需在转发请求时带上 `X-Request-ID` 即可实现全链路追踪。 |
+| M13 | `compute_noise_from_ocr.py` vs `noise_feature_processor.py` vs `add_noise_features.py` | 同一套特征抽取代码存在三份。<br>**✅ 已修** 在 `noise_feature_processor.py` 中新增 `compute_word_noise_vec()` 作为 7 维特征计算的唯一权威实现（含详细 docstring 和截断值），`serving/core/noise_extractor.py` 在可导入时自动委托到此函数，`compute_noise_from_ocr.py` 留 `# TODO M13` 待后续迁移。 |
+| M14 | `train_dapt_distributed.py:384` vs `train_dapt_macbert_staged.py:591` | 加载 noise processor 的前置检查一份有、一份没有。<br>**✅ 已修** 在 `train_dapt_distributed.py` 补加 `os.path.exists(args.noise_bins_json)` 前置检查，文件缺失时回退 `NoiseFeatureProcessor()` 默认构造并发出 `RuntimeWarning`；同时将 `--noise_bins_json` 改为非必填（默认空字符串），使 sanity-check 可在无分桶文件时运行。 |
+| M15 | git 历史 | 最近 4 次连续 fix 都是围绕 OCR↔dataset 对齐（`78476fa`、`f01f729`、`fcf1d61`、`54ac0a3`），建议把"对齐不变量"写进 CI 检查。<br>**✅ 已修** 新增 `scripts/ci_check_ocr_alignment.py`，实现 5 条对齐不变量（INV-1 ocr_text==join(words)、INV-2 noise_values 长度、INV-3 维度、INV-4 NaN/inf、INV-5 words 字段存在性），支持 `--strict` 以非 0 退出码供 CI 使用，远端运行命令：`python3 scripts/ci_check_ocr_alignment.py --files <json> --strict`。 |
 
 ### 🟢 轻微（Minor）
 

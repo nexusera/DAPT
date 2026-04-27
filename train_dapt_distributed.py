@@ -35,20 +35,21 @@ from noise_embeddings import RobertaNoiseEmbeddings
 from noise_feature_processor import NoiseFeatureProcessor, FEATURES
 # C2: 公共组件，消除训练脚本间重复
 from pretraining_common import PerplexityCallback, PrecomputedWWMCollator
+# M4: 集中路径管理，通过环境变量覆盖远端默认值
+import paths_config as PC
 
 # 完美物理值（非 OCR 样本用），由 processor 映射到桶 ID
 PERFECT_VALUES = [1.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0]
 
 # ===========================
-# 1. 配置路径与参数
+# 1. 配置路径与参数（M4: 使用 paths_config.py 统一管理，可通过环境变量覆盖）
 # ===========================
-WORKSPACE_DIR = "/data/ocean/DAPT/workspace"
-# Tokenizer 存放在 /data/ocean/DAPT/my-medical-tokenizer
-TOKENIZER_PATH = "/data/ocean/DAPT/my-medical-tokenizer"
-DATASET_PATH = os.path.join(WORKSPACE_DIR, "processed_dataset")
-MODEL_CHECKPOINT = "hfl/chinese-roberta-wwm-ext"
+WORKSPACE_DIR = PC.WORKSPACE_DIR
+TOKENIZER_PATH = PC.TOKENIZER_PATH
+DATASET_PATH = PC.DATASET_PATH
+MODEL_CHECKPOINT = PC.MODEL_CHECKPOINT
 # 可通过命令行 --output_dir 覆盖，避免多实验互相覆盖
-DEFAULT_OUTPUT_DIR = os.path.join(WORKSPACE_DIR, "output_medical_bert_v2_8gpu")
+DEFAULT_OUTPUT_DIR = PC.DEFAULT_OUTPUT_DIR
 
 # ===========================
 # 8卡 H200 极速配置
@@ -284,7 +285,7 @@ def main():
     parser.add_argument("--resume_from_checkpoint", type=str, default=None, help="可选：从已有 checkpoint 继续训练")
     parser.add_argument("--num_train_epochs", type=int, default=None, help=f"训练 epoch 数，默认 {NUM_TRAIN_EPOCHS}")
     parser.add_argument("--learning_rate", type=float, default=None, help=f"学习率，默认 {LEARNING_RATE}")
-    parser.add_argument("--noise_bins_json", type=str, required=True, help="预计算的噪声分桶边界 json，供 NoiseFeatureProcessor 使用")
+    parser.add_argument("--noise_bins_json", type=str, default="", help="M14: 预计算的噪声分桶边界 json；缺失时回退默认构造（仅供 sanity-check）")
     parser.add_argument(
         "--bf16",
         dest="bf16",
@@ -315,7 +316,18 @@ def main():
     # 注释掉权重克隆功能，不扩展位置编码，保持基座模型的512长度
     # model = resize_position_embeddings(model, new_max_len=MAX_SEQ_LEN)
     model.gradient_checkpointing_enable()  # 启用梯度检查点减少显存
-    processor = NoiseFeatureProcessor.load(args.noise_bins_json)
+    # M14: 与 train_dapt_macbert_staged.py 对齐，文件不存在时回退默认构造以便 sanity-run
+    if os.path.exists(args.noise_bins_json):
+        processor = NoiseFeatureProcessor.load(args.noise_bins_json)
+    else:
+        import warnings
+        warnings.warn(
+            f"noise_bins_json={args.noise_bins_json!r} 不存在，使用默认 NoiseFeatureProcessor()。"
+            "仅适合 sanity-check，生产训练请提供预计算的分桶文件。",
+            RuntimeWarning,
+            stacklevel=2,
+        )
+        processor = NoiseFeatureProcessor()
     data_collator = NoiseAwareCollator(
         tokenizer=tokenizer, max_seq_len=MAX_SEQ_LEN, noise_processor=processor
     )
@@ -328,7 +340,7 @@ def main():
         per_device_train_batch_size=PER_DEVICE_BATCH_SIZE,
         per_device_eval_batch_size=PER_DEVICE_BATCH_SIZE,
         gradient_accumulation_steps=GRADIENT_ACCUMULATION,
-        ddp_find_unused_parameters=False,  # 优化速度
+        ddp_find_unused_parameters=True,   # M1: noise embedding 在全零 fallback 路径下参数可能无梯度，须设为 True 防止 DDP 报 unused-params 错
         learning_rate=args.learning_rate or LEARNING_RATE,
         weight_decay=0.01,
         warmup_ratio=0.05,  # 缩短预热，加快进入主学习率区间

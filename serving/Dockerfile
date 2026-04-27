@@ -1,3 +1,6 @@
+# M6: 生产镜像须 pin digest 防止基础镜像被悄悄更新，示例：
+#   docker inspect nvcr.io/nvidia/pytorch:24.03-py3 --format='{{index .RepoDigests 0}}'
+#   然后把下一行改为 FROM nvcr.io/nvidia/pytorch:24.03-py3@sha256:<digest>
 FROM nvcr.io/nvidia/pytorch:24.03-py3
 
 WORKDIR /app

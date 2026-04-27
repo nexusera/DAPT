@@ -72,6 +72,7 @@ class ExtractRequest(BaseModel):
 
     @model_validator(mode="after")
     def validate_noise_values(self) -> "ExtractRequest":
+        import math
         if self.noise_values is not None:
             n = len(self.noise_values)
             expected = len(self.ocr_text)
@@ -85,6 +86,13 @@ class ExtractRequest(BaseModel):
                         f"each noise_values element must be a 7-dim float array, "
                         f"but noise_values[{i}] has length {len(row) if isinstance(row, list) else 'N/A'}"
                     )
+                # M9: 拒绝 NaN/inf，防止污染下游 noise_fusion 归一化和 GPU 计算
+                for j, v in enumerate(row):
+                    if not isinstance(v, (int, float)) or math.isnan(v) or math.isinf(v):
+                        raise ValueError(
+                            f"noise_values[{i}][{j}]={v!r} 包含 NaN/inf 或非数值，"
+                            "请在调用方清洗后再传入"
+                        )
         return self
 
     @property

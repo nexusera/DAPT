@@ -13,6 +13,14 @@ from __future__ import annotations
 import math
 from typing import Any, Dict, List, Optional
 
+# M13: 词级特征计算的权威实现已迁移至 noise_feature_processor.compute_word_noise_vec()。
+# 此处 _compute_word_noise 保留为兼容 wrapper，内部委托给共用函数。
+try:
+    from noise_feature_processor import compute_word_noise_vec as _compute_word_noise_vec
+    _USE_COMMON = True
+except ImportError:
+    _USE_COMMON = False
+
 PERFECT_VALUES: List[float] = [1.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0]
 
 # 截断阈值（与 noise_feature_processor.py 一致）
@@ -88,6 +96,11 @@ def _compute_word_noise(
     align = min(align, _CLIP_ALIGN)
 
     return [avg, mn, var_log, gap, punct_ratio, char_break, align]
+
+
+# M13: 如果可以导入共用实现，用 compute_word_noise_vec 覆盖本地定义
+if _USE_COMMON:
+    _compute_word_noise = lambda w, t=0.0: _compute_word_noise_vec(w, t)  # noqa: E731
 
 
 def compute_char_noise_from_words_result(

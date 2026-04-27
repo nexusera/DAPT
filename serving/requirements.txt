@@ -1,16 +1,18 @@
 # KV-BERT serving 依赖
-# 与训练环境保持一致，仅列出服务层新增/明确依赖项
+# M7: 使用 == 精确版本锁定，防止上游更新破坏服务。
+# 更新流程：pip install --upgrade <pkg>; pip freeze | grep <pkg> > 此文件对应行。
 
 # --- Web框架 ---
-fastapi>=0.111.0
-uvicorn[standard]>=0.29.0
-pydantic>=2.7.0
-pydantic-settings>=2.3.0
+fastapi==0.115.5
+uvicorn[standard]==0.34.0
+pydantic==2.10.6
+pydantic-settings==2.7.1
 
-# --- ML（须与训练环境版本匹配） ---
-torch>=2.1.0
-transformers>=4.40.0
-torchcrf>=1.1.0
+# --- ML（须与训练环境版本匹配；升级前需在训练环境同步验证） ---
+torch==2.5.1
+transformers==4.48.3
+torchcrf==1.1.0
 
 # --- 工具 ---
-numpy>=1.24.0
+numpy==1.26.4
+safetensors==0.4.5

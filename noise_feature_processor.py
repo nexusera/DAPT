@@ -44,7 +44,75 @@ CLIP = {
 }
 
 
+def compute_word_noise_vec(
+    word_item: dict,
+    default_para_top: float = 0.0,
+) -> List[float]:
+    """
+    M13: 单词级 7 维噪声特征计算的唯一权威实现。
+    供 compute_noise_from_ocr.py、serving/core/noise_extractor.py 等共用，
+    避免三份代码独立维护时产生对齐漂移。
+
+    参数格式（百度 OCR 标准 words_result 条目）：
+        word_item = {
+            "words": "文字",
+            "probability": {"average": 0.99, "min": 0.95, "variance": 0.001},
+            "location": {"top": 100, "left": 20, "width": 80, "height": 24},
+            "chars": [{"char": "文", "probability": 0.99}, ...]  # 可选
+        }
+
+    返回：[conf_avg, conf_min, conf_var_log, conf_gap,
+           punct_err_ratio, char_break_ratio, align_score]
+    """
+    import math as _math
+
+    # ── 概率特征 ──────────────────────────────────────────────────────────────
+    probs: List[float] = []
+
+    prob_raw = word_item.get("probability")
+    if isinstance(prob_raw, dict):
+        p = prob_raw.get("average")
+        if isinstance(p, (int, float)):
+            probs.append(float(p))
+    elif isinstance(prob_raw, (int, float)):
+        probs.append(float(prob_raw))
+
+    for ch in (word_item.get("chars") or []):
+        if isinstance(ch, dict):
+            cp = ch.get("probability")
+            if isinstance(cp, (int, float)):
+                probs.append(float(cp))
+
+    if not probs:
+        avg = mn = var = 0.0
+    else:
+        avg = sum(probs) / len(probs)
+        mn = min(probs)
+        var = sum((p - avg) ** 2 for p in probs) / len(probs) if len(probs) >= 2 else 0.0
+
+    var_log = _math.log10(var + 1e-12)
+    gap = avg - mn
+
+    # ── 标点异常率 ────────────────────────────────────────────────────────────
+    word = str(word_item.get("words") or "")
+    bad = sum(1 for c in word if not (("\u4e00" <= c <= "\u9fff") or c.isdigit()))
+    punct_ratio = bad / max(1, len(word))
+
+    # ── 断字率（截断到 CLIP） ─────────────────────────────────────────────────
+    loc = word_item.get("location") or {}
+    width = float(loc.get("width") or 0.0)
+    char_break = len(word) / max(1.0, width)
+    char_break = min(char_break, CLIP["char_break_ratio"])
+
+    # ── 版面对齐分数（截断到 CLIP） ───────────────────────────────────────────
+    top = float(loc.get("top") or 0.0)
+    align = min(abs(top - default_para_top), CLIP["align_score"])
+
+    return [avg, mn, var_log, gap, punct_ratio, char_break, align]
+
+
 def _extract_feature_arrays(ocr_list: Sequence[dict]) -> Dict[str, List[float]]:
+    # M13: 此函数用于 fit 分桶边界，词级特征计算已迁至 compute_word_noise_vec()
     out = {k: [] for k in FEATURES}
     for obj in ocr_list:
         if not isinstance(obj, dict) or "words_result" not in obj:

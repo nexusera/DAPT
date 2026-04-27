@@ -33,16 +33,18 @@ from transformers.models.roberta.modeling_roberta import (
 )
 from torch.nn import CrossEntropyLoss
 
-# 引入本地模块
+# M5: 仅在脚本目录不在 sys.path 时才追加，避免对 cwd 敏感的重复追加。
+# 推荐用法：始终从 DAPT/ 根目录运行 `python train_dapt_mtl.py` 或 `python -m train_dapt_mtl`。
 current_dir = os.path.dirname(os.path.abspath(__file__))
-sys.path.append(current_dir)
+if current_dir not in sys.path:
+    sys.path.insert(0, current_dir)
 from noise_embeddings import RobertaNoiseEmbeddings
 from noise_feature_processor import NoiseFeatureProcessor, FEATURES
 
 # 引入 KV-NSP 模块
 kv_nsp_dir = os.path.join(current_dir, "kv_nsp")
-if os.path.isdir(kv_nsp_dir):
-    sys.path.append(kv_nsp_dir)
+if os.path.isdir(kv_nsp_dir) and kv_nsp_dir not in sys.path:
+    sys.path.insert(0, kv_nsp_dir)
 from dataset import KVDataset
 
 # 常量定义
@@ -565,7 +567,7 @@ def main():
         fp16=torch.cuda.is_available(),
         ddp_find_unused_parameters=True, # 必须为 True，因为多任务学习中某些 Head 可能在当前 Batch 不参与 Loss 计算
         remove_unused_columns=False, # 必须保留，否则 Collator 返回的自定义列会被过滤
-        save_safetensors=False, # 关键修复：禁用 safetensors，防止自定义模型共享权重导致保存崩溃
+        save_safetensors=False, # M2: 自定义模型含共享权重（word_embeddings ↔ lm_head.decoder），safetensors 保存时会触发 shared-tensor 检查报错；待官方支持共享权重后可改回 True
         report_to="tensorboard"
     )
 

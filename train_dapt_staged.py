@@ -476,7 +476,7 @@ def main():
             # DDP Settings
             ddp_find_unused_parameters=True, 
             dataloader_num_workers=0, # 彻底禁用多进程 Loader，解决死锁/IPC崩溃问题
-            save_safetensors=False,
+            save_safetensors=False,    # M2: 自定义模型含共享权重，safetensors 会因 shared-tensor 检查报错；待上游修复后可移除
             remove_unused_columns=False, 
             report_to="tensorboard",
             run_name=f"dapt_round_{round_idx}_mlm"
@@ -511,7 +511,7 @@ def main():
             fp16=torch.cuda.is_available(),
             ddp_find_unused_parameters=True,
             dataloader_num_workers=0, # 同步禁用
-            save_safetensors=False,
+            save_safetensors=False,    # M2: 自定义模型含共享权重，safetensors 会因 shared-tensor 检查报错；待上游修复后可移除
             remove_unused_columns=False, # 关键修复
             report_to="tensorboard",
             run_name=f"dapt_round_{round_idx}_nsp"

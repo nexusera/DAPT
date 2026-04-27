@@ -67,7 +67,8 @@ def _make_error(
 
 @router.post("/extract", response_model=ExtractResponse)
 async def extract(request: Request, body: ExtractRequest) -> JSONResponse:
-    request_id = str(uuid.uuid4())
+    # M12: 优先使用上游网关注入的 X-Request-ID，实现全链路追踪；否则本地生成
+    request_id = request.headers.get("X-Request-ID") or str(uuid.uuid4())
     t_total_start = time.perf_counter()
 
     # ── 模型就绪检查 ──────────────────────────────────────────────────────────

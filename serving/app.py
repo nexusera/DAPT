@@ -27,6 +27,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI, Request
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
@@ -66,8 +67,8 @@ async def lifespan(app: FastAPI):
         )
         logger.info("模型加载成功。")
     except Exception as exc:
-        logger.error(f"模型加载失败: {exc}")
-        # 允许服务继续启动，/ready 会返回 503 直至模型就绪
+        # M11: 改用 logger.exception 保留完整 traceback，便于排查 OOM / 路径错误等
+        logger.exception("模型加载失败，服务以未就绪状态启动（/ready 返回 503）: %s", exc)
 
     # ── Dynamic Batching ──────────────────────────────────────────────────────
     if settings.enable_dynamic_batching and engine.ready:
@@ -124,6 +125,26 @@ app.add_middleware(
     allow_headers=["X-API-Key", "Content-Type"],
     allow_credentials=False,
 )
+
+
+# ── M10: 显式处理 422 Validation 错误，防止被下方通用 handler 吞掉 ─────────────
+@app.exception_handler(RequestValidationError)
+async def validation_exception_handler(
+    request: Request, exc: RequestValidationError
+) -> JSONResponse:
+    logger.warning("请求校验失败 [path=%s]: %s", request.url.path, exc.errors())
+    return JSONResponse(
+        {
+            "request_id": "unknown",
+            "status": "error",
+            "error": {
+                "code": "VALIDATION_ERROR",
+                "message": "请求参数校验失败",
+                "detail": exc.errors(),
+            },
+        },
+        status_code=422,
+    )
 
 
 # ── 全局 JSON 解析异常处理 ────────────────────────────────────────────────────
