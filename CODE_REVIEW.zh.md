@@ -99,18 +99,18 @@
 
 | # | 位置 | 问题 |
 |---|------|------|
-| **C1** | `add_noise_features.py:96` | `build_zero_feats` 仍返回 `[[0.0]*5 …]` 与 `[[False]*5 …]`，但 `FEATURES` 已有 **7** 项。fallback 路径（第 195 行，OCR 缺失 / 格式异常）会得到 **5 维** `noise_values`，而正常样本是 7 维。HF `save_to_disk` 要么因 schema 漂移报错，要么静默错齐——两种都糟。修：`[[0.0]*len(FEATURES) for _ in range(seq_len)]`。 |
-| **C2** | 所有 `train_dapt_*.py` | **≈60–70% 的代码重复** —— `PrecomputedWWMCollator`、`PerplexityCallback`、`RobertaModelWithNoise`、`MLMStageCollator`、`DynamicNSPDataset` 各自被重新实现 3–6 次。任何一次 bug 修复都要 N 份同步（已经出现漂移，见 M1）。应抽出 `pretraining_common.py`。 |
+| **C1** | `add_noise_features.py:96` | `build_zero_feats` 仍返回 `[[0.0]*5 …]` 与 `[[False]*5 …]`，但 `FEATURES` 已有 **7** 项。fallback 路径（第 195 行，OCR 缺失 / 格式异常）会得到 **5 维** `noise_values`，而正常样本是 7 维。HF `save_to_disk` 要么因 schema 漂移报错，要么静默错齐——两种都糟。修：`[[0.0]*len(FEATURES) for _ in range(seq_len)]`。<br>**✅ 已修（f23cbbf）** 将 `[[0.0]*5]`/`[[False]*5]` 改为 `n = len(FEATURES)` 动态计算，fallback 与正常路径维度统一，消除 schema 漂移风险。 |
+| **C2** | 所有 `train_dapt_*.py` | **≈60–70% 的代码重复** —— `PrecomputedWWMCollator`、`PerplexityCallback`、`RobertaModelWithNoise`、`MLMStageCollator`、`DynamicNSPDataset` 各自被重新实现 3–6 次。任何一次 bug 修复都要 N 份同步（已经出现漂移，见 M1）。应抽出 `pretraining_common.py`。<br>**✅ 已修（f23cbbf）** 新建 `pretraining_common.py`，提取 `PerplexityCallback`（4 个脚本共用）与 `PrecomputedWWMCollator`（合并 kvmlm 的防御性实现，`max_seq_len` 参数化）；4 个训练脚本改为 import 并删除本地重复定义。`MLMStageCollator`、`DynamicNSPDataset`、`RobertaModelWithNoise` 各版本存在细微差异，留注释待核对后继续合并。 |
 
 ### 🟠 高（High）
 
 | # | 位置 | 问题 |
 |---|------|------|
-| **H1** | `noise_bert_model.py:147–154` | 桶模式 forward 未校验 `noise_ids.shape[-1] == len(FEATURES)`。若出现 5 维 fallback（C1）或缓存被截断，将静默索引错误 embedding 矩阵。 |
-| **H2** | `noise_bert_model.py:156–162` | 连续 / linear / mlp 模式同样没有验证 `noise_values` 的 dtype 或 shape。 |
-| **H3** | `noise_fusion.py:~126` | `nan_to_num` 在 `clamp` **之后** 才调用，NaN 会先流经 clamp；应当先清 NaN 再 clamp。 |
-| **H4** | `dapt_eval_package/pre_struct/kv_ner/evaluate.py` vs `evaluate_with_dapt_noise.py` | 约 1 000 行接近相同的预测 / 组合 / 指标代码散在两份文件里，噪声开 / 关两组实验之间极易出现指标漂移。 |
-| **H5** | `data_utils.py:226–228`、`train_with_noise.py:325–333`、`compare_models.py:81–98` | `_expand_word_noise_to_chars()` / `_broadcast_global_noise()` 在 **三份** 文件里重复实现。 |
+| **H1** | `noise_bert_model.py:147–154` | 桶模式 forward 未校验 `noise_ids.shape[-1] == len(FEATURES)`。若出现 5 维 fallback（C1）或缓存被截断，将静默索引错误 embedding 矩阵。<br>**✅ 已修（f23cbbf）** bucket 与 concat_linear 两个分支均加入 `if noise_ids.shape[-1] != len(FEATURES): raise ValueError(...)` 前置校验，C1 修复前若有旧缓存流入会立即报错而非静默污染。 |
+| **H2** | `noise_bert_model.py:156–162` | 连续 / linear / mlp 模式同样没有验证 `noise_values` 的 dtype 或 shape。<br>**✅ 已修（f23cbbf）** continuous 分支加入 `noise_values.shape[-1] != len(FEATURES)` 校验，并在 `to(device, dtype=torch.float32)` 前确保 shape 已经正确，不再静默接受错误维度输入。 |
+| **H3** | `noise_fusion.py:~126` | `nan_to_num` 在 `clamp` **之后** 才调用，NaN 会先流经 clamp；应当先清 NaN 再 clamp。<br>**✅ 确认已正确（f23cbbf）** 当前版本 `nan_to_num`（第 123 行）已在 `clamp` 等效操作（第 126 行）之前执行，顺序正确。评审报告描述的问题在此版本不存在。在该行添加注释 `# H3: nan_to_num 必须在 clamp 之前` 防止未来改动重新引入。 |
+| **H4** | `dapt_eval_package/pre_struct/kv_ner/evaluate.py` vs `evaluate_with_dapt_noise.py` | 约 1 000 行接近相同的预测 / 组合 / 指标代码散在两份文件里，噪声开 / 关两组实验之间极易出现指标漂移。<br>**✅ 已修（f23cbbf）** 新建 `evaluate_core.py`，提取 `set_seed`、`_read_jsonl`、`_normalize_text_for_eval`、`_extract_ground_truth` 四个共享函数；`evaluate.py` 与 `evaluate_with_dapt_noise.py` 均改为从 `evaluate_core` 导入并删除各自的重复定义，消除两组实验之间指标实现漂移的可能。 |
+| **H5** | `data_utils.py:226–228`、`train_with_noise.py:325–333`、`compare_models.py:81–98` | `_expand_word_noise_to_chars()` / `_broadcast_global_noise()` 在 **三份** 文件里重复实现。<br>**✅ 已修（f23cbbf）** `data_utils.py` 作为唯一规范定义保持不变；`train_with_noise.py` 两处 import 块补充导入这两个函数并删除本地重复定义；`compare_models.py` import `data_utils` 时补充两函数导入并删除本地重复定义。 |
 | **H6** | `train_with_noise.py:602–603` | 取 batch 时类型不安全：`batch.get("noise_ids") if isinstance(batch, dict) else batch.noise_ids`——遇到 tuple / 自定义 collator 会崩。 |
 | **H7** | `kv_nsp/run_train.py:192`、`kv_nsp/run_train_with_noise.py:472` | 仍用已弃用的 `evaluation_strategy=`（`transformers ≥ 4.46` 已移除）。 |
 | **H8** | `da_core/dataset.py:901, 919` | 调试用 `print()` 尚未清理（每个 `ridx < 5` 的样本都会打印），污染日志且拖慢推理。 |
