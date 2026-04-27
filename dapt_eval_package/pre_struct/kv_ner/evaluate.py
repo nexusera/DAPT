@@ -37,11 +37,25 @@ if __package__ in (None, ""):
     from pre_struct.kv_ner.data_utils import build_bio_label_list
     from pre_struct.kv_ner.modeling import BertCrfTokenClassifier
     from pre_struct.kv_ner.chunking import predict_with_chunking
+    # H4: 从公共模块导入共享工具函数，避免与 evaluate_with_dapt_noise.py 重复
+    from pre_struct.kv_ner.evaluate_core import (
+        set_seed as _set_seed_core,
+        _read_jsonl,
+        _normalize_text_for_eval as _normalize_text_core,
+        _extract_ground_truth,
+    )
 else:
     from . import config_io
     from .data_utils import build_bio_label_list
     from .modeling import BertCrfTokenClassifier
     from .chunking import predict_with_chunking
+    # H4: 从公共模块导入共享工具函数，避免与 evaluate_with_dapt_noise.py 重复
+    from .evaluate_core import (
+        set_seed as _set_seed_core,
+        _read_jsonl,
+        _normalize_text_for_eval as _normalize_text_core,
+        _extract_ground_truth,
+    )
 
 sys.path.append(str(_PACKAGE_ROOT if '_PACKAGE_ROOT' in locals() else Path.cwd()))
 from evaluation.src.easy_eval import evaluate_entities  # type: ignore
@@ -51,25 +65,9 @@ logging.basicConfig(level=logging.INFO, format=LOG_FORMAT)
 logger = logging.getLogger(__name__)
 
 
+# H4: set_seed 和 _read_jsonl 已移至 evaluate_core.py，通过上方 import 引入。
 def set_seed(seed: Optional[int]) -> None:
-    if seed is None:
-        return
-    random.seed(seed)
-    torch.manual_seed(seed)
-    if torch.cuda.is_available():
-        torch.cuda.manual_seed_all(seed)
-
-
-def _read_jsonl(path: Path) -> List[Dict[str, Any]]:
-    if not path.exists():
-        raise FileNotFoundError(f"File not found: {path}")
-    results = []
-    with path.open("r", encoding="utf-8") as f:
-        for line in f:
-            line = line.strip()
-            if line:
-                results.append(json.loads(line))
-    return results
+    _set_seed_core(seed)
 
 
 def strip_trailing_punctuation(text: str, start: int, end: int) -> Tuple[str, int, int]:
@@ -91,21 +89,9 @@ def strip_trailing_punctuation(text: str, start: int, end: int) -> Tuple[str, in
     return text, start, end
 
 
-def _normalize_text_for_eval(s: str) -> str:
-    if not s:
-        return ""
-    s = unicodedata.normalize("NFKC", s)
-    s = s.replace("—", "-").replace("–", "-")
-    s = s.replace("\u3000", " ")
-    s = re.sub(r"^\s+|\s+$", "", s)
-    edge_punct = "。，、；:;,:()[]{}<>"
-    i = 0
-    while i < len(s) and s[i] in edge_punct:
-        i += 1
-    j = len(s)
-    while j > i and s[j - 1] in edge_punct:
-        j -= 1
-    return s[i:j]
+# H4: 与 evaluate_with_dapt_noise.py 共享的 _normalize_text_for_eval 已提取到 evaluate_core.py；
+# 此处保留同名绑定以维持内部调用不变。
+_normalize_text_for_eval = _normalize_text_core
 
 
 EDGE_STRIP_CHARS = set(string.whitespace) | set("。，、；：？！,.!?;:()（）[]【】{}<>「」『』""''\"'…—-_/\\") | {"\u3000"}

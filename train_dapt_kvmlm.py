@@ -19,8 +19,10 @@ from transformers import (
     AutoTokenizer,
     Trainer,
     TrainingArguments,
-    TrainerCallback
+    TrainerCallback,
 )
+# C2: 公共组件，消除训练脚本间重复
+from pretraining_common import PerplexityCallback, PrecomputedWWMCollator
 
 # ---------------------------
 # 注释说明（快速参考）
@@ -79,77 +81,9 @@ def resize_position_embeddings(model, new_max_len=1024):
     return model
 
 @dataclass
-class PrecomputedWWMCollator:
-    tokenizer: Any
-    mlm_probability: float = 0.15
+# C2: PrecomputedWWMCollator 已提取到 pretraining_common.py，通过顶部 import 引入。
 
-    def __call__(self, features: List[Dict[str, Any]]) -> Dict[str, Any]:
-        batch_input_ids = [f["input_ids"] for f in features]
-        batch_word_ids = [f.get("word_ids") for f in features]
-        batch = self.tokenizer.pad(
-            {"input_ids": batch_input_ids},
-            padding="longest",
-            max_length=MAX_SEQ_LEN,
-            pad_to_multiple_of=8,
-            return_tensors="pt"
-        )
-        input_ids = batch["input_ids"]
-        labels = input_ids.clone()
-        probability_matrix = torch.full(labels.shape, self.mlm_probability)
-
-        for i in range(len(features)):
-            word_ids = batch_word_ids[i]
-            if word_ids is None:
-                # fallback to random token-level masking if word_ids absent
-                continue
-            current_ids = input_ids[i]
-            mapping = {}
-            for idx, wid in enumerate(word_ids):
-                if wid is None: continue
-                if idx >= len(current_ids): break
-                mapping.setdefault(wid, []).append(idx)
-
-            unique_words = list(mapping.keys())
-            if len(unique_words) == 0:
-                continue
-            num_to_mask = max(1, int(len(unique_words) * self.mlm_probability))
-            masked_words = set(random.sample(unique_words, num_to_mask))
-            mask_indices = torch.zeros(len(current_ids), dtype=torch.bool)
-            for wid in masked_words:
-                for idx in mapping[wid]:
-                    mask_indices[idx] = True
-
-            special_tokens_mask = torch.tensor(
-                self.tokenizer.get_special_tokens_mask(current_ids.tolist(), already_has_special_tokens=True),
-                dtype=torch.bool
-            )
-            mask_indices.masked_fill_(special_tokens_mask, value=False)
-            if self.tokenizer.pad_token_id is not None:
-                mask_indices.masked_fill_(current_ids == self.tokenizer.pad_token_id, value=False)
-
-            probability_matrix[i, :] = 0.0
-            probability_matrix[i, mask_indices] = 1.0
-
-        masked_indices = torch.bernoulli(probability_matrix).bool()
-        labels[~masked_indices] = -100
-        indices_replaced = torch.bernoulli(torch.full(labels.shape, 0.8)).bool() & masked_indices
-        input_ids[indices_replaced] = self.tokenizer.mask_token_id
-        indices_random = torch.bernoulli(torch.full(labels.shape, 0.5)).bool() & masked_indices & ~indices_replaced
-        random_words = torch.randint(len(self.tokenizer), labels.shape, dtype=torch.long)
-        input_ids[indices_random] = random_words[indices_random]
-
-        batch["input_ids"] = input_ids
-        batch["labels"] = labels
-        return batch
-
-class PerplexityCallback(TrainerCallback):
-    def on_evaluate(self, args, state, control, metrics, **kwargs):
-        if state.is_local_process_zero:
-            loss = metrics.get("eval_loss")
-            if loss:
-                ppl = math.exp(loss)
-                print(f"\n[Evaluation] Perplexity (PPL): {ppl:.4f}\n")
-                metrics["perplexity"] = ppl
+# C2: PerplexityCallback 已提取到 pretraining_common.py，通过顶部 import 引入。
 
 def main():
     if not os.path.exists(DATASET_PATH):
@@ -185,7 +119,7 @@ def main():
     # 可选：扩展 position embeddings（如果需要更长 context）
     model = resize_position_embeddings(model, new_max_len=MAX_SEQ_LEN)
     model.gradient_checkpointing_enable()
-    data_collator = PrecomputedWWMCollator(tokenizer=tokenizer)
+    data_collator = PrecomputedWWMCollator(tokenizer=tokenizer, max_seq_len=MAX_SEQ_LEN)
 
     # 额外安全检查：确认 dataset 中实际的 token id 不会超出模型 embedding 范围
     # 这是导致 "CUDA error: device-side assert triggered" 的常见原因（embedding 索引越界）

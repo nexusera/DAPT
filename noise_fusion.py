@@ -120,6 +120,7 @@ class ContinuousNoiseProjector(nn.Module):
 
     def normalize(self, noise_values: torch.Tensor) -> torch.Tensor:
         x = noise_values.to(dtype=torch.float32)
+        # H3: nan_to_num 必须在 clamp 之前，否则 NaN 会令 clamp 结果为 NaN。
         x = torch.nan_to_num(x, nan=0.0, posinf=0.0, neginf=0.0)
         mins = self.range_mins.to(device=x.device)
         maxs = self.range_maxs.to(device=x.device)

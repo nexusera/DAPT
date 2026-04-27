@@ -146,6 +146,12 @@ class BertNoiseEmbeddings(BertEmbeddings):
         if uses_bucket_noise(self.noise_mode) and noise_ids is not None:
             if noise_ids.dim() == 2:
                 noise_ids = noise_ids.unsqueeze(0)
+            # H1: 校验最后一维必须等于 FEATURES 数量，防止 C1 fallback 5 维错配静默污染
+            if noise_ids.shape[-1] != len(FEATURES):
+                raise ValueError(
+                    f"noise_ids.shape[-1]={noise_ids.shape[-1]} != len(FEATURES)={len(FEATURES)}. "
+                    "请检查 build_zero_feats 或 OCR fallback 路径是否返回了错误维度。"
+                )
             noise_ids = noise_ids.to(device)
             noise_embed = torch.zeros_like(embeddings)
             for i, feat in enumerate(FEATURES):
@@ -157,6 +163,12 @@ class BertNoiseEmbeddings(BertEmbeddings):
         elif uses_continuous_noise(self.noise_mode) and noise_values is not None:
             if noise_values.dim() == 2:
                 noise_values = noise_values.unsqueeze(0)
+            # H2: 校验 noise_values 的最后一维与 FEATURES 数量一致，并强制 float32
+            if noise_values.shape[-1] != len(FEATURES):
+                raise ValueError(
+                    f"noise_values.shape[-1]={noise_values.shape[-1]} != len(FEATURES)={len(FEATURES)}. "
+                    "noise_values 维度与特征定义不匹配。"
+                )
             noise_values = noise_values.to(device, dtype=torch.float32)
             noise_embed = self.noise_projector(noise_values)
             embeddings = embeddings + self.alpha * noise_embed
@@ -164,6 +176,12 @@ class BertNoiseEmbeddings(BertEmbeddings):
         elif uses_concat_noise(self.noise_mode) and noise_ids is not None:
             if noise_ids.dim() == 2:
                 noise_ids = noise_ids.unsqueeze(0)
+            # H1: concat_linear 同样使用 noise_ids，同步校验维度
+            if noise_ids.shape[-1] != len(FEATURES):
+                raise ValueError(
+                    f"noise_ids.shape[-1]={noise_ids.shape[-1]} != len(FEATURES)={len(FEATURES)}. "
+                    "concat_linear 模式下 noise_ids 维度与特征定义不匹配。"
+                )
             noise_ids = noise_ids.to(device)
             noise_embed = self.concat_embedder(noise_ids)
             embeddings = embeddings + self.alpha * noise_embed

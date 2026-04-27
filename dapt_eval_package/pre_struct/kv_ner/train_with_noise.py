@@ -55,6 +55,9 @@ if __package__ in (None, ""):
         Relation,
         Sample,
         _select_latest_annotation,
+        # H5: 统一从 data_utils 导入，删除本文件中的重复定义
+        _expand_word_noise_to_chars,
+        _broadcast_global_noise,
         # _normalize_label,  # Use local version
     )
     from pre_struct.kv_ner.dataset import TokenClassificationDataset, collate_batch
@@ -76,6 +79,9 @@ else:
         Relation,
         Sample,
         _select_latest_annotation,
+        # H5: 统一从 data_utils 导入，删除本文件中的重复定义
+        _expand_word_noise_to_chars,
+        _broadcast_global_noise,
         # _normalize_label, # Use local version
     )
     from .dataset import TokenClassificationDataset, collate_batch
@@ -120,35 +126,8 @@ def _normalize_label(raw: str, label_map: Dict[str, str]) -> Optional[str]:
     
     return None
 
-def _expand_word_noise_to_chars(ocr_raw, noise_values_per_word):
-    """Expand per-word 7-d noise to per-character list using ocr_raw.words_result."""
-    if not (isinstance(ocr_raw, dict) and isinstance(noise_values_per_word, list)):
-        return None
-    words_result = ocr_raw.get("words_result")
-    if not isinstance(words_result, list):
-        return None
-    char_noise = []
-    for wr, nv in zip(words_result, noise_values_per_word):
-        if not (isinstance(wr, dict) and isinstance(nv, (list, tuple)) and len(nv) == 7):
-            continue
-        w = wr.get("words", "")
-        if not isinstance(w, str):
-            continue
-        repeat = max(1, len(w))
-        char_noise.extend([list(nv)] * repeat)
-    return char_noise if char_noise else None
-
-
-def _broadcast_global_noise(noise_values, text_len: int):
-    """If noise is a single 7-d vector, broadcast to text length."""
-    if (
-        isinstance(noise_values, list)
-        and len(noise_values) == 7
-        and all(not isinstance(v, (list, tuple)) for v in noise_values)
-        and text_len > 0
-    ):
-        return [list(noise_values) for _ in range(text_len)]
-    return noise_values
+# H5: _expand_word_noise_to_chars 和 _broadcast_global_noise 已移至 data_utils.py，
+# 通过上方的 import 引入，此处不再重复定义。
 
 
 def set_seed(seed: int) -> None:

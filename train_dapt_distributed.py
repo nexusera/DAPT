@@ -33,6 +33,8 @@ from transformers.models.roberta.modeling_roberta import (
 
 from noise_embeddings import RobertaNoiseEmbeddings
 from noise_feature_processor import NoiseFeatureProcessor, FEATURES
+# C2: 公共组件，消除训练脚本间重复
+from pretraining_common import PerplexityCallback, PrecomputedWWMCollator
 
 # 完美物理值（非 OCR 样本用），由 processor 映射到桶 ID
 PERFECT_VALUES = [1.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0]
@@ -88,67 +90,7 @@ def resize_position_embeddings(model, new_max_len=1024):
     model.bert.embeddings.register_buffer("position_ids", torch.arange(new_max_len).expand((1, -1)))
     return model
 
-@dataclass
-class PrecomputedWWMCollator:
-    tokenizer: Any
-    mlm_probability: float = 0.15
-
-    def __call__(self, features: List[Dict[str, Any]]) -> Dict[str, Any]:
-        batch_input_ids = [f["input_ids"] for f in features]
-        batch_word_ids = [f["word_ids"] for f in features]
-        batch = self.tokenizer.pad(
-            {"input_ids": batch_input_ids},
-            padding="longest",
-            max_length=MAX_SEQ_LEN,
-            pad_to_multiple_of=8,
-            return_tensors="pt",
-        )
-        input_ids = batch["input_ids"]
-        labels = input_ids.clone()
-        probability_matrix = torch.full(labels.shape, self.mlm_probability)
-
-        for i in range(len(features)):
-            word_ids = batch_word_ids[i]
-            current_ids = input_ids[i]
-            mapping = {}
-            for idx, wid in enumerate(word_ids):
-                if wid is None:
-                    continue
-                if idx >= len(current_ids):
-                    break
-                mapping.setdefault(wid, []).append(idx)
-
-            unique_words = list(mapping.keys())
-            num_to_mask = max(1, int(len(unique_words) * self.mlm_probability))
-            masked_words = set(random.sample(unique_words, num_to_mask))
-            mask_indices = torch.zeros(len(current_ids), dtype=torch.bool)
-
-            for wid in masked_words:
-                for idx in mapping[wid]:
-                    mask_indices[idx] = True
-
-            special_tokens_mask = torch.tensor(
-                self.tokenizer.get_special_tokens_mask(current_ids.tolist(), already_has_special_tokens=True),
-                dtype=torch.bool,
-            )
-            mask_indices.masked_fill_(special_tokens_mask, value=False)
-            if self.tokenizer.pad_token_id is not None:
-                mask_indices.masked_fill_(current_ids == self.tokenizer.pad_token_id, value=False)
-
-            probability_matrix[i, :] = 0.0
-            probability_matrix[i, mask_indices] = 1.0
-
-        masked_indices = torch.bernoulli(probability_matrix).bool()
-        labels[~masked_indices] = -100
-        indices_replaced = torch.bernoulli(torch.full(labels.shape, 0.8)).bool() & masked_indices
-        input_ids[indices_replaced] = self.tokenizer.mask_token_id
-        indices_random = torch.bernoulli(torch.full(labels.shape, 0.5)).bool() & masked_indices & ~indices_replaced
-        random_words = torch.randint(len(self.tokenizer), labels.shape, dtype=torch.long)
-        input_ids[indices_random] = random_words[indices_random]
-
-        batch["input_ids"] = input_ids
-        batch["labels"] = labels
-        return batch
+# C2: PrecomputedWWMCollator 已提取到 pretraining_common.py，通过顶部 import 引入。
 
 
 class NoiseAwareCollator(PrecomputedWWMCollator):
@@ -334,15 +276,7 @@ class RobertaForMaskedLMWithNoise(RobertaForMaskedLM):
             attentions=outputs.attentions,
         )
 
-class PerplexityCallback(TrainerCallback):
-    def on_evaluate(self, args, state, control, metrics, **kwargs):
-        # 只有主进程打印 Log，防止刷屏
-        if state.is_local_process_zero:
-            loss = metrics.get("eval_loss")
-            if loss:
-                ppl = math.exp(loss)
-                print(f"\n[Evaluation] Perplexity (PPL): {ppl:.4f}\n")
-                metrics["perplexity"] = ppl
+# C2: PerplexityCallback 已提取到 pretraining_common.py，通过顶部 import 引入。
 
 def main():
     parser = argparse.ArgumentParser()
@@ -382,7 +316,9 @@ def main():
     # model = resize_position_embeddings(model, new_max_len=MAX_SEQ_LEN)
     model.gradient_checkpointing_enable()  # 启用梯度检查点减少显存
     processor = NoiseFeatureProcessor.load(args.noise_bins_json)
-    data_collator = NoiseAwareCollator(tokenizer=tokenizer, noise_processor=processor)
+    data_collator = NoiseAwareCollator(
+        tokenizer=tokenizer, max_seq_len=MAX_SEQ_LEN, noise_processor=processor
+    )
 
     training_args = TrainingArguments(
         output_dir=args.output_dir,

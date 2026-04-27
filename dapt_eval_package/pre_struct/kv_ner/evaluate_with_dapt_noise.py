@@ -56,6 +56,13 @@ from pre_struct.kv_ner.noise_utils import (
     FEATURES,
 )
 from core.metrics import calculate_task1_stats, calculate_task2_stats, calc_micro_f1
+# H4: 从公共模块导入共享工具函数，避免与 evaluate.py 重复
+from pre_struct.kv_ner.evaluate_core import (
+    set_seed,
+    _read_jsonl,
+    _normalize_text_for_eval,
+    _extract_ground_truth,
+)
 
 LOG_FORMAT = "[%(asctime)s] [%(levelname)s] %(message)s"
 logging.basicConfig(level=logging.INFO, format=LOG_FORMAT)
@@ -66,75 +73,8 @@ logger = logging.getLogger(__name__)
 # 工具函数与数据加载
 # ============================================================================
 
-def set_seed(seed: Optional[int]) -> None:
-    """设置随机种子"""
-    if seed is None:
-        return
-    import random
-    random.seed(seed)
-    torch.manual_seed(seed)
-    if torch.cuda.is_available():
-        torch.cuda.manual_seed_all(seed)
-
-
-def _read_jsonl(path: Path) -> List[Dict[str, Any]]:
-    """读取JSONL文件"""
-    if not path.exists():
-        raise FileNotFoundError(f"File not found: {path}")
-    results = []
-    with path.open("r", encoding="utf-8") as f:
-        for line in f:
-            line = line.strip()
-            if line:
-                results.append(json.loads(line))
-    return results
-
-
-def _normalize_text_for_eval(s: str) -> str:
-    """
-    文本归一化：Unicode NFKC、统一连字符、裁剪边界标点
-    """
-    if not s:
-        return ""
-    s = unicodedata.normalize("NFKC", s)
-    s = s.replace("—", "-").replace("–", "-")
-    s = s.replace("\u3000", " ")
-    s = re.sub(r"^\s+|\s+$", "", s)
-    edge_punct = "。，、；:;,:()[]{}<>"
-    i = 0
-    while i < len(s) and s[i] in edge_punct:
-        i += 1
-    j = len(s)
-    while j > i and s[j - 1] in edge_punct:
-        j -= 1
-    return s[i:j]
-
-
-def _extract_ground_truth(item: Dict[str, Any]) -> Tuple[set, set]:
-    """
-    从GT item提取keys和pairs
-    
-    Returns:
-        (gt_keys: set of key texts, gt_pairs: set of (key_text, value_text))
-    """
-    gt_keys = set()
-    gt_pairs = set()
-    
-    if 'spans' in item:
-        for k, v in item['spans'].items():
-            v_text = v.get('text', '') if isinstance(v, dict) else ''
-            gt_keys.add(k)
-            if v_text:
-                gt_pairs.add((k, v_text))
-    elif 'key_value_pairs' in item:
-        for p in item['key_value_pairs']:
-            k_text = p['key']['text']
-            v_text = p.get('value_text', '')
-            gt_keys.add(k_text)
-            if v_text:
-                gt_pairs.add((k_text, v_text))
-    
-    return gt_keys, gt_pairs
+# H4: set_seed / _read_jsonl / _normalize_text_for_eval / _extract_ground_truth
+# 已提取到 evaluate_core.py，通过上方 import 引入，此处不再重复定义。
 
 
 # ============================================================================

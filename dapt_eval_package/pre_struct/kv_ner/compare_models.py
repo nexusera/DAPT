@@ -15,7 +15,12 @@ if str(_ROOT) not in sys.path:
 from pre_struct.kv_ner.modeling import BertCrfTokenClassifier
 from pre_struct.kv_ner.config_io import load_config
 # from pre_struct.kv_ner.predict import predict_batch_with_model, load_ner_model # Removed unused
-from pre_struct.kv_ner.data_utils import build_bio_label_list
+# H5: 同时导入噪声展开工具函数，统一使用 data_utils 中的唯一定义
+from pre_struct.kv_ner.data_utils import (
+    build_bio_label_list,
+    _expand_word_noise_to_chars,
+    _broadcast_global_noise,
+)
 from pre_struct.kv_ner.schema_utils import load_schema # Imported Schema Utils
 from transformers import AutoTokenizer
 import torch
@@ -78,23 +83,7 @@ def _extract_ocr_text(ocr_raw):
     return str(ocr_raw)
 
 
-def _expand_word_noise_to_chars(ocr_raw, noise_values_per_word):
-    """Expand per-word 7-d noise to per-char list using ocr_raw.words_result."""
-    if not (isinstance(ocr_raw, dict) and isinstance(noise_values_per_word, list)):
-        return None
-    words_result = ocr_raw.get("words_result")
-    if not isinstance(words_result, list):
-        return None
-    char_noise = []
-    for wr, nv in zip(words_result, noise_values_per_word):
-        if not (isinstance(wr, dict) and isinstance(nv, (list, tuple)) and len(nv) == 7):
-            continue
-        w = wr.get("words", "")
-        if not isinstance(w, str):
-            continue
-        repeat = max(1, len(w))
-        char_noise.extend([list(nv)] * repeat)
-    return char_noise if char_noise else None
+# H5: _expand_word_noise_to_chars 已移至 data_utils.py，通过上方 import 引入。
 
 def get_ground_truth(item):
     """

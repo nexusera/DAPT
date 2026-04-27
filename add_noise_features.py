@@ -87,13 +87,14 @@ def build_zero_feats(seq_len: int):
         
     返回:
         两个列表：
-        1. 噪声特征：每个token有5个特征值，全为0.0
-        2. 噪声掩码：每个token有5个布尔值，全为False
+        1. 噪声特征：每个token有 len(FEATURES) 个特征值，全为0.0
+        2. 噪声掩码：每个token有 len(FEATURES) 个布尔值，全为False
         
     功能说明:
         当无法提取真实噪声特征时，用这个函数生成占位数据
     """
-    return [[0.0] * 5 for _ in range(seq_len)], [[False] * 5 for _ in range(seq_len)]
+    n = len(FEATURES)
+    return [[0.0] * n for _ in range(seq_len)], [[False] * n for _ in range(seq_len)]
 
 
 def main():
