@@ -94,7 +94,9 @@ class BertCrfTokenClassifier(nn.Module):
         )
         self.model_name_or_path = model_name_or_path or DEFAULT_MODEL_PATH
         self.use_noise = bool(use_noise)
-        # noise_embed_dim 保留参数签名但不再使用（早期 late-fusion 遗留，现统一由预训练 config 决定）
+        # N1: noise_embed_dim 仅为向后兼容而保留在构造函数签名中。
+        # 实际维度由预训练 checkpoint 的 config.noise_embed_dim 决定，
+        # 此处赋值仅供调试查看，不参与任何计算。若确认所有旧配置已迁移，可在后续版本移除。
         self.noise_embed_dim = int(noise_embed_dim)
         self.noise_mlp_hidden_dim = int(noise_mlp_hidden_dim or 0) or None
 

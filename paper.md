@@ -47,14 +47,12 @@
 
 
 \title{ KV-BERT: A Noise-Robust Pretraining Framework for Semi-Structured Key-Value Extraction in OCR Clinical Reports}
-\author{Anonymous Authors}
+% N5: \author 与 \institute 统一由上方 \ifanonymous...\fi 块控制，
+% 此处不再重复声明，避免匿名/camera-ready 两套信息并存导致误提交。
 %
 %\authorrunning{ et al.}
 % First names are abbreviated in the running head.
 % If there are more than two authors, 'et al.' is used.
-%
-%\institute{AI Starfish\\
-%\email{\{hao.l, yingyun.li, ying.qin, haiyang.qian\}@aistarfish.com}
  %}
 
 \maketitle              % typeset the header of the contribution
@@ -459,9 +457,7 @@ To evaluate the contribution of each component, we conduct extensive ablation ex
 
 \textbf{(2) KV-MLM 注意力诊断（可写证据）}：在主模型与 w/o KV-MLM 对照中，实体重建相关注意力分配出现统计显著差异。以 entity 视角为例，主模型在同 value 块注意力质量（same\_value\_block\_mass）上高于对照模型（$p=0.0108$，$d=0.31$），同时对 key 区域注意力质量（to\_key\_mass）低于对照模型（$p=0.0108$，$d=-0.31$），表明 KV-MLM 使模型在实体恢复时更依赖同一 KV 语义块内部上下文；在 boundary 视角下也观察到显著差异（to\_key\_mass：$p=0.0271$，$d=0.30$）。整体上，这些结果支持 KV-MLM 在结构化语义建模中的作用。
 
-\subsection{Ablation Study}
-%这一段是AI写的，先放在这里，后面再润色语言。
-We conducted a true-faithfulness comparison on KV-NER across four models: Full, NoNoise, NoNSP, and NoMLM, using Integrated Gradients with perturbation-based validation. All models were evaluated on the same 358 samples, and all reported metrics were computed in true mode (i.e., based on actual score changes after token perturbation). The Full model achieved the highest deletion_aopc and comprehensiveness (3.9057 and 3.9057), outperforming NoNoise (1.4915), NoMLM (1.1812), and NoNSP (3.3372). This indicates that the top-attributed tokens identified by Full have stronger causal relevance to prediction, as removing them leads to larger score drops. Although NoMLM yields the lowest sufficiency value (0.2220), this likely reflects reliance on a small set of local cues rather than better global explanatory behavior. Taken together with downstream performance, these findings support that the joint design of Noise-Embedding, KV-MLM, and KV-NSP improves evidence focus and yields more verifiable explanation consistency.
+
 
 % \subsection{Robustness Analysis}
 

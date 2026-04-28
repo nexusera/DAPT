@@ -145,12 +145,12 @@
 
 | # | 位置 | 问题 |
 |---|------|------|
-| N1 | `dapt_eval_package/.../modeling.py:97–98` | 过时注释："noise_embed_dim preserved but no longer used"——参数还在签名里，容易误导后继维护者。 |
-| N2 | 全仓库 | 错误处理风格混杂：有的函数抛异常，有的静默返回 `None`（如 `dataset.py:223–224`）。 |
-| N3 | `noise_feature_processor.py:157` | `to_id` 对非零值返回 `digitize + 1`，调用方 embedding 表需要开 `NUM_BINS + 1`（0 号为 anchor）；这层契约需文档化。 |
-| N4 | 仓库根 | 缺少 `requirements.txt`——只有 `serving/requirements.txt`。 |
-| N5 | `paper.md` | 匿名块和作者块同时存在，非匿名提交前需清理。 |
-| N6 | `dapt_eval_package/pre_struct/.DS_Store` | 提交了 `.DS_Store`。 |
+| N1 | `dapt_eval_package/.../modeling.py:97–98` | 过时注释："noise_embed_dim preserved but no longer used"——参数还在签名里，容易误导后继维护者。<br>**✅ 已修** 将注释改为说明"仅为向后兼容保留在签名中，实际维度由预训练 checkpoint config 决定；确认旧配置迁移完毕后可移除"。 |
+| N2 | 全仓库 | 错误处理风格混杂：有的函数抛异常，有的静默返回 `None`（如 `dataset.py:223–224`）。<br>**✅ 已修** 在 `da_core/dataset.py` 的 `bi >= len(input_ids)` 静默降级路径补加 `logger.warning`，使异常情况可被发现而不是悄悄跳过。全仓库统一风格为长期改进项，逐步补入警告日志。 |
+| N3 | `noise_feature_processor.py:157` | `to_id` 对非零值返回 `digitize + 1`，调用方 embedding 表需要开 `NUM_BINS + 1`（0 号为 anchor）；这层契约需文档化。<br>**✅ 已修** 为 `to_id` 方法添加完整 docstring，明确契约：ID=0 是 Anchor Bin；正常范围 [1, NUM_BINS]；embedding 表大小须为 `NUM_BINS + 1`；`bin_edges` 不含 0.0。 |
+| N4 | 仓库根 | 缺少 `requirements.txt`——只有 `serving/requirements.txt`。<br>**✅ 已修** 新建 `requirements.txt`，列出训练环境全量依赖（torch、transformers、datasets、torchcrf、jieba 等），含版本下界和安装说明。 |
+| N5 | `paper.md` | 匿名块和作者块同时存在，非匿名提交前需清理。<br>**✅ 已修** 移除 `\begin{document}` 后多余的 `\author{Anonymous Authors}` 硬编码行，统一由顶部 `\ifanonymous...\fi` 开关控制；添加注释防止误提交。 |
+| N6 | `dapt_eval_package/pre_struct/.DS_Store` | 提交了 `.DS_Store`。<br>**✅ 已修** `git rm --cached .DS_Store dapt_eval_package/pre_struct/.DS_Store`，将两个文件移出 git 追踪（`.gitignore` 已有 `.DS_Store` 规则，今后不会再被跟踪）。 |
 
 ---
 

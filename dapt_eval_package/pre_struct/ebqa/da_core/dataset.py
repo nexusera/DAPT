@@ -219,6 +219,12 @@ class QACollator:
                 if isinstance(seq, self.torch.Tensor):
                     seq = seq.tolist()
                 seq = seq or []
+                # N2: bi >= len(input_ids) 属于 collation 异常；静默用 0 而不崩溃，但发出 warning。
+                if bi >= len(input_ids):
+                    logger.warning(
+                        "N2: batch index bi=%d >= len(input_ids)=%d in noise collation; "
+                        "skipping noise for this sample.", bi, len(input_ids)
+                    )
                 seq_len = len(input_ids[bi]) if bi < len(input_ids) else 0
                 for ti in range(min(seq_len, max_len, len(seq))):
                     vals = seq[ti]

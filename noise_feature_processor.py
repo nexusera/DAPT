@@ -208,21 +208,34 @@ class NoiseFeatureProcessor:
             edges = json.load(f)
         return cls(edges)
     def to_id(self, x: float, feat: str) -> int:
+        """
+        N3: 将连续特征值映射到离散桶 ID，调用方必须了解以下契约：
+
+        契约
+        ────
+        - **ID=0 为 Anchor Bin**：0.0 值和 NaN/inf 均映射到 0，代表"完美/无噪声"。
+        - **正常范围：[1, len(bin_edges[feat])]**：`+1` 偏移确保非零值不会落入 Anchor。
+        - **Embedding 表大小须为 NUM_BINS[feat] + 1**：索引 0 是 anchor，
+          1..NUM_BINS[feat] 是正常桶，因此 embedding 行数 = NUM_BINS + 1。
+          例如 conf_avg: NUM_BINS=64 → embedding shape (65, embed_dim)。
+        - **bin_edges 不含 anchor 边界**：`fit_bins` 只用非零分位数，
+          不在 edges 里存 0.0，调用方不应在 edges 中手动添加 0.0。
+        """
         # 1. 处理绝对锚点（0.0 或异常值）
         if x == 0 or not np.isfinite(x):
             return 0
-        
+
         # 2. 应用截断策略
         if feat in CLIP:
             x = min(x, CLIP[feat])
-            
+
         edges = self.bin_edges.get(feat, [])
         if not edges:
             return 0
-        
-        # 3. 映射到 ID。+1 是为了避开 ID 0 (Anchor Bin)
-        # digitize 返回值 i 满足 edges[i-1] <= x < edges[i]
-        return int(np.digitize([x], edges, right=False)[0]) + 1 # 结果范围 [1, len(edges)]
+
+        # 3. 映射到 ID；+1 偏移跳过 Anchor Bin（ID=0）
+        # digitize 返回值 i 满足 edges[i-1] <= x < edges[i]，结果范围 [1, len(edges)]
+        return int(np.digitize([x], edges, right=False)[0]) + 1
 
     
     def map_batch(self, values: List[List[float]]) -> List[List[int]]:
