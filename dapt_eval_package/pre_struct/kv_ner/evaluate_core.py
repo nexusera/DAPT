@@ -32,16 +32,27 @@ def set_seed(seed: Optional[int]) -> None:
 
 
 def _read_jsonl(path: Path) -> List[Dict[str, Any]]:
-    """读取 JSONL 文件，每行一个 JSON 对象。"""
+    """读取 JSON/JSONL 文件，自动检测格式：
+    - JSON 数组（.json）：整体解析为 list
+    - JSONL（.jsonl）：逐行解析
+    """
     if not path.exists():
         raise FileNotFoundError(f"File not found: {path}")
-    results = []
     with path.open("r", encoding="utf-8") as f:
+        first_char = ""
+        for ch in f.read(4):
+            if ch.strip():
+                first_char = ch
+                break
+    with path.open("r", encoding="utf-8") as f:
+        if first_char == "[":
+            return json.load(f)
+        results = []
         for line in f:
             line = line.strip()
             if line:
                 results.append(json.loads(line))
-    return results
+        return results
 
 
 def _normalize_text_for_eval(s: str) -> str:
