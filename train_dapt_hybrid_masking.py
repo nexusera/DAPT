@@ -30,7 +30,9 @@ from transformers import (
 )
 # 引入本地模块 (假设脚本在 DAPT 目录下)
 current_dir = os.path.dirname(os.path.abspath(__file__))
-sys.path.append(current_dir)
+if current_dir not in sys.path:
+    sys.path.insert(0, current_dir)
+import paths_config as PC
 from noise_embeddings import RobertaNoiseEmbeddings
 from noise_feature_processor import NoiseFeatureProcessor, FEATURES
 
@@ -510,11 +512,11 @@ class HybridMaskingCollator:
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--output_dir", type=str, required=True)
-    parser.add_argument("--dataset_path", type=str, default="/data/ocean/DAPT/workspace/processed_dataset")
-    parser.add_argument("--kv_json_path", type=str, default="/data/ocean/DAPT/data/pseudo_kv_labels_filtered.json")
-    parser.add_argument("--tokenizer_path", type=str, default="/data/ocean/DAPT/my-medical-tokenizer")
+    parser.add_argument("--dataset_path", type=str, default=PC.DATASET_PATH)
+    parser.add_argument("--kv_json_path", type=str, default=PC.NSP_DATA_PATH)
+    parser.add_argument("--tokenizer_path", type=str, default=PC.TOKENIZER_PATH)
     parser.add_argument("--model_name_or_path", type=str, default=None, help="上一轮 MLM 的 Checkpoint")
-    parser.add_argument("--noise_bins_json", type=str, default="/data/ocean/DAPT/workspace/noise_bins.json")
+    parser.add_argument("--noise_bins_json", type=str, default=PC.NOISE_BINS_JSON)
     
     # 混合比例: 多少个 KV 样本对应多少个 General 样本
     # 简单起见，我们通过 Upsampling (重复采样) KV 数据集来控制比例

@@ -23,6 +23,7 @@ from transformers import (
 )
 # C2: 公共组件，消除训练脚本间重复
 from pretraining_common import PerplexityCallback, PrecomputedWWMCollator
+import paths_config as PC
 
 # ---------------------------
 # 注释说明（快速参考）
@@ -42,11 +43,10 @@ from pretraining_common import PerplexityCallback, PrecomputedWWMCollator
 # ===========================
 # 1. 配置路径与参数
 # ===========================
-WORKSPACE_DIR = "/data/ocean/DAPT/workspace"
-# Tokenizer 存放在 /data/ocean/DAPT/my-medical-tokenizer
-TOKENIZER_PATH = "/data/ocean/DAPT/my-medical-tokenizer"
+WORKSPACE_DIR = PC.WORKSPACE_DIR
+TOKENIZER_PATH = PC.TOKENIZER_PATH
 DATASET_PATH = os.path.join(WORKSPACE_DIR, "processed_dataset")
-MODEL_CHECKPOINT = "hfl/chinese-roberta-wwm-ext"
+MODEL_CHECKPOINT = PC.MODEL_CHECKPOINT
 OUTPUT_DIR = os.path.join(WORKSPACE_DIR, "output_medical_bert_kvmlm")
 
 # ===========================

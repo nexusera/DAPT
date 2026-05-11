@@ -95,7 +95,10 @@ def compute_word_noise_vec(
 
     # ── 标点异常率 ────────────────────────────────────────────────────────────
     word = str(word_item.get("words") or "")
-    bad = sum(1 for c in word if not (("\u4e00" <= c <= "\u9fff") or c.isdigit()))
+    bad = sum(
+        1 for c in word
+        if not (("\u4e00" <= c <= "\u9fff") or c.isalnum())
+    )
     punct_ratio = bad / max(1, len(word))
 
     # ── 断字率（截断到 CLIP） ─────────────────────────────────────────────────
@@ -254,4 +257,3 @@ if __name__ == "__main__":
     assert proc.to_id(0.95, "conf_avg") == 2
     assert proc.to_id(5000, "align_score") == 2  # clipped
     print("NoiseFeatureProcessor basic test passed.")
-

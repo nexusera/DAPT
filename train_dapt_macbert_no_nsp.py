@@ -40,7 +40,9 @@ from torch.nn import CrossEntropyLoss
 
 # 引入本地模块
 current_dir = os.path.dirname(os.path.abspath(__file__))
-sys.path.append(current_dir)
+if current_dir not in sys.path:
+    sys.path.insert(0, current_dir)
+import paths_config as PC
 from noise_embeddings import RobertaNoiseEmbeddings
 from noise_feature_processor import NoiseFeatureProcessor, FEATURES
 
@@ -326,9 +328,9 @@ def main():
     parser = argparse.ArgumentParser()
     # 基础配置
     parser.add_argument("--output_dir", type=str, required=True)
-    parser.add_argument("--dataset_path", type=str, default="/data/ocean/DAPT/workspace/processed_dataset")
-    parser.add_argument("--tokenizer_path", type=str, default="/data/ocean/DAPT/my-medical-tokenizer")
-    parser.add_argument("--noise_bins_json", type=str, default="/data/ocean/DAPT/workspace/noise_bins.json")
+    parser.add_argument("--dataset_path", type=str, default=PC.DATASET_PATH)
+    parser.add_argument("--tokenizer_path", type=str, default=PC.TOKENIZER_PATH)
+    parser.add_argument("--noise_bins_json", type=str, default=PC.NOISE_BINS_JSON)
     # NSP相关参数在此脚本中被忽略，但保留ArgumentParser以兼容命令行调用
     parser.add_argument("--nsp_data_dir", type=str, default=None) 
     parser.add_argument("--resume_from_checkpoint", type=str, default=None)
@@ -383,7 +385,7 @@ def main():
         fp16=torch.cuda.is_available(),
         ddp_find_unused_parameters=True, 
         dataloader_num_workers=0,
-        save_safetensors=False,
+        save_safetensors=False,  # M2: 自定义模型含共享权重，safetensors 会因 shared-tensor 检查报错；待上游修复后可移除
         remove_unused_columns=False, 
         report_to="tensorboard",
         run_name=f"dapt_no_nsp"
