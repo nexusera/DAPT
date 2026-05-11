@@ -19,14 +19,17 @@ from transformers import (
     Trainer,
     TrainingArguments,
     DataCollatorForLanguageModeling,
-    TrainerCallback
+    TrainerCallback,
 )
+# C2: 公共组件，消除训练脚本间重复
+from pretraining_common import PerplexityCallback
 
 # ===========================
 # 1. 配置路径与参数
 # ===========================
 WORKSPACE_DIR = "/data/ocean/bpe_workspace"
-TOKENIZER_PATH = os.path.join(WORKSPACE_DIR, "my-medical-tokenizer")
+# Tokenizer 统一指向 /data/ocean/DAPT/my-medical-tokenizer
+TOKENIZER_PATH = "/data/ocean/DAPT/my-medical-tokenizer"
 DATASET_PATH = os.path.join(WORKSPACE_DIR, "processed_dataset")
 MODEL_CHECKPOINT = "hfl/chinese-roberta-wwm-ext"
 OUTPUT_DIR = os.path.join(WORKSPACE_DIR, "output_medical_bert_add_vocab_mlm")  # 新输出目录
@@ -69,14 +72,7 @@ def resize_position_embeddings(model, new_max_len=1024):
 # ===========================
 # 3. Perplexity Callback
 # ===========================
-class PerplexityCallback(TrainerCallback):
-    def on_evaluate(self, args, state, control, metrics, **kwargs):
-        if state.is_local_process_zero:
-            loss = metrics.get("eval_loss")
-            if loss:
-                ppl = math.exp(loss)
-                print(f"\n[Evaluation] Perplexity (PPL): {ppl:.4f}\n")
-                metrics["perplexity"] = ppl
+# C2: PerplexityCallback 已提取到 pretraining_common.py，通过顶部 import 引入。
 
 def main():
     if not os.path.exists(DATASET_PATH):

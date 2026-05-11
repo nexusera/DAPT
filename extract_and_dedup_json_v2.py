@@ -15,6 +15,11 @@ RAW_DATA_ROOTS = [
     "/data/oss/hxzh-mr/all_type_pic_oss_csv/20251208_5w",
     "/data/oss/hxzh-mr/all_type_pic_oss_csv/20251210_5w",
     #"/hxzh-h200-img/oss/hxzh-mr/all_type_pic_oss_csv/pt=20251215",
+    # 新增本地医疗百科/教材资源
+    "/data/ocean/DAPT/med_data",
+    "/data/ocean/DAPT/workspace/wiki_data",
+    # 新增通用中文大语料抽样（FineWeb）
+    "/data/ocean/DAPT/general_data",
 ]
 
 # 旧书籍列表（兼容；若不需要可留空）
@@ -62,15 +67,18 @@ SUPPLEMENTARY_FILES = [
 ]
 
 # 输出文件 (直接覆盖 train.txt，方便后续流程)
-OUTPUT_FILE = "/data/ocean/bpe_workspace/train.txt"
+OUTPUT_FILE = "/data/ocean/DAPT/workspace/train.txt"
 # 分类输出（便于后续重采样配比）
 OUTPUT_SPLIT_FILES = {
-    "clinical_raw": "/data/ocean/bpe_workspace/train_clinical.txt",
-    "book_core": "/data/ocean/bpe_workspace/train_book_core.txt",
-    "book_old": "/data/ocean/bpe_workspace/train_book_old.txt",
-    "paper": "/data/ocean/bpe_workspace/train_paper.txt",
-    "general": "/data/ocean/bpe_workspace/train_general.txt",
-    "supplement": "/data/ocean/bpe_workspace/train_supplement.txt",
+    "clinical_raw": "/data/ocean/DAPT/workspace/train_clinical.txt",
+    "book_core": "/data/ocean/DAPT/workspace/train_book_core.txt",
+    "book_old": "/data/ocean/DAPT/workspace/train_book_old.txt",
+    "paper": "/data/ocean/DAPT/workspace/train_paper.txt",
+    "general": "/data/ocean/DAPT/workspace/train_general.txt",
+    "supplement": "/data/ocean/DAPT/workspace/train_supplement.txt",
+    "wiki_med": "/data/ocean/DAPT/workspace/train_wiki_med.txt",
+    "wiki_general": "/data/ocean/DAPT/workspace/train_wiki_general.txt",
+    "med_book": "/data/ocean/DAPT/workspace/train_med_book.txt",
 }
 
 # 可选：用于 token 估算的分词器名称；若不可用则退化为“字符≈token”估算
@@ -122,9 +130,28 @@ def extract_smart(data):
         if found_report:
             return " ".join(temp_texts)
 
-    # === 策略 3: 兜底策略 (通用递归) ===
-    # 如果既不是 Type A 也不是 Type B，可能是其他格式，暂且跳过或按需开启
-    # 为了保证数据纯度，建议先仅处理已知格式。
+    # === 策略 3: 通用 JSON/JSONL 格式，字段包含 text / content / instruction+output / question+answer ===
+    # 典型场景：百科/教材/QA（如 med_data/train_encyclopedia.json 每行 {"text": "..."}）
+    if isinstance(data, dict):
+        # 1) text / content 直接取
+        for k in ["text", "content"]:
+            if k in data and isinstance(data[k], str) and data[k].strip():
+                return data[k].strip()
+        # 2) instruction + output / answer
+        if "instruction" in data and "output" in data:
+            instr = data.get("instruction") or ""
+            out = data.get("output") or ""
+            combo = f"{instr} {out}".strip()
+            if combo:
+                return combo
+        if "question" in data and "answer" in data:
+            q = data.get("question") or ""
+            a = data.get("answer") or ""
+            combo = f"{q} {a}".strip()
+            if combo:
+                return combo
+
+    # === 策略 4: 兜底策略 (未知格式) ===
     return ""
 
 def main():
@@ -146,6 +173,10 @@ def main():
         "paper": {"lines": 0, "chars": 0, "files": 0, "parse_errors": 0},
         "general": {"lines": 0, "chars": 0, "files": 0, "parse_errors": 0},
         "supplement": {"lines": 0, "chars": 0, "files": 0, "parse_errors": 0},
+        "wiki_med": {"lines": 0, "chars": 0, "files": 0, "parse_errors": 0},
+        "wiki_general": {"lines": 0, "chars": 0, "files": 0, "parse_errors": 0},
+        "med_book": {"lines": 0, "chars": 0, "files": 0, "parse_errors": 0},
+        "general2": {"lines": 0, "chars": 0, "files": 0, "parse_errors": 0},
     }
     source_chars = {"ocr": 0, "book": 0}  # 保留旧字段用于 token 估算
     
@@ -165,11 +196,18 @@ def main():
 
     with open(OUTPUT_FILE, 'w', encoding='utf-8') as f_out:
         split_handlers = {k: open(path, "w", encoding="utf-8") for k, path in OUTPUT_SPLIT_FILES.items()}
-        # 遍历目录（临床原始数据）
+        # 遍历目录（临床原始数据 + 本地新增 wiki/med_data 等）
         for RAW_DATA_ROOT in RAW_DATA_ROOTS:
             for root, dirs, files in os.walk(RAW_DATA_ROOT):
-                # 扫描 .txt/.json/.csv 文件
-                target_files = [f for f in files if f.endswith('.txt') or f.endswith('.json') or f.endswith('.csv')]
+                # 扫描 .txt/.json/.csv/.jsonl/.jsonl.gz 文件
+                target_files = [
+                    f for f in files
+                    if f.endswith('.txt')
+                    or f.endswith('.json')
+                    or f.endswith('.csv')
+                    or f.endswith('.jsonl')
+                    or f.endswith('.jsonl.gz')
+                ]
             
                 if not target_files:
                     continue
@@ -178,28 +216,35 @@ def main():
                     file_path = os.path.join(root, file)
                     total_files += 1
                     
-                    source_stats["clinical_raw"]["files"] += 1
+                    # 根据路径决定分类：med_data -> med_book；wiki_data -> wiki_med/wiki_general；否则默认为 clinical_raw
+                    category = "clinical_raw"
+                    if "/med_data" in root:
+                        category = "med_book"
+                    elif "/wiki_data" in root:
+                        if "wiki_med" in file:
+                            category = "wiki_med"
+                        else:
+                            category = "wiki_general"
+
+                    source_stats.setdefault(category, {"lines": 0, "chars": 0, "files": 0, "parse_errors": 0})
+                    source_stats[category]["files"] += 1
                     try:
-                        # 全量读取文件
-                        with open(file_path, 'r', encoding='utf-8') as f_in:
-                            if file.endswith('.csv'):
+                        # 全量读取文件（根据后缀分别处理）
+                        if file.endswith('.csv'):
+                            with open(file_path, 'r', encoding='utf-8') as f_in:
                                 import csv
                                 reader = csv.DictReader(f_in)
                                 for row in reader:
-                                    # 按列名优先提取内容；若无匹配则拼接所有文本字段
                                     candidates = []
                                     for key in ["text", "content", "report", "ocr", "paragraph", "instruction", "output"]:
                                         if key in row and row[key]:
                                             candidates.append(str(row[key]).strip())
                                     if not candidates:
-                                        # 兜底：拼接所有字符串列
                                         for v in row.values():
                                             if isinstance(v, str):
                                                 candidates.append(v.strip())
                                     full_text = " ".join([c for c in candidates if c])
-                                    if not full_text:
-                                        continue
-                                    if len(full_text) < MIN_TEXT_LEN:
+                                    if not full_text or len(full_text) < MIN_TEXT_LEN:
                                         continue
                                     file_hash = get_content_hash(full_text)
                                     if file_hash in unique_hashes:
@@ -207,48 +252,123 @@ def main():
                                         continue
                                     unique_hashes.add(file_hash)
                                     clean_line = full_text.replace("\n", " ")
+                                    write_record(clean_line, category, f_out, split_handlers)
+                                    valid_count += 1
+                                    source_stats[category]["lines"] += 1
+                                    source_stats[category]["chars"] += len(clean_line)
+                                    if category == "clinical_raw":
+                                        source_chars["ocr"] += len(clean_line)
+                                    if len(sample_outputs) < 5:
+                                        sample_outputs.append(f"[{file}] {clean_line[:100]}...")
+                            continue
+
+                        # JSONL.GZ
+                        if file.endswith(".jsonl.gz"):
+                            import gzip
+                            with gzip.open(file_path, "rt", encoding="utf-8") as f_in:
+                                for line in f_in:
+                                    line = line.strip()
+                                    if not line:
+                                        continue
+                                    try:
+                                        rec = json.loads(line)
+                                    except json.JSONDecodeError:
+                                        parse_error_count += 1
+                                        source_stats["clinical_raw"]["parse_errors"] += 1
+                                        continue
+                                    text = extract_smart(rec)
+                                    if not text or len(text) < MIN_TEXT_LEN:
+                                        continue
+                                    file_hash = get_content_hash(text)
+                                    if file_hash in unique_hashes:
+                                        duplicate_count += 1
+                                        continue
+                                    unique_hashes.add(file_hash)
+                                    clean_line = text.replace("\n", " ").strip()
                                     write_record(clean_line, "clinical_raw", f_out, split_handlers)
                                     valid_count += 1
                                     source_stats["clinical_raw"]["lines"] += 1
                                     source_stats["clinical_raw"]["chars"] += len(clean_line)
-                                    source_chars["ocr"] += len(clean_line)
                                     if len(sample_outputs) < 5:
                                         sample_outputs.append(f"[{file}] {clean_line[:100]}...")
-                                continue
+                            continue
+
+                        # JSONL
+                        if file.endswith(".jsonl"):
+                            with open(file_path, "r", encoding="utf-8") as f_in:
+                                for line in f_in:
+                                    line = line.strip()
+                                    if not line:
+                                        continue
+                                    try:
+                                        rec = json.loads(line)
+                                    except json.JSONDecodeError:
+                                        parse_error_count += 1
+                                        source_stats["clinical_raw"]["parse_errors"] += 1
+                                        continue
+                                    text = extract_smart(rec)
+                                    if not text or len(text) < MIN_TEXT_LEN:
+                                        continue
+                                    file_hash = get_content_hash(text)
+                                    if file_hash in unique_hashes:
+                                        duplicate_count += 1
+                                        continue
+                                    unique_hashes.add(file_hash)
+                                    clean_line = text.replace("\n", " ").strip()
+                                    write_record(clean_line, category, f_out, split_handlers)
+                                    valid_count += 1
+                                    source_stats[category]["lines"] += 1
+                                    source_stats[category]["chars"] += len(clean_line)
+                                    if len(sample_outputs) < 5:
+                                        sample_outputs.append(f"[{file}] {clean_line[:100]}...")
+                            continue
+
+                        # JSON
+                        if file.endswith(".json"):
                             try:
-                                data = json.load(f_in)
+                                with open(file_path, "r", encoding="utf-8") as f_in:
+                                    data = json.load(f_in)
                             except json.JSONDecodeError:
                                 parse_error_count += 1
                                 continue
-                        
-                        # 1. 智能提取
-                        full_text = extract_smart(data)
-                        
-                        # 2. 长度过滤
-                        if len(full_text) < MIN_TEXT_LEN:
+                            full_text = extract_smart(data)
+                            if not full_text or len(full_text) < MIN_TEXT_LEN:
+                                continue
+                            file_hash = get_content_hash(full_text)
+                            if file_hash in unique_hashes:
+                                duplicate_count += 1
+                                continue
+                            unique_hashes.add(file_hash)
+                            clean_line = full_text.replace("\n", " ")
+                            write_record(clean_line, category, f_out, split_handlers)
+                            valid_count += 1
+                            source_stats[category]["lines"] += 1
+                            source_stats[category]["chars"] += len(clean_line)
+                            if category == "clinical_raw":
+                                source_chars["ocr"] += len(clean_line)
+                            if len(sample_outputs) < 5:
+                                sample_outputs.append(f"[{file}] {clean_line[:100]}...")
                             continue
-                            
-                        # 3. MD5 内容去重
-                        file_hash = get_content_hash(full_text)
-                        if file_hash in unique_hashes:
-                            duplicate_count += 1
-                            continue 
-                        
-                        unique_hashes.add(file_hash)
-                        
-                        # 4. 写入文件
-                        # 确保单行写入 (Line-delimited)
-                        clean_line = full_text.replace("\n", " ")
-                        write_record(clean_line, "clinical_raw", f_out, split_handlers)
-                        valid_count += 1
-                        source_stats["clinical_raw"]["lines"] += 1
-                        source_stats["clinical_raw"]["chars"] += len(clean_line)
-                        source_chars["ocr"] += len(clean_line)
-                        
-                        # 采样：记录前 5 条结果
-                        if len(sample_outputs) < 5:
-                            sample_outputs.append(f"[{file}] {clean_line[:100]}...")
-                        
+
+                        # TXT
+                        if file.endswith(".txt"):
+                            with open(file_path, "r", encoding="utf-8") as f_in:
+                                for line in f_in:
+                                    clean_line = line.strip()
+                                    if len(clean_line) < MIN_TEXT_LEN:
+                                        continue
+                                    file_hash = get_content_hash(clean_line)
+                                    if file_hash in unique_hashes:
+                                        duplicate_count += 1
+                                        continue
+                                    unique_hashes.add(file_hash)
+                                    write_record(clean_line, category, f_out, split_handlers)
+                                    valid_count += 1
+                                    source_stats[category]["lines"] += 1
+                                    source_stats[category]["chars"] += len(clean_line)
+                                    if len(sample_outputs) < 5:
+                                        sample_outputs.append(f"[{file}] {clean_line[:100]}...")
+                            continue
                     except Exception as e:
                         # 忽略读取错误，保证主流程不断
                         pass

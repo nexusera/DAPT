@@ -1,0 +1,4 @@
+# 开发与集成测试（pytest + HTTP 客户端）
+-r requirements.txt
+pytest>=7.4.0
+requests>=2.31.0

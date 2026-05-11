@@ -1,0 +1,40 @@
+# M8: 排除非生产文件，减小镜像体积并防止敏感数据进入镜像
+# 构建命令示例：docker build -f serving/Dockerfile -t kvbert-serving .
+
+# ── Jupyter / 实验 ────────────────────────────────────────────────────────────
+*.ipynb
+experiments/
+attention_vis_output/
+
+# ── 测试 / 工具（不进生产镜像） ───────────────────────────────────────────────
+tests/
+scripts/
+tools/
+fixtures/
+
+# ── 数据集 / 模型权重（通过 volume 挂载，不打进镜像） ─────────────────────────
+biaozhu*/
+workspace/
+runs/
+*.arrow
+*.bin
+
+# ── Python 编译缓存 ───────────────────────────────────────────────────────────
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+*.egg-info/
+dist/
+build/
+
+# ── VCS / 编辑器 ──────────────────────────────────────────────────────────────
+.git/
+.gitignore
+.cursor/
+*.env
+.env.*
+
+# ── 文档（可选，减小镜像大小） ────────────────────────────────────────────────
+*.md
+docs/

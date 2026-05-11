@@ -1,56 +1,17 @@
 # 导入必要的Python库
 import argparse  # 用于解析命令行参数
 import json  # 用于处理JSON格式的数据
+import math
 import os  # 用于文件和路径操作
 from typing import Any, Dict, Iterable, List, Optional  # 类型提示，让代码更清晰
 
 # 导入HuggingFace的datasets库，用于加载和保存数据集
 from datasets import load_from_disk, DatasetDict
-# 导入自定义的噪声特征提取器
-from noise_embeddings import NoiseFeatureExtractor
+from datasets.utils.logging import enable_progress_bar
+from noise_feature_processor import FEATURES, NoiseFeatureProcessor
 
-# 默认的OCR（光学字符识别）数据源文件路径
-# 可以通过命令行参数覆盖这个默认值
-# 如果提供多个文件，会按顺序拼接它们的内容
-DEFAULT_OCR_JSONS = [
-    "/home/ocean/semi_label/ocr_rerun/char_ocr_9297.json",
-]
-# P0 白名单默认文件（可选）
-DEFAULT_TOKENIZER_VOCAB = "/data/ocean/bpe_workspace/my-medical-tokenizer/vocab.txt"
-DEFAULT_KEYS_FILE = "/data/ocean/bpe_workspace/keys.txt"
-DEFAULT_KEPT_VOCAB = "/data/ocean/bpe_workspace/kept_vocab.txt"
-
-
-def load_medical_dict(path: Optional[str]) -> List[str]:
-    """
-    加载医学词典文件
-    
-    参数:
-        path: 医学词典文件的路径（可选）
-        
-    返回:
-        包含所有医学术语的列表
-        
-    功能说明:
-        - 从文本文件中读取医学术语，每行一个词
-        - 如果路径为空或None，返回空列表
-        - 如果文件不存在，抛出错误提示
-    """
-    # 如果没有提供路径，返回空列表
-    if not path:
-        return []
-    # 检查文件是否存在，不存在则报错
-    if not os.path.exists(path):
-        raise FileNotFoundError(f"medical_dict not found: {path}")
-    words = []
-    # 打开文件，使用UTF-8编码读取
-    with open(path, "r", encoding="utf-8") as f:
-        # 逐行读取
-        for line in f:
-            w = line.strip()  # 去除行首行尾的空白字符
-            if w:  # 如果这行不是空的
-                words.append(w)  # 添加到词列表中
-    return words
+# 默认的OCR数据源
+DEFAULT_OCR_JSONS = ["/home/ocean/semi_label/ocr_rerun/char_ocr_9297.json"]
 
 
 def load_list_file(path: Optional[str]) -> List[str]:
@@ -126,13 +87,14 @@ def build_zero_feats(seq_len: int):
         
     返回:
         两个列表：
-        1. 噪声特征：每个token有5个特征值，全为0.0
-        2. 噪声掩码：每个token有5个布尔值，全为False
+        1. 噪声特征：每个token有 len(FEATURES) 个特征值，全为0.0
+        2. 噪声掩码：每个token有 len(FEATURES) 个布尔值，全为False
         
     功能说明:
         当无法提取真实噪声特征时，用这个函数生成占位数据
     """
-    return [[0.0] * 5 for _ in range(seq_len)], [[False] * 5 for _ in range(seq_len)]
+    n = len(FEATURES)
+    return [[0.0] * n for _ in range(seq_len)], [[False] * n for _ in range(seq_len)]
 
 
 def main():
@@ -170,28 +132,10 @@ def main():
         help="output path to save new dataset with noise fields",
     )
     parser.add_argument(
-        "--medical_dict",
+        "--bins_json",
         type=str,
-        default=None,  # 可选参数
-        help="optional path to medical dict (one word per line)",
-    )
-    parser.add_argument(
-        "--tokenizer_vocab",
-        type=str,
-        default=DEFAULT_TOKENIZER_VOCAB,
-        help="vocab.txt for tokenizer (P0 白名单之一)",
-    )
-    parser.add_argument(
-        "--keys_file",
-        type=str,
-        default=DEFAULT_KEYS_FILE,
-        help="keys.txt (OCR 业务 Key，P0 白名单之一)",
-    )
-    parser.add_argument(
-        "--kept_vocab",
-        type=str,
-        default=DEFAULT_KEPT_VOCAB,
-        help="可选：LLM 筛选后的 kept_vocab.txt，加入 P0 白名单",
+        required=True,
+        help="path to noise bin edges json (precomputed by NoiseFeatureProcessor)",
     )
     parser.add_argument(
         "--num_proc",
@@ -202,73 +146,109 @@ def main():
     # 解析命令行参数
     args = parser.parse_args()
 
-    # 从磁盘加载已处理的数据集
+    # 确保 datasets 的 tqdm 进度条开启（部分环境可能关闭）
+    enable_progress_bar()
+
+    print(f"[add_noise_features] loading dataset: {args.dataset}")
     dataset = load_from_disk(args.dataset)
+    print(f"[add_noise_features] dataset loaded. splits: {list(dataset.keys())}")
     # 检查数据集格式是否正确（必须包含train/test等分割）
     if not isinstance(dataset, DatasetDict):
         raise ValueError("Expected a DatasetDict with train/test splits")
 
-    # 加载OCR识别结果数据（可能来自多个文件）
+    print(f"[add_noise_features] loading ocr json(s): {args.ocr_json}")
     ocr_list = load_ocr_list(args.ocr_json)
-    # 加载医学词典
-    med_dict = load_medical_dict(args.medical_dict)
+    print(f"[add_noise_features] ocr loaded. total items: {len(ocr_list)}")
+    # 加载分桶边界（仅用于构造 processor 映射）
+    processor = NoiseFeatureProcessor.load(args.bins_json)
+    print(f"[add_noise_features] bins loaded: {args.bins_json}")
 
-    # 准备 P0 白名单集合：tokenizer vocab + keys + kept_vocab
-    p0_terms = []
-    p0_terms.extend(load_list_file(args.tokenizer_vocab))
-    p0_terms.extend(load_list_file(args.keys_file))
-    p0_terms.extend(load_list_file(args.kept_vocab))
+    # IMPORTANT:
+    # HuggingFace Dataset.map(with_indices=True) gives indices *within each split*.
+    # If the dataset is a train/test split of an OCR-only corpus, the "test" split
+    # indices will restart from 0, which would misalign OCR features.
+    # We compute a deterministic per-split global offset so (split, idx) maps to
+    # a unique global index.
+    split_order = []
+    for s in ["train", "validation", "valid", "dev", "test"]:
+        if s in dataset:
+            split_order.append(s)
+    for s in sorted(dataset.keys()):
+        if s not in split_order:
+            split_order.append(s)
+    split_offsets = {}
+    running = 0
+    for s in split_order:
+        split_offsets[s] = running
+        running += len(dataset[s])
 
-    # 初始化噪声特征提取器
-    extractor = NoiseFeatureExtractor(
-        medical_dict=med_dict,
-        p0_terms=p0_terms,
-    )
-
-    def add_noise(example: Dict[str, Any], idx: int):
-        """
-        为单个样本添加噪声特征的函数
-        
-        参数:
-            example: 数据集中的一个样本（字典格式）
-            idx: 样本在数据集中的索引位置
-            
-        返回:
-            添加了噪声特征后的样本
-            
-        处理逻辑:
-            1. 获取样本的word_ids（词到子词的映射）
-            2. 如果word_ids不存在，生成空特征
-            3. 如果idx在OCR列表范围内，从OCR数据提取真实噪声特征
-            4. 否则生成全零特征作为占位
-        """
-        # 获取样本中的word_ids字段（记录每个subword属于哪个word）
+    def add_noise(example: Dict[str, Any], idx: int, *, global_idx: int):
+        # word_ids 是对齐的必要条件
         word_ids = example.get("word_ids")
-        # 如果word_ids不存在，生成空的噪声特征
         if word_ids is None:
-            nf, nm = build_zero_feats(0)
-            example["noise_features"] = nf
-            example["noise_masks"] = nm
+            example["noise_values"] = []
             return example
 
-        # 如果当前样本的索引在OCR数据范围内
-        if idx < len(ocr_list):
-            # 获取对应的OCR数据
-            ocr_obj = ocr_list[idx]
-            # 从OCR数据中提取词级别的噪声特征
-            word_feats, word_masks = extractor.extract_word_features({"ocr": ocr_obj})
-            # 将词级别的特征广播到subword级别（因为BERT使用subword分词）
-            nf, nm = extractor.broadcast_to_subwords(
-                word_feats, word_masks, word_ids
-            )
-            # 转换为Python列表格式并保存
-            example["noise_features"] = nf.tolist()
-            example["noise_masks"] = nm.tolist()
+        # 处理 OCR 样本
+        if global_idx < len(ocr_list):
+            ocr_obj = ocr_list[global_idx]
+            if not isinstance(ocr_obj, dict) or "words_result" not in ocr_obj:
+                nf, _ = build_zero_feats(len(word_ids))
+                example["noise_values"] = nf
+                return example
+
+            # 提取段落平均 top
+            words_result = ocr_obj.get("words_result", []) or []
+            paragraphs_result = ocr_obj.get("paragraphs_result", []) or []
+            para_tops = []
+            for para in paragraphs_result:
+                idxs = para.get("words_result_idx", []) or []
+                pts = []
+                for wid in idxs:
+                    if 0 <= wid < len(words_result):
+                        loc = words_result[wid].get("location", {}) or {}
+                        if "top" in loc:
+                            pts.append(float(loc.get("top", 0)))
+                if pts:
+                    para_tops.append(sum(pts) / len(pts))
+            default_para_top = sum(para_tops) / len(para_tops) if para_tops else 0.0
+
+            # 词级 7 维特征
+            word_feats: List[List[float]] = []
+            for wid, item in enumerate(words_result):
+                prob = item.get("probability", {}) or {}
+                avg = float(prob.get("average", 0.0)) if isinstance(prob.get("average", 0.0), (int, float)) else 0.0
+                mn = float(prob.get("min", 0.0)) if isinstance(prob.get("min", 0.0), (int, float)) else 0.0
+                var = float(prob.get("variance", 0.0)) if isinstance(prob.get("variance", 0.0), (int, float)) else 0.0
+                var_log = math.log10(var + 1e-12)
+                gap = avg - mn
+
+                word = item.get("words", "") or ""
+                bad = sum(1 for ch in word if not (("\u4e00" <= ch <= "\u9fff") or ch.isdigit()))
+                punct_ratio = bad / max(1, len(word))
+
+                loc = item.get("location", {}) or {}
+                width = float(loc.get("width", 0.0)) if isinstance(loc.get("width", 0.0), (int, float)) else 0.0
+                char_break = len(word) / max(1.0, width)
+
+                top = float(loc.get("top", 0.0)) if isinstance(loc.get("top", 0.0), (int, float)) else 0.0
+                align = abs(top - default_para_top)
+
+                word_feats.append([avg, mn, var_log, gap, punct_ratio, char_break, align])
+
+            # 广播到 token 级
+            seq_len = len(word_ids)
+            nf = [[0.0] * len(FEATURES) for _ in range(seq_len)]
+            for tidx, wid in enumerate(word_ids):
+                if wid is None or wid < 0 or wid >= len(word_feats):
+                    continue
+                nf[tidx] = word_feats[wid]
+            example["noise_values"] = nf
         else:
-            # 如果没有对应的OCR数据，生成全零特征
-            nf, nm = build_zero_feats(len(word_ids))
-            example["noise_features"] = nf
-            example["noise_masks"] = nm
+            # 非 OCR 样本：用完美物理值（如 conf=1.0, 其余为 0），交由 processor 映射到对应桶
+            seq_len = len(word_ids)
+            perfect_vals = [1.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+            example["noise_values"] = [perfect_vals for _ in range(seq_len)]
         return example
 
     # 用于存储处理后的各个数据分割（如train、test等）
@@ -286,15 +266,18 @@ def main():
     for split in dataset:
         ds = dataset[split]  # 获取当前分割的数据
         map_kwargs["desc"] = f"add_noise_features_{split}"  # 设置进度条描述
+        offset = split_offsets.get(split, 0)
         # 对当前分割的所有样本应用add_noise函数
         # map会并行处理所有样本（如果设置了num_proc）
-        new_splits[split] = ds.map(add_noise, **map_kwargs)
+        new_splits[split] = ds.map(lambda ex, i: add_noise(ex, i, global_idx=offset + i), **map_kwargs)
+        print(f"[add_noise_features] split {split} done. new size: {len(new_splits[split])}")
 
     # 将所有分割重新组合成DatasetDict
     out = DatasetDict(new_splits)
     # 保存到磁盘
+    print(f"[add_noise_features] saving to {args.output}")
     out.save_to_disk(args.output)
-    print(f"Saved dataset with noise features to {args.output}")
+    print(f"[add_noise_features] saved: {args.output}")
 
 
 # 程序入口：当直接运行这个脚本时，执行main函数
