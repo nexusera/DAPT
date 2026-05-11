@@ -38,6 +38,7 @@ from torch.nn import CrossEntropyLoss
 current_dir = os.path.dirname(os.path.abspath(__file__))
 if current_dir not in sys.path:
     sys.path.insert(0, current_dir)
+import paths_config as PC
 from noise_embeddings import RobertaNoiseEmbeddings
 from noise_feature_processor import NoiseFeatureProcessor, FEATURES
 
@@ -473,10 +474,10 @@ class MultiTaskCollator:
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--output_dir", type=str, required=True)
-    parser.add_argument("--dataset_path", type=str, default="/data/ocean/DAPT/workspace/processed_dataset")
-    parser.add_argument("--nsp_data_dir", type=str, default="/data/ocean/FT_workspace/ner-finetune/data")
-    parser.add_argument("--tokenizer_path", type=str, default="/data/ocean/DAPT/my-medical-tokenizer")
-    parser.add_argument("--noise_bins_json", type=str, default="/data/ocean/DAPT/workspace/noise_bins.json")
+    parser.add_argument("--dataset_path", type=str, default=PC.DATASET_PATH)
+    parser.add_argument("--nsp_data_dir", type=str, default=PC.NSP_DATA_PATH)
+    parser.add_argument("--tokenizer_path", type=str, default=PC.TOKENIZER_PATH)
+    parser.add_argument("--noise_bins_json", type=str, default=PC.NOISE_BINS_JSON)
     parser.add_argument("--nsp_prob", type=float, default=0.1, help="NSP 任务样本占比")
     parser.add_argument("--learning_rate", type=float, default=6e-5)
     parser.add_argument("--num_train_epochs", type=int, default=5)

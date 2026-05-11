@@ -22,21 +22,11 @@
 import argparse
 import glob
 import json
-import math
-import os
 from pathlib import Path
-from statistics import mean, variance
+from statistics import mean
 from typing import Dict, List, Optional, Tuple
 
-FEATURES = [
-    "conf_avg",
-    "conf_min",
-    "conf_var_log",
-    "conf_gap",
-    "punct_err_ratio",
-    "char_break_ratio",
-    "align_score",
-]
+from noise_feature_processor import compute_word_noise_vec
 
 
 def safe_mean(vals: List[float]) -> Optional[float]:
@@ -51,86 +41,6 @@ def safe_min(vals: List[float]) -> Optional[float]:
     if not vals:
         return None
     return float(min(vals))
-
-
-def safe_var(vals: List[float]) -> Optional[float]:
-    vals = [v for v in vals if v is not None]
-    if len(vals) < 2:
-        return 0.0
-    try:
-        return float(variance(vals))
-    except Exception:
-        return 0.0
-
-
-def is_bad_punct(ch: str) -> bool:
-    """非中英数字则视为标点/噪声，支持多字符字符串。"""
-    if not ch:
-        return False
-    if len(ch) > 1:
-        return any(is_bad_punct(c) for c in ch)
-    if ch.isalnum():
-        return False
-    code = ord(ch)
-    if 0x4E00 <= code <= 0x9FFF:  # 中日韩表意文字
-        return False
-    return True
-
-
-def compute_word_features(word_obj: Dict, para_mean_top: Optional[float], page_h: float) -> Optional[Tuple[List[float], List[float]]]:
-    """
-    计算单个 words_result 的特征。
-
-    返回： (word_level_feats, char_probs)
-    word_level_feats: [conf_avg, conf_min, conf_var_log, conf_gap, punct_err_ratio, char_break_ratio, align_score]
-    char_probs: 当前行所有 char 的概率列表
-    """
-    # 概率采集
-    probs = []
-    if isinstance(word_obj.get("probability"), (int, float)):
-        probs.append(float(word_obj["probability"]))
-    chars = word_obj.get("chars") or []
-    char_probs = []
-    for ch in chars:
-        if isinstance(ch, dict) and isinstance(ch.get("probability"), (int, float)):
-            char_probs.append(float(ch["probability"]))
-    if char_probs:
-        probs.extend(char_probs)
-    if not probs:
-        return None
-
-    conf_avg = mean(probs)
-    conf_min = min(probs)
-    v = safe_var(probs)
-    conf_var_log = math.log10(v + 1e-12)
-    conf_gap = conf_avg - conf_min
-
-    # punct_err_ratio: 非中英数字的占比（优先用 chars，否则用 words 文本）
-    text_fields = [c.get("char", "") for c in chars if isinstance(c, dict) and c.get("char")]
-    if not text_fields and isinstance(word_obj.get("words"), str):
-        text_fields = [word_obj["words"]]
-    flat_chars = list("".join(text_fields))
-    bad = sum(1 for ch in flat_chars if is_bad_punct(ch))
-    punct_err_ratio = bad / max(len(flat_chars), 1)
-
-    # char_break_ratio: 行字符数 / 行宽
-    width = None
-    loc = word_obj.get("location") or {}
-    if isinstance(loc, dict) and isinstance(loc.get("width"), (int, float)):
-        width = float(loc["width"])
-    char_cnt = len(flat_chars)
-    char_break_ratio = char_cnt / max(width if width else char_cnt, 1.0)
-
-    # align_score: 行 top 与所在段落平均 top 的偏差（归一到页高）
-    top = None
-    if isinstance(loc, dict) and isinstance(loc.get("top"), (int, float)):
-        top = float(loc["top"])
-    align_score = 0.0
-    if top is not None and page_h > 0:
-        base = para_mean_top if para_mean_top is not None else top
-        align_score = abs(top - base) / page_h
-
-    return [conf_avg, conf_min, conf_var_log, conf_gap, punct_err_ratio, char_break_ratio, align_score], char_probs
 
 
 def compute_paragraph_means(words_result: List[Dict], paragraphs_result: Optional[List[Dict]]) -> List[Optional[float]]:
@@ -158,37 +68,35 @@ def compute_paragraph_means(words_result: List[Dict], paragraphs_result: Optiona
     return word_para_mean
 
 
+def _has_probability_signal(word_obj: Dict) -> bool:
+    prob = word_obj.get("probability")
+    if isinstance(prob, (int, float)):
+        return True
+    if isinstance(prob, dict) and any(isinstance(prob.get(k), (int, float)) for k in ("average", "min", "variance")):
+        return True
+    return any(
+        isinstance(ch, dict) and isinstance(ch.get("probability"), (int, float))
+        for ch in (word_obj.get("chars") or [])
+    )
+
+
 def process_item(item: Dict) -> bool:
     ocr = item.get("ocr_raw") or {}
     words = ocr.get("words_result") or []
     if not isinstance(words, list) or not words:
         return False
 
-    # 页面高度：max(top+height)
-    page_h = 0.0
-    for w in words:
-        loc = w.get("location") or {}
-        if isinstance(loc, dict) and isinstance(loc.get("top"), (int, float)) and isinstance(loc.get("height"), (int, float)):
-            page_h = max(page_h, float(loc["top"]) + float(loc["height"]))
     para_means = compute_paragraph_means(words, ocr.get("paragraphs_result"))
 
     per_word_feats: List[List[float]] = []
-    all_probs: List[float] = []
     for idx, w in enumerate(words):
-        feats = compute_word_features(w, para_means[idx] if idx < len(para_means) else None, page_h)
-        if feats is None:
+        if not _has_probability_signal(w):
             continue
-        feat_vec, char_probs = feats
-        per_word_feats.append(feat_vec)
-        all_probs.extend(char_probs)
+        default_para_top = para_means[idx] if idx < len(para_means) and para_means[idx] is not None else 0.0
+        per_word_feats.append(compute_word_noise_vec(w, default_para_top))
 
     if not per_word_feats:
         return False
-
-    # 文档级聚合
-    def col(i):
-        vals = [v[i] for v in per_word_feats if v is not None]
-        return vals
 
     conf_avg = safe_mean([v[0] for v in per_word_feats])
     conf_min = safe_min([v[1] for v in per_word_feats])

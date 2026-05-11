@@ -28,12 +28,14 @@ from torch.nn import CrossEntropyLoss
 
 # 引入本地模块（仅使用 KV-NSP 数据集，不再使用噪声相关模块）
 current_dir = os.path.dirname(os.path.abspath(__file__))
-sys.path.append(current_dir)
+if current_dir not in sys.path:
+    sys.path.insert(0, current_dir)
+import paths_config as PC
 
 # 引入 KV-NSP 模块
 kv_nsp_dir = os.path.join(current_dir, "kv_nsp")
-if os.path.isdir(kv_nsp_dir):
-    sys.path.append(kv_nsp_dir)
+if os.path.isdir(kv_nsp_dir) and kv_nsp_dir not in sys.path:
+    sys.path.insert(0, kv_nsp_dir)
 from dataset import KVDataset
 from negative_sampling import format_negative_sampling_summary
 
@@ -255,19 +257,19 @@ def main():
     parser.add_argument(
         "--dataset_path",
         type=str,
-        default="/data/ocean/DAPT/workspace/processed_dataset",
+        default=PC.DATASET_PATH,
         help="HF Dataset 路径（仅包含文本，不要求噪声字段）",
     )
     parser.add_argument(
         "--nsp_data_dir",
         type=str,
-        default="/data/ocean/DAPT/data/pseudo_kv_labels_filtered.json",
+        default=PC.NSP_DATA_PATH,
         help="KV-NSP 训练用的伪标签 JSON 或目录",
     )
     parser.add_argument(
         "--tokenizer_path",
         type=str,
-        default="/data/ocean/DAPT/my-medical-tokenizer",
+        default=PC.TOKENIZER_PATH,
     )
     parser.add_argument(
         "--resume_from_checkpoint",
@@ -367,7 +369,7 @@ def main():
             fp16=torch.cuda.is_available(),
             ddp_find_unused_parameters=True,
             dataloader_num_workers=0,
-            save_safetensors=False,
+            save_safetensors=False,  # M2: 自定义模型含共享权重，safetensors 会因 shared-tensor 检查报错；待上游修复后可移除
             remove_unused_columns=False,
             report_to="tensorboard",
             run_name=f"dapt_no_noise_round_{round_idx}_mlm",
@@ -401,7 +403,7 @@ def main():
             fp16=torch.cuda.is_available(),
             ddp_find_unused_parameters=True,
             dataloader_num_workers=0,
-            save_safetensors=False,
+            save_safetensors=False,  # M2: 自定义模型含共享权重，safetensors 会因 shared-tensor 检查报错；待上游修复后可移除
             remove_unused_columns=False,
             report_to="tensorboard",
             run_name=f"dapt_no_noise_round_{round_idx}_nsp",

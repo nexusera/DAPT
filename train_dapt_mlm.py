@@ -23,15 +23,15 @@ from transformers import (
 )
 # C2: 公共组件，消除训练脚本间重复
 from pretraining_common import PerplexityCallback
+import paths_config as PC
 
 # ===========================
 # 1. 配置路径与参数
 # ===========================
-WORKSPACE_DIR = "/data/ocean/bpe_workspace"
-# Tokenizer 统一指向 /data/ocean/DAPT/my-medical-tokenizer
-TOKENIZER_PATH = "/data/ocean/DAPT/my-medical-tokenizer"
+WORKSPACE_DIR = os.environ.get("DAPT_MLM_WORKSPACE", PC.WORKSPACE_DIR)
+TOKENIZER_PATH = PC.TOKENIZER_PATH
 DATASET_PATH = os.path.join(WORKSPACE_DIR, "processed_dataset")
-MODEL_CHECKPOINT = "hfl/chinese-roberta-wwm-ext"
+MODEL_CHECKPOINT = PC.MODEL_CHECKPOINT
 OUTPUT_DIR = os.path.join(WORKSPACE_DIR, "output_medical_bert_add_vocab_mlm")  # 新输出目录
 
 # ===========================
