@@ -45,26 +45,99 @@ class RunSpec:
     gpu: str
     model: str
     schedule: str
+    category: str = "CPT"
+    plan_id: str = ""
     notes: str = ""
 
 
+# 命名约定：
+#   CPT runs        : kv_llm_qwen3_{model}_{variant}.log
+#   Sanity checks   : sc{0,1,2,3}_{...}.log
+#   Fine-tune       : ft_{model_short}_{benchmark}.log
+#   Few-shot eval   : eval_{model_short}_{benchmark}_fewshot.log
+#   Analysis        : analysis_{name}.log
+BENCHMARKS = ["medstruct", "cmeie", "cblue"]
+
 CATALOGUE: list[RunSpec] = [
-    # === KV-LLM CPT (Day 1 main + ablations) ===
-    RunSpec("kv_llm_qwen3_0.6b_full",        "0.6B full (main)",          "4",   "Qwen3-0.6B", "full"),
-    RunSpec("kv_llm_qwen3_0.6b_no_kvnsp",    "0.6B w/o KVNSP",            "5",   "Qwen3-0.6B", "span"),
-    RunSpec("kv_llm_qwen3_0.6b_no_noise",    "0.6B w/o NoiseEmb",         "0",   "Qwen3-0.6B", "full+noise=none"),
-    RunSpec("kv_llm_qwen3_0.6b_plain_clm",   "0.6B Plain CLM",            "1",   "Qwen3-0.6B", "plain_clm"),
-    RunSpec("kv_llm_qwen3_0.6b_no_span",     "0.6B w/o SpanCorr",         "3",   "Qwen3-0.6B", "nsp"),
-    RunSpec("kv_llm_qwen3_1.7b_full",        "1.7B full (DDP)",           "6,7", "Qwen3-1.7B", "full"),
-    RunSpec("kv_llm_qwen3_1.7b_plain_clm",   "1.7B Plain CLM",            "2",   "Qwen3-1.7B", "plain_clm"),
-    # === planned but not yet started — SC + remaining 1.7B variants ===
-    RunSpec("kv_llm_qwen3_1.7b_no_noise",    "1.7B w/o NoiseEmb",         "?",   "Qwen3-1.7B", "full+noise=none",  "scheduled Day 2"),
-    RunSpec("kv_llm_qwen3_0.6b_random_mask", "0.6B random-mask CPT (SC2-A)", "?", "Qwen3-0.6B", "random-mask",     "SC2-A baseline"),
-    RunSpec("sc0_macbert_m0",                "SC0-M0  MC-BERT entity mask",  "?", "MacBERT 0.11B", "MLM",          "sanity check"),
-    RunSpec("sc0_macbert_m1",                "SC0-M1  KV-MLM (k-v boundary)", "?", "MacBERT 0.11B", "MLM",         "sanity check"),
-    RunSpec("sc0_macbert_m2",                "SC0-M2  KV-MLM + OCR sampling", "?", "MacBERT 0.11B", "MLM",         "sanity check"),
-    RunSpec("sc1_macbert_prefix_lm",         "SC1  MacBERT prefix-LM",       "?", "MacBERT 0.11B", "prefix-LM",   "sanity check"),
-    RunSpec("sc3b_qwen3_0.6b_instruct_kvnsp_sft", "SC3-B Qwen3-Instruct + KVNSP SFT", "?", "Qwen3-0.6B-Instruct", "SFT", "sanity check"),
+    # ============================== CPT (Day 1) ==============================
+    RunSpec("kv_llm_qwen3_0.6b_full",        "0.6B full (main)",            "4",   "Qwen3-0.6B",  "full",        "CPT", "D1.5/D1.10"),
+    RunSpec("kv_llm_qwen3_0.6b_no_kvnsp",    "0.6B w/o KVNSP",              "5",   "Qwen3-0.6B",  "span",        "CPT", "D1.12"),
+    RunSpec("kv_llm_qwen3_0.6b_no_noise",    "0.6B w/o NoiseEmb",           "0",   "Qwen3-0.6B",  "full+noise=none","CPT","D1.13"),
+    RunSpec("kv_llm_qwen3_0.6b_plain_clm",   "0.6B Plain CLM",              "1",   "Qwen3-0.6B",  "plain_clm",   "CPT", "D1.6/D1.14"),
+    RunSpec("kv_llm_qwen3_0.6b_no_span",     "0.6B w/o SpanCorr",           "3",   "Qwen3-0.6B",  "nsp",         "CPT", "D1.11"),
+    RunSpec("kv_llm_qwen3_1.7b_full",        "1.7B full (DDP)",             "6,7", "Qwen3-1.7B",  "full",        "CPT", "D1.15"),
+    RunSpec("kv_llm_qwen3_1.7b_plain_clm",   "1.7B Plain CLM",              "2",   "Qwen3-1.7B",  "plain_clm",   "CPT", "D2.2"),
+    RunSpec("kv_llm_qwen3_1.7b_no_noise",    "1.7B w/o NoiseEmb",           "?",   "Qwen3-1.7B",  "full+noise=none","CPT","D2.1"),
+    RunSpec("kv_llm_qwen3_0.6b_random_mask", "0.6B random-mask CPT",        "?",   "Qwen3-0.6B",  "random-mask", "CPT", "D1.4 (SC2-A)"),
+
+    # ============================== Sanity Check =============================
+    RunSpec("sc0_macbert_m0",                "SC0-M0 MC-BERT entity mask",  "?",   "MacBERT 0.11B","MLM",        "Sanity", "D1.2"),
+    RunSpec("sc0_macbert_m1",                "SC0-M1 KV-MLM (k-v boundary)","?",   "MacBERT 0.11B","MLM",        "Sanity", "D1.2"),
+    RunSpec("sc0_macbert_m2",                "SC0-M2 KV-MLM + OCR sampling","?",   "MacBERT 0.11B","MLM",        "Sanity", "D1.2"),
+    RunSpec("sc1_macbert_prefix_lm",         "SC1 MacBERT prefix-LM",       "?",   "MacBERT 0.11B","prefix-LM",  "Sanity", "D1.3"),
+    RunSpec("sc3b_qwen3_0.6b_instruct_kvnsp_sft","SC3-B Qwen3-Instruct+KVNSP SFT","?","Qwen3-0.6B-Instruct","SFT","Sanity","D1.8"),
+    RunSpec("sc3c_qwen3_0.6b_instruct_base", "SC3-C Qwen3-Instruct base eval","?", "Qwen3-0.6B-Instruct","eval","Sanity","D1.9"),
+
+    # ============================== Fine-tune ================================
+    # 0.6B variants × 3 benchmarks (D2.3 + D2.4)
+    *[RunSpec(f"ft_kv_llm_06b_full_{b}",       f"FT 0.6B full / {b}",          "?", "Qwen3-0.6B", "FT (CPT-init)", "FT", "D2.3") for b in BENCHMARKS],
+    *[RunSpec(f"ft_kv_llm_06b_no_kvnsp_{b}",   f"FT 0.6B w/o KVNSP / {b}",     "?", "Qwen3-0.6B", "FT (CPT-init)", "FT", "D2.3") for b in BENCHMARKS],
+    *[RunSpec(f"ft_kv_llm_06b_no_noise_{b}",   f"FT 0.6B w/o NoiseEmb / {b}",  "?", "Qwen3-0.6B", "FT (CPT-init)", "FT", "D2.3") for b in BENCHMARKS],
+    *[RunSpec(f"ft_kv_llm_06b_no_span_{b}",    f"FT 0.6B w/o SpanCorr / {b}",  "?", "Qwen3-0.6B", "FT (CPT-init)", "FT", "D2.3") for b in BENCHMARKS],
+    *[RunSpec(f"ft_kv_llm_06b_plain_clm_{b}",  f"FT 0.6B Plain CLM / {b}",     "?", "Qwen3-0.6B", "FT (CPT-init)", "FT", "D2.4") for b in BENCHMARKS],
+    # 1.7B variants × 3 benchmarks (D2.5 + D3.1 + D3.2)
+    *[RunSpec(f"ft_kv_llm_17b_full_{b}",       f"FT 1.7B full / {b}",          "?", "Qwen3-1.7B", "FT (CPT-init)", "FT", "D2.5") for b in BENCHMARKS],
+    *[RunSpec(f"ft_kv_llm_17b_no_noise_{b}",   f"FT 1.7B w/o NoiseEmb / {b}",  "?", "Qwen3-1.7B", "FT (CPT-init)", "FT", "D3.1") for b in BENCHMARKS],
+    *[RunSpec(f"ft_kv_llm_17b_plain_clm_{b}",  f"FT 1.7B Plain CLM / {b}",     "?", "Qwen3-1.7B", "FT (CPT-init)", "FT", "D3.2") for b in BENCHMARKS],
+    # Qwen3 base + LoRA × 3 benchmarks (D2.6) — only for 0.6B/1.7B
+    *[RunSpec(f"ft_qwen3_06b_base_lora_{b}",   f"FT Qwen3-0.6B base+LoRA / {b}","?","Qwen3-0.6B-base","LoRA",      "FT", "D2.6") for b in BENCHMARKS],
+    *[RunSpec(f"ft_qwen3_17b_base_lora_{b}",   f"FT Qwen3-1.7B base+LoRA / {b}","?","Qwen3-1.7B-base","LoRA",      "FT", "D2.6") for b in BENCHMARKS],
+    # KV-BERT + 2 public benchmarks (D2.10)
+    *[RunSpec(f"ft_kv_bert_{b}",               f"FT KV-BERT / {b}",            "?", "MacBERT 0.11B","seq-labeling","FT", "D2.10") for b in BENCHMARKS],
+    # Encoder baselines × 2 public benchmarks (D2.11)
+    *[RunSpec(f"ft_macbert_{b}",               f"FT MacBERT / {b}",            "?", "MacBERT",     "seq-labeling","FT", "D2.11") for b in ["cmeie","cblue"]],
+    *[RunSpec(f"ft_roberta_wwm_{b}",           f"FT RoBERTa-wwm / {b}",        "?", "RoBERTa-wwm-ext","seq-labeling","FT","D2.11") for b in ["cmeie","cblue"]],
+    *[RunSpec(f"ft_bert_base_chinese_{b}",     f"FT BERT-Base-Chinese / {b}",  "?", "BERT-Base-Chinese","seq-labeling","FT","D2.11") for b in ["cmeie","cblue"]],
+    *[RunSpec(f"ft_mbert_{b}",                 f"FT MBERT / {b}",              "?", "MBERT","seq-labeling","FT","D2.11") for b in ["cmeie","cblue"]],
+    # MC-BERT style baseline (D2.12)
+    *[RunSpec(f"ft_mc_bert_{b}",               f"FT MC-BERT-style / {b}",      "?", "MacBERT (MC-BERT init)","seq-labeling","FT","D2.12") for b in ["cmeie","cblue"]],
+
+    # ============================== LLM Baselines (eval-only) ================
+    # Qwen3 0.6B/1.7B/8B Instruct few-shot + CoT × 3 benchmarks (D2.7)
+    *[RunSpec(f"eval_qwen3_{sz}_instruct_fewshot_{b}", f"few-shot Qwen3-{sz}-Instruct / {b}", "?", f"Qwen3-{sz}-Instruct", "few-shot+CoT", "Eval", "D2.7") for sz in ["0.6b","1.7b","8b"] for b in BENCHMARKS],
+    # HuatuoGPT-II 7B FT + few-shot × 3 benchmarks (D2.8)
+    *[RunSpec(f"ft_huatuogpt_ii_7b_{b}",       f"FT HuatuoGPT-II-7B / {b}",    "?", "HuatuoGPT-II-7B","FT",         "FT",   "D2.8") for b in BENCHMARKS],
+    *[RunSpec(f"eval_huatuogpt_ii_7b_fewshot_{b}", f"few-shot HuatuoGPT-II-7B / {b}", "?", "HuatuoGPT-II-7B","few-shot","Eval","D2.8") for b in BENCHMARKS],
+    # DISC-MedLLM 13B FT + few-shot (D2.9)
+    *[RunSpec(f"ft_disc_medllm_13b_{b}",       f"FT DISC-MedLLM-13B / {b}",    "?", "DISC-MedLLM-13B","FT",         "FT",   "D2.9") for b in BENCHMARKS],
+    *[RunSpec(f"eval_disc_medllm_13b_fewshot_{b}", f"few-shot DISC-MedLLM-13B / {b}", "?", "DISC-MedLLM-13B","few-shot","Eval","D2.9") for b in BENCHMARKS],
+
+    # ============================== Already-published baselines ==============
+    *[RunSpec(f"eval_llm_tkie_{b}",            f"LLM-TKIE replication / {b}",  "?", "Qwen3-Instruct","JSON-prompt","Eval","D3.11") for b in BENCHMARKS],
+    RunSpec("ft_strata_lora_qwen3_8b",         "Strata-style LoRA-Qwen3-8B / MedStruct-S","?","Qwen3-8B","LoRA-FT","FT","D3.12"),
+
+    # ============================== Robustness ===============================
+    # Cross-OCR 双架构 × 4 OCR × 3 transfer setting (D3.3/3.4/3.5)
+    RunSpec("xocr_setting1_no_recal",          "Cross-OCR Setting 1 (no recal)","?","双架构","eval","Robustness","D3.3"),
+    RunSpec("xocr_setting2_bin_recal",         "Cross-OCR Setting 2 (bin recal)","?","双架构","eval","Robustness","D3.4"),
+    RunSpec("xocr_setting3_noise_ft",          "Cross-OCR Setting 3 (noise embed FT)","?","双架构","FT","Robustness","D3.5"),
+    RunSpec("synthetic_noise_graceful_degradation","Synthetic Noise Graceful Degradation","?","双架构+baseline","eval","Robustness","D3.6"),
+
+    # ============================== Mechanism ================================
+    RunSpec("probing_layerwise",               "Probing classifier × 3 tasks × 双架构 × 各层","?","双架构","probing","Mechanism","D3.7"),
+    RunSpec("cka_similarity",                  "CKA representation similarity","?","双架构","analysis","Mechanism","D3.8"),
+    RunSpec("kv_llm_attention",                "KV-LLM Attention 分析",         "?","Qwen3-0.6B","analysis","Mechanism","D3.9"),
+    RunSpec("kv_llm_ig",                       "KV-LLM Integrated Gradients",  "?","Qwen3-0.6B","analysis","Mechanism","D3.10"),
+
+    # ============================== Efficiency / Error analysis ==============
+    RunSpec("efficiency_benchmark",            "Efficiency: latency / throughput / VRAM / FLOPs","?","all models","benchmark","Efficiency","D3.15"),
+    RunSpec("error_analysis_stratified",       "Error analysis 按 OCR 置信度 / 文档类型分层","?","KV-LLM/KV-BERT","analysis","Analysis","D3.13"),
+    RunSpec("case_study_5_to_10_examples",     "Case study 5-10 错例 + 跨模型对照","?","all models","analysis","Analysis","D3.14"),
+
+    # ============================== Infrastructure (one-off) =================
+    RunSpec("mmocr_re_ocr_358_pages",          "MMOCR 重 OCR 358 页测试集",     "?","MMOCR","data prep","Infra","D1.1"),
+    RunSpec("synthetic_noise_benchmark_build", "合成噪声 benchmark 构造",      "?","-",      "data prep","Infra","D1.16"),
+    RunSpec("statistical_tests_bootstrap",     "结果汇总 + paired bootstrap on F1","?","-","stats","Analysis","D3.17"),
 ]
 
 
@@ -242,50 +315,63 @@ def render_html(specs: list[RunSpec], statuses: list[RunStatus], gpus: list[dict
     for spec, st in zip(specs, statuses):
         by_state[st.state].append((spec, st))
 
+    # category ordering — show CPT first since it's the heaviest, infra last
+    CATEGORY_ORDER = ["CPT", "Sanity", "FT", "Eval", "Robustness", "Mechanism", "Efficiency", "Analysis", "Infra"]
+
     def table_for(state: str) -> str:
         rows = by_state.get(state, [])
         if not rows:
             return f"<p class=empty>无</p>"
-        header = "<tr><th>任务</th><th>GPU</th><th>schedule</th><th>阶段</th><th>step / total</th><th>%</th><th>speed</th><th>elapsed / ETA</th><th>loss</th><th>grad</th><th>epoch</th><th>log size</th><th>last update</th></tr>"
-        out = ["<table class=runs>", header]
+        # group by category, preserving CATALOGUE order within each
+        by_cat: dict[str, list[tuple[RunSpec, RunStatus]]] = {}
         for spec, st in rows:
-            phase_lbl = ""
-            if st.phase:
-                p = "Span" if st.phase == "span" else "KV-NSP"
-                phase_lbl = f"{p} (round {st.round_idx})"
-            done_phases = len(st.last_phase_completed)
-            phase_extra = f" · finished {done_phases} phase(s)" if done_phases else ""
-            phase_html = (phase_lbl or "—") + phase_extra
-            step_total = f"{st.step}/{st.total}" if st.total else "—"
-            pct = f"{st.pct:.1f}%" if st.total else "—"
-            el_eta = f"{st.elapsed or '—'} / {st.eta or '—'}"
-            update = "—"
-            if st.last_modified_ago_s >= 0:
-                if st.last_modified_ago_s < 60:
-                    update = f"{int(st.last_modified_ago_s)}s ago"
-                elif st.last_modified_ago_s < 3600:
-                    update = f"{int(st.last_modified_ago_s / 60)}min ago"
-                else:
-                    update = f"{st.last_modified_ago_s / 3600:.1f}h ago"
-            out.append(
-                "<tr>"
-                f"<td><div class=runname>{escape(spec.label)}</div><div class=hint>{escape(spec.name)}</div></td>"
-                f"<td>{escape(spec.gpu)}</td>"
-                f"<td><span class=sched>{escape(spec.schedule)}</span></td>"
-                f"<td>{escape(phase_html)}</td>"
-                f"<td>{escape(step_total)}</td>"
-                f"<td>{escape(pct)}</td>"
-                f"<td>{escape(st.speed)}</td>"
-                f"<td>{escape(el_eta)}</td>"
-                f"<td>{_fmt(st.loss, 3)}</td>"
-                f"<td>{_fmt(st.grad_norm, 1)}</td>"
-                f"<td>{_fmt(st.epoch, 3)}</td>"
-                f"<td>{st.log_size_kb:.0f} KB</td>"
-                f"<td>{escape(update)}</td>"
-                "</tr>"
-            )
-            if state == "failed" and st.error_snippet:
-                out.append(f"<tr class=err><td colspan=13><pre>{escape(st.error_snippet)}</pre></td></tr>")
+            by_cat.setdefault(spec.category, []).append((spec, st))
+        header = "<tr><th>plan</th><th>任务</th><th>GPU</th><th>schedule</th><th>阶段</th><th>step / total</th><th>%</th><th>speed</th><th>elapsed / ETA</th><th>loss</th><th>grad</th><th>epoch</th><th>log size</th><th>last update</th></tr>"
+        out = ["<table class=runs>", header]
+        for cat in CATEGORY_ORDER:
+            if cat not in by_cat:
+                continue
+            cat_rows = by_cat[cat]
+            out.append(f"<tr class=cat><td colspan=14><span class=catname>{escape(cat)}</span> <span class=cathint>· {len(cat_rows)} 个</span></td></tr>")
+            for spec, st in cat_rows:
+                phase_lbl = ""
+                if st.phase:
+                    p = "Span" if st.phase == "span" else "KV-NSP"
+                    phase_lbl = f"{p} (round {st.round_idx})"
+                done_phases = len(st.last_phase_completed)
+                phase_extra = f" · finished {done_phases} phase(s)" if done_phases else ""
+                phase_html = (phase_lbl or "—") + phase_extra
+                step_total = f"{st.step}/{st.total}" if st.total else "—"
+                pct = f"{st.pct:.1f}%" if st.total else "—"
+                el_eta = f"{st.elapsed or '—'} / {st.eta or '—'}"
+                update = "—"
+                if st.last_modified_ago_s >= 0:
+                    if st.last_modified_ago_s < 60:
+                        update = f"{int(st.last_modified_ago_s)}s ago"
+                    elif st.last_modified_ago_s < 3600:
+                        update = f"{int(st.last_modified_ago_s / 60)}min ago"
+                    else:
+                        update = f"{st.last_modified_ago_s / 3600:.1f}h ago"
+                out.append(
+                    "<tr>"
+                    f"<td><span class=planid>{escape(spec.plan_id or '—')}</span></td>"
+                    f"<td><div class=runname>{escape(spec.label)}</div><div class=hint>{escape(spec.name)}</div></td>"
+                    f"<td>{escape(spec.gpu)}</td>"
+                    f"<td><span class=sched>{escape(spec.schedule)}</span></td>"
+                    f"<td>{escape(phase_html)}</td>"
+                    f"<td>{escape(step_total)}</td>"
+                    f"<td>{escape(pct)}</td>"
+                    f"<td>{escape(st.speed)}</td>"
+                    f"<td>{escape(el_eta)}</td>"
+                    f"<td>{_fmt(st.loss, 3)}</td>"
+                    f"<td>{_fmt(st.grad_norm, 1)}</td>"
+                    f"<td>{_fmt(st.epoch, 3)}</td>"
+                    f"<td>{st.log_size_kb:.0f} KB</td>"
+                    f"<td>{escape(update)}</td>"
+                    "</tr>"
+                )
+                if state == "failed" and st.error_snippet:
+                    out.append(f"<tr class=err><td colspan=14><pre>{escape(st.error_snippet)}</pre></td></tr>")
         out.append("</table>")
         return "\n".join(out)
 
@@ -314,9 +400,13 @@ def render_html(specs: list[RunSpec], statuses: list[RunStatus], gpus: list[dict
   table.runs th, table.runs td {{ padding: 6px 10px; border-bottom: 1px solid #f1f3f4; text-align: left; }}
   table.runs th {{ background: #f8f9fa; font-weight: 600; color: #5f6368; font-size: 11px; }}
   table.runs tr.err pre {{ background: #fff4f4; color: #b3261e; padding: 8px; margin: 0; font-size: 11px; white-space: pre-wrap; }}
+  table.runs tr.cat td {{ background: #eef3fb; color: #1a4baf; padding: 4px 10px; font-size: 11px; }}
+  .catname {{ font-weight: 700; letter-spacing: 0.5px; }}
+  .cathint {{ color: #5f6368; }}
   .runname {{ font-weight: 600; }}
   .hint {{ color: #80868b; font-size: 10px; font-family: ui-monospace, monospace; }}
   .sched {{ font-family: ui-monospace, monospace; background: #eef; color: #1a4baf; padding: 1px 5px; border-radius: 4px; }}
+  .planid {{ font-family: ui-monospace, monospace; color: #5f6368; font-size: 11px; }}
   .badge {{ display:inline-block; color:#fff; padding: 2px 10px; border-radius: 999px; font-size: 11px; margin-right: 4px; }}
   table.gpus {{ font-size: 12px; }}
   table.gpus td, table.gpus th {{ padding: 3px 10px; }}
