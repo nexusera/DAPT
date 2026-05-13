@@ -118,6 +118,7 @@ def training_args(args: argparse.Namespace, output_dir: Path, epochs: float) -> 
         remove_unused_columns=False,
         report_to="none",
         dataloader_num_workers=0,
+        save_safetensors=False,
     )
 
 
@@ -171,7 +172,7 @@ def run_span_phase(args, model, tokenizer, noise_processor, *, plain_clm: bool =
         data_collator=collator,
     )
     trainer.train()
-    model.save_pretrained(out / "final_model")
+    model.save_pretrained(out / "final_model", safe_serialization=False)
     tokenizer.save_pretrained(out / "final_model")
 
 
@@ -202,7 +203,7 @@ def run_nsp_phase(args, model, tokenizer, noise_processor, *, round_idx: int | N
         data_collator=collator,
     )
     trainer.train()
-    model.save_pretrained(out / "final_model")
+    model.save_pretrained(out / "final_model", safe_serialization=False)
     tokenizer.save_pretrained(out / "final_model")
 
 
@@ -227,7 +228,7 @@ def main() -> None:
             print(f"[KV-LLM] round {round_idx}/{args.num_rounds}: KV-NSP")
             run_nsp_phase(args, model, tokenizer, noise_processor, round_idx=round_idx)
         final_dir = Path(args.output_dir) / "final_model"
-        model.save_pretrained(final_dir)
+        model.save_pretrained(final_dir, safe_serialization=False)
         tokenizer.save_pretrained(final_dir)
         print(f"[OK] KV-LLM full CPT saved to {final_dir}")
 
