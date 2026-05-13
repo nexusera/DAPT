@@ -119,6 +119,9 @@ def training_args(args: argparse.Namespace, output_dir: Path, epochs: float) -> 
         report_to="none",
         dataloader_num_workers=0,
         save_safetensors=False,
+        gradient_checkpointing_kwargs={"use_reentrant": False} if args.gradient_checkpointing else None,
+        ddp_find_unused_parameters=False,
+        ddp_static_graph=True,
     )
 
 
