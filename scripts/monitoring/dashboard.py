@@ -305,7 +305,6 @@ def render_html(specs: list[RunSpec], statuses: list[RunStatus], gpus: list[dict
     return f"""<!doctype html>
 <html lang="zh-cn"><meta charset="utf-8">
 <title>KV-LLM CPT dashboard</title>
-<meta http-equiv="refresh" content="5">
 <style>
   body {{ font-family: -apple-system, "PingFang SC", Helvetica, sans-serif; margin: 16px; color: #202124; background: #fafafa; }}
   h1 {{ margin: 0 0 6px; font-size: 18px; }}
@@ -322,9 +321,16 @@ def render_html(specs: list[RunSpec], statuses: list[RunStatus], gpus: list[dict
   table.gpus {{ font-size: 12px; }}
   table.gpus td, table.gpus th {{ padding: 3px 10px; }}
   p.empty {{ color: #80868b; font-size: 12px; }}
+  button.refresh {{ background: #1a73e8; color: white; border: 0; border-radius: 4px; padding: 8px 16px; font-size: 13px; cursor: pointer; margin-left: 8px; }}
+  button.refresh:hover {{ background: #1557b0; }}
+  button.refresh:active {{ transform: translateY(1px); }}
+  .top {{ display: flex; align-items: center; gap: 8px; }}
 </style>
 <body>
-<h1>KV-LLM CPT runs · <span class=summary>refreshed {now}</span></h1>
+<div class=top>
+  <h1>KV-LLM CPT runs · <span class=summary>last load {now}</span></h1>
+  <button class=refresh onclick="location.reload()">🔄 刷新</button>
+</div>
 <div>{badges}</div>
 
 <h2>运行中 (running)</h2>
@@ -345,7 +351,14 @@ def render_html(specs: list[RunSpec], statuses: list[RunStatus], gpus: list[dict
 <h2>GPU 状态</h2>
 <table class=gpus><tr><th>GPU</th><th>显存</th><th>占用</th><th>util</th></tr>{gpu_rows}</table>
 
-<p class=summary>auto-refresh every 5s · server time {now}</p>
+<p class=summary>手动刷新模式 · 服务器时间 {now} · 按 R 键或点击上方按钮重新加载</p>
+<script>
+  document.addEventListener('keydown', function(e) {{
+    if ((e.key === 'r' || e.key === 'R') && !e.ctrlKey && !e.metaKey && !e.altKey) {{
+      location.reload();
+    }}
+  }});
+</script>
 </body></html>
 """
 
