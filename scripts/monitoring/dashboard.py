@@ -117,10 +117,8 @@ CATALOGUE: list[RunSpec] = [
     RunSpec("ft_strata_lora_qwen3_8b",         "Strata-style LoRA-Qwen3-8B / MedStruct-S","?","Qwen3-8B","LoRA-FT","FT","D3.12"),
 
     # ============================== Robustness ===============================
-    # Cross-OCR 双架构 × 4 OCR × 3 transfer setting (D3.3/3.4/3.5)
-    RunSpec("xocr_setting1_no_recal",          "Cross-OCR Setting 1 (no recal)","?","双架构","eval","Robustness","D3.3"),
-    RunSpec("xocr_setting2_bin_recal",         "Cross-OCR Setting 2 (bin recal)","?","双架构","eval","Robustness","D3.4"),
-    RunSpec("xocr_setting3_noise_ft",          "Cross-OCR Setting 3 (noise embed FT)","?","双架构","FT","Robustness","D3.5"),
+    # Cross-OCR transfer (D3.3/3.4/3.5) — DEFERRED pending OCR-source decision;
+    # re-add to catalogue once we commit to which OCR engines to compare.
     RunSpec("synthetic_noise_graceful_degradation","Synthetic Noise Graceful Degradation","?","双架构+baseline","eval","Robustness","D3.6"),
 
     # ============================== Mechanism ================================
@@ -135,7 +133,7 @@ CATALOGUE: list[RunSpec] = [
     RunSpec("case_study_5_to_10_examples",     "Case study 5-10 错例 + 跨模型对照","?","all models","analysis","Analysis","D3.14"),
 
     # ============================== Infrastructure (one-off) =================
-    RunSpec("mmocr_re_ocr_358_pages",          "MMOCR 重 OCR 358 页测试集",     "?","MMOCR","data prep","Infra","D1.1"),
+    # D1.1 MMOCR re-OCR — DEFERRED pending OCR-source decision.
     RunSpec("synthetic_noise_benchmark_build", "合成噪声 benchmark 构造",      "?","-",      "data prep","Infra","D1.16"),
     RunSpec("statistical_tests_bootstrap",     "结果汇总 + paired bootstrap on F1","?","-","stats","Analysis","D3.17"),
 ]
