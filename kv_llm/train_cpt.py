@@ -120,7 +120,10 @@ def training_args(args: argparse.Namespace, output_dir: Path, epochs: float) -> 
         dataloader_num_workers=0,
         save_safetensors=False,
         gradient_checkpointing_kwargs={"use_reentrant": False} if args.gradient_checkpointing else None,
-        ddp_find_unused_parameters=False,
+        # KvLlm wrapper holds nsp_head + lm_head; during span phase nsp_head
+        # is unused and during nsp phase lm_head is unused, so DDP must scan
+        # for unused params per-step.
+        ddp_find_unused_parameters=True,
     )
 
 
