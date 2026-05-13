@@ -154,10 +154,11 @@ class KvLlmForCausalPreTraining(nn.Module):
             **kwargs,
         )
 
-    def save_pretrained(self, output_dir: str | Path) -> None:
+    def save_pretrained(self, output_dir: str | Path, **kwargs: Any) -> None:
         output = Path(output_dir)
         output.mkdir(parents=True, exist_ok=True)
-        self.base_model.save_pretrained(output)
+        kwargs.setdefault("safe_serialization", False)
+        self.base_model.save_pretrained(output, **kwargs)
         torch.save(self.nsp_head.state_dict(), output / "kv_llm_nsp_head.pt")
         if self.noise_module is not None:
             torch.save(self.noise_module.state_dict(), output / "kv_llm_noise_module.pt")
