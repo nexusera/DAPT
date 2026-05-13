@@ -99,7 +99,12 @@ def build_model(args: argparse.Namespace, tokenizer) -> KvLlmForCausalPreTrainin
     model.base_model.resize_token_embeddings(len(tokenizer))
     model.base_model.config.pad_token_id = tokenizer.pad_token_id
     if args.gradient_checkpointing:
-        model.base_model.gradient_checkpointing_enable()
+        # Non-reentrant variant — required when combined with DDP +
+        # find_unused_parameters=True (reentrant checkpointing marks vars
+        # ready twice via the autograd graph re-entry).
+        model.base_model.gradient_checkpointing_enable(
+            gradient_checkpointing_kwargs={"use_reentrant": False}
+        )
     return model
 
 
