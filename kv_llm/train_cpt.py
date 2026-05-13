@@ -172,8 +172,9 @@ def run_span_phase(args, model, tokenizer, noise_processor, *, plain_clm: bool =
         data_collator=collator,
     )
     trainer.train()
-    model.save_pretrained(out / "final_model", safe_serialization=False)
-    tokenizer.save_pretrained(out / "final_model")
+    if trainer.is_world_process_zero():
+        model.save_pretrained(out / "final_model", safe_serialization=False)
+        tokenizer.save_pretrained(out / "final_model")
 
 
 def run_nsp_phase(args, model, tokenizer, noise_processor, *, round_idx: int | None = None) -> None:
@@ -203,14 +204,20 @@ def run_nsp_phase(args, model, tokenizer, noise_processor, *, round_idx: int | N
         data_collator=collator,
     )
     trainer.train()
-    model.save_pretrained(out / "final_model", safe_serialization=False)
-    tokenizer.save_pretrained(out / "final_model")
+    if trainer.is_world_process_zero():
+        model.save_pretrained(out / "final_model", safe_serialization=False)
+        tokenizer.save_pretrained(out / "final_model")
+
+
+def _is_main_process() -> bool:
+    return int(os.environ.get("LOCAL_RANK", "0")) == 0 and int(os.environ.get("RANK", "0")) == 0
 
 
 def main() -> None:
     args = parse_args()
     set_seed(args.seed)
-    Path(args.output_dir).mkdir(parents=True, exist_ok=True)
+    if _is_main_process():
+        Path(args.output_dir).mkdir(parents=True, exist_ok=True)
     tokenizer = prepare_tokenizer(args)
     model = build_model(args, tokenizer)
     noise_processor = load_noise_processor(args.noise_bins_json)
@@ -227,10 +234,11 @@ def main() -> None:
             run_span_phase(args, model, tokenizer, noise_processor, round_idx=round_idx)
             print(f"[KV-LLM] round {round_idx}/{args.num_rounds}: KV-NSP")
             run_nsp_phase(args, model, tokenizer, noise_processor, round_idx=round_idx)
-        final_dir = Path(args.output_dir) / "final_model"
-        model.save_pretrained(final_dir, safe_serialization=False)
-        tokenizer.save_pretrained(final_dir)
-        print(f"[OK] KV-LLM full CPT saved to {final_dir}")
+        if _is_main_process():
+            final_dir = Path(args.output_dir) / "final_model"
+            model.save_pretrained(final_dir, safe_serialization=False)
+            tokenizer.save_pretrained(final_dir)
+            print(f"[OK] KV-LLM full CPT saved to {final_dir}")
 
 
 if __name__ == "__main__":
