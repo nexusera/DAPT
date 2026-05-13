@@ -48,16 +48,14 @@ def evaluate_task2_qa(predictions, ground_truth, query_set, normalize=True, tau_
                     alias_to_canonical[alias] = canonical
 
     for p_sample, g_sample in zip(predictions, ground_truth):
-        # Determine current query set based on report title
+        # Determine current query set based on report title for alias normalization.
         title = p_sample.get('report_title') or g_sample.get('report_title', 'General Record')
-        current_fields = queries_by_category.get(title, set())
-        
-        # If title not found, fallback to all canonical keys or empty? 
-        if not current_fields:
-            # Maybe it's a category not in query set, or generic
-            pass
+        _ = queries_by_category.get(title, set())
 
-        # Build normalized dictionaries from dict-style pairs
+        # Build normalized dictionaries from dict-style pairs.
+        # Task 2 metrics should be computed over the QA slots actually present in the
+        # converted GT for this sample group. Using the full schema here turns a large
+        # number of unqueried fields into empty-empty matches and inflates global QA.
         p_pairs = p_sample.get('pairs', [])
         g_pairs = g_sample.get('pairs', [])
         
@@ -71,7 +69,7 @@ def evaluate_task2_qa(predictions, ground_truth, query_set, normalize=True, tau_
             can_k = alias_to_canonical.get(p["key"], p["key"])
             g_dict[can_k] = p["value"]
 
-        # Query-set driven loop
+        current_fields = list(g_dict.keys())
         for field in current_fields:
             pv = p_dict.get(field, "")
             gv = g_dict.get(field, "") # Default to empty if not in GT

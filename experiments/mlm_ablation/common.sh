@@ -31,7 +31,7 @@ DATASET_PATH="${DATASET_PATH:-${DAPT_ROOT}/workspace/processed_dataset}"
 NSP_DATA_DIR="${NSP_DATA_DIR:-${DAPT_ROOT}/data/pseudo_kv_labels_filtered.json}"
 TOKENIZER_PATH="${TOKENIZER_PATH:-${DAPT_ROOT}/my-medical-tokenizer}"
 NOISE_BINS="${NOISE_BINS:-${DAPT_ROOT}/workspace/noise_bins.json}"
-QUERY_SET="${QUERY_SET:-${DAPT_ROOT}/dapt_eval_package/MedStruct-S-Benchmark-feature-configurable-metrics/keys_merged_1027_cleaned.json}"
+QUERY_SET="${QUERY_SET:-${DAPT_ROOT}/dapt_eval_package/MedStruct-S-master/keys_merged_1027_cleaned.json}"
 REAL_TRAIN_JSON="${REAL_TRAIN_JSON:-${DAPT_ROOT}/biaozhu_with_ocr_noise_prepared/real_train_with_ocr.json}"
 REAL_TEST_JSON="${REAL_TEST_JSON:-${DAPT_ROOT}/biaozhu_with_ocr_noise_prepared/real_test_with_ocr.json}"
 

@@ -49,7 +49,7 @@ export OUT_ROOT=/data/ocean/DAPT/ablation/tokenizer
 
 # 可选：如果你不想用默认值，可覆盖这些路径
 export NOISE_BINS=/data/ocean/DAPT/workspace/noise_bins.json
-export QUERY_SET=/data/ocean/DAPT/dapt_eval_package/MedStruct-S-Benchmark-feature-configurable-metrics/keys_merged_1027_cleaned.json
+export QUERY_SET=/data/ocean/DAPT/dapt_eval_package/MedStruct-S-master/keys_merged_1027_cleaned.json
 export REAL_TRAIN_JSON=/data/ocean/DAPT/biaozhu_with_ocr_noise_prepared/real_train_with_ocr.json
 export REAL_TEST_JSON=/data/ocean/DAPT/biaozhu_with_ocr_noise_prepared/real_test_with_ocr.json
 
@@ -133,10 +133,10 @@ python /data/ocean/DAPT/scripts/align_for_scorer_span.py \
 
 5) Task1 评测：
 ```bash
-python /data/ocean/DAPT/dapt_eval_package/MedStruct-S-Benchmark-feature-configurable-metrics/scorer.py \
+python /data/ocean/DAPT/scripts/run_medstruct_scorer.py \
   --pred_file /data/ocean/DAPT/runs/${v}_task13_aligned_preds.jsonl \
   --gt_file /data/ocean/DAPT/runs/${v}_task13_aligned_gt.jsonl \
-  --schema_file ${QUERY_SET} \
+  --query_set ${QUERY_SET} \
   --task_type task1 \
   --overlap_threshold -1 \
   --output_file /data/ocean/DAPT/runs/${v}_report_task1.json
@@ -144,10 +144,10 @@ python /data/ocean/DAPT/dapt_eval_package/MedStruct-S-Benchmark-feature-configur
 
 6) Task3 评测：
 ```bash
-python /data/ocean/DAPT/dapt_eval_package/MedStruct-S-Benchmark-feature-configurable-metrics/scorer.py \
+python /data/ocean/DAPT/scripts/run_medstruct_scorer.py \
   --pred_file /data/ocean/DAPT/runs/${v}_task13_aligned_preds.jsonl \
   --gt_file /data/ocean/DAPT/runs/${v}_task13_aligned_gt.jsonl \
-  --schema_file ${QUERY_SET} \
+  --query_set ${QUERY_SET} \
   --task_type task3 \
   --overlap_threshold -1 \
   --output_file /data/ocean/DAPT/runs/${v}_report_task3.json
@@ -198,16 +198,15 @@ python /data/ocean/DAPT/dapt_eval_package/pre_struct/ebqa/aggregate_qa_preds_to_
 
 5) 对齐（task2 scorer 需要 pred/gt 行数一致）：
 ```bash
-python /data/ocean/DAPT/dapt_eval_package/MedStruct-S-Benchmark-feature-configurable-metrics/preprocess_ebqa_real_h200.py \
+python /data/ocean/DAPT/dapt_eval_package/MedStruct-S-master/utils/preprocess_ebqa_real_h200.py \
   --gt_file ${REAL_TEST_JSON} \
   --pred_file /data/ocean/DAPT/runs/ebqa_${v}_doc_preds.jsonl \
   --output_dir /data/ocean/DAPT/runs/ebqa_${v}_aligned
 ```
 
-6) Task2 评测（注意要先 cd 到 MedStruct-S-master）：
+6) Task2 评测：
 ```bash
-cd /data/ocean/DAPT/dapt_eval_package/MedStruct-S-master
-python scorer.py \
+python /data/ocean/DAPT/scripts/run_medstruct_scorer.py \
   --pred_file /data/ocean/DAPT/runs/ebqa_${v}_aligned/aligned_ebqa_${v}_doc_preds.jsonl \
   --gt_file /data/ocean/DAPT/runs/ebqa_${v}_aligned/gt_ebqa_aligned.jsonl \
   --query_set ${QUERY_SET} \

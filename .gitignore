@@ -18,3 +18,13 @@ env/
 
 # OS
 .DS_Store
+
+# Caches & outputs
+.cache/
+outputs/
+model/
+wandb/
+*.log
+
+# Local notebooks
+*.ipynb

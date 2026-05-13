@@ -27,7 +27,7 @@ $py "$(pwd)/make_subset_ocr_json.py" \
   --output "$quick_ocr_json" \
   --n "$QUICK_OCR_DOCS"
 
-$py "${PWD}/../../export_ocr_texts.py" \
+$py "${PWD}/../../scripts/data/export_ocr_texts.py" \
   --ocr_json "$quick_ocr_json" \
   --output "$quick_ocr_text"
 

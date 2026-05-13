@@ -856,7 +856,12 @@ def main():
             
     logger.info(f"Standardized predictions saved to {output_file}")
     logger.info(f"Standardized GT saved to {gt_file}")
-    logger.info(f"Ready for Unified Scorer: python dapt_eval_package/MedStruct-S-Benchmark-feature-configurable-metrics/scorer.py --pred_file {output_file} --gt_file {gt_file}")
+    logger.info(
+        "Ready for MedStruct-S scorer: "
+        f"python scripts/run_medstruct_scorer.py --pred_file {output_file} "
+        f"--gt_file {gt_file} --query_set dapt_eval_package/MedStruct-S-master/keys_merged_1027_cleaned.json "
+        "--overlap_threshold -1"
+    )
             
     logger.info(f"Standardized predictions saved to {output_file} (Ready for Unified Scorer)")
     

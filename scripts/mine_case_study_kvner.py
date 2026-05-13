@@ -3,7 +3,7 @@
 
 """Mine real case studies for KV-NER from model outputs.
 
-This script is designed for the workflow in DAPT/pipeline_xiaorong.md:
+This script is designed for the workflow in DAPT/docs/pipelines/pipeline_xiaorong.md:
 - Run inference via compare_models.py to generate standardized JSONL:
   *_preds.jsonl and *_gt.jsonl
 - Optionally keep the original test_data JSON/JSONL that contains richer OCR payload

@@ -3,7 +3,7 @@
 """
 scripts/verify_code_review_fixes.py
 ------------------------------------
-验证 CODE_REVIEW.zh.md 中 C1、C2、H1–H14 所有修复是否按预期生效。
+验证 docs/reviews/CODE_REVIEW.zh.md 中 C1、C2、H1–H14 所有修复是否按预期生效。
 
 分两类检查：
   [STATIC]  — 不需要 PyTorch / transformers，读取源码做 AST / 文本匹配。

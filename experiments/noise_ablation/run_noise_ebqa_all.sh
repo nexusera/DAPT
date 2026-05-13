@@ -13,7 +13,7 @@ require_file "${DAPT_ROOT}/dapt_eval_package/pre_struct/ebqa/convert_ebqa.py"
 require_file "${DAPT_ROOT}/dapt_eval_package/pre_struct/ebqa/train_ebqa.py"
 require_file "${DAPT_ROOT}/dapt_eval_package/pre_struct/ebqa/predict_ebqa.py"
 require_file "${DAPT_ROOT}/dapt_eval_package/pre_struct/ebqa/aggregate_qa_preds_to_doc.py"
-require_file "${DAPT_ROOT}/dapt_eval_package/MedStruct-S-Benchmark-feature-configurable-metrics/preprocess_ebqa_real_h200.py"
+require_file "${DAPT_ROOT}/dapt_eval_package/MedStruct-S-master/utils/preprocess_ebqa_real_h200.py"
 require_file "${DAPT_ROOT}/dapt_eval_package/MedStruct-S-master/scorer.py"
 
 run_variant_ebqa() {
@@ -104,7 +104,7 @@ run_variant_ebqa() {
     echo "[${variant}] [SKIP] EBQA align (found: $ebqa_aligned_pred)"
   else
     run_logged "$variant" "ebqa-align" "${LOG_DIR}/${variant}_ebqa_align.gpu${gpu}.log" \
-      "$PYTHON_BIN" "${DAPT_ROOT}/dapt_eval_package/MedStruct-S-Benchmark-feature-configurable-metrics/preprocess_ebqa_real_h200.py" \
+      "$PYTHON_BIN" "${DAPT_ROOT}/dapt_eval_package/MedStruct-S-master/utils/preprocess_ebqa_real_h200.py" \
       --gt_file "$REAL_TEST_JSON" \
       --pred_file "$ebqa_pred_doc" \
       --output_dir "$ebqa_aligned_dir"
@@ -115,8 +115,8 @@ run_variant_ebqa() {
   if [[ "$RESUME" == "1" && -s "$report_t2" ]]; then
     echo "[${variant}] [SKIP] Task2 score (found: $report_t2)"
   else
-    run_logged_in_dir "${DAPT_ROOT}/dapt_eval_package/MedStruct-S-master" "$variant" "task2-score" "${LOG_DIR}/${variant}_task2_score.gpu${gpu}.log" \
-      "$PYTHON_BIN" scorer.py \
+    run_logged "$variant" "task2-score" "${LOG_DIR}/${variant}_task2_score.gpu${gpu}.log" \
+      "$PYTHON_BIN" "${DAPT_ROOT}/scripts/run_medstruct_scorer.py" \
       --pred_file "$ebqa_aligned_pred" \
       --gt_file "$ebqa_aligned_gt" \
       --query_set "$QUERY_SET" \

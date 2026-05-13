@@ -3,8 +3,8 @@
 """
 检查预训练语料是否包含下游评测测试集文本（数据泄露粗检）。
 
-依据 pipeline_new.md（预训练语料如 train.txt / train_chunked.txt）与
-pipeline_xiaorong.md / pipeline_task2_xiaorong.md（测试集 real_test_with_ocr.json）。
+依据 docs/pipelines/pipeline_new.md（预训练语料如 train.txt / train_chunked.txt）与
+docs/pipelines/pipeline_xiaorong.md / docs/pipelines/pipeline_task2_xiaorong.md（测试集 real_test_with_ocr.json）。
 
 方法（默认）：
   从测试集每条样本抽取若干长度 >= min_match_len 的文本窗口作为“指纹”，

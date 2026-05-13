@@ -1,0 +1,23 @@
+{
+  "model_name_or_path": "Qwen/Qwen3-0.6B",
+  "schedule": "full",
+  "noise_mode": "bucket",
+  "noise_alpha": 1.0,
+  "max_length": 512,
+  "nsp_max_length": 256,
+  "mask_prob": 0.15,
+  "max_spans": 24,
+  "num_rounds": 3,
+  "span_epochs_per_round": 1.0,
+  "nsp_epochs_per_round": 3.0,
+  "nsp_negative_prob": 0.5,
+  "nsp_reverse_negative_ratio": 1.0,
+  "nsp_random_negative_ratio": 1.0,
+  "nsp_max_easy_retries": 10,
+  "learning_rate": 2e-5,
+  "per_device_train_batch_size": 1,
+  "gradient_accumulation_steps": 8,
+  "bf16": true,
+  "gradient_checkpointing": true,
+  "seed": 42
+}

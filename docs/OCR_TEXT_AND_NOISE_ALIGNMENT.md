@@ -42,7 +42,7 @@
 - 仅当必须兼容历史行为时使用 **`--no_sync_ocr_text`**（**不推荐**）。
 - 修复循环内 **`image_field` 未初始化** 可能导致的 `NameError`。
 
-说明见同目录 **`fetch_and_merge_baidu_ocr.md`**。
+说明见 **`guides/fetch_and_merge_baidu_ocr.md`**。
 
 ### 2.2 工程化推理（Serving）
 
@@ -132,7 +132,7 @@ python fetch_and_merge_baidu_ocr.py \
   --limit 100 --offset 0 --sleep 0.5
 ```
 
-（`--anno_json` / 根目录请与你们 `fetch_and_merge_baidu_ocr.md` 中一致。）
+（`--anno_json` / 根目录请与你们 `docs/guides/fetch_and_merge_baidu_ocr.md` 中一致。）
 
 然后：
 
@@ -157,7 +157,7 @@ python3 scripts/validate_ner_spans_after_ocr_sync.py \
 
 ### 步骤 C：全量重建数据（试跑通过後）
 
-1. 按 `fetch_and_merge_baidu_ocr.md` 对 **train / test** 全量跑 **`fetch_and_merge_baidu_ocr.py`**（**不要** `--no_sync_ocr_text`）。
+1. 按 `docs/guides/fetch_and_merge_baidu_ocr.md` 对 **train / test** 全量跑 **`fetch_and_merge_baidu_ocr.py`**（**不要** `--no_sync_ocr_text`）。
 2. 对输出跑 **`compute_noise_from_ocr.py`**，建议输出到新目录，例如：
 
    `biaozhu_with_ocr_noise_prepared_v2/`
@@ -192,7 +192,7 @@ python3 scripts/validate_ner_spans_after_ocr_sync.py \
 | 文件 | 作用 |
 |------|------|
 | `fetch_and_merge_baidu_ocr.py` | 图片 → 百度 OCR → 写入 `ocr_raw`，**默认同步 `ocr_text`** |
-| `fetch_and_merge_baidu_ocr.md` | 原始三组命令与说明（已补充本节所述问题） |
+| `docs/guides/fetch_and_merge_baidu_ocr.md` | 原始三组命令与说明（已补充本节所述问题） |
 | `compute_noise_from_ocr.py` | 从 `ocr_raw` 写 `noise_values` / `noise_values_per_word` |
 | `scripts/inspect_kvbert_data_formats.py` | 单条探查 + **`--audit`** |
 | `scripts/validate_ner_spans_after_ocr_sync.py` | 同步后 **实体与 `ocr_text` 校验** |

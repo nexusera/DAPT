@@ -3,7 +3,7 @@ set -euo pipefail
 
 # One-click downstream finetune + eval for 4 tokenizer variants (T1~T4)
 # - Task1/3: KV-NER pipeline (train_with_noise.py -> compare_models.py -> align_for_scorer_span.py -> scorer.py)
-# - Task2: EBQA pipeline (convert_ebqa.py -> train_ebqa.py -> predict_ebqa.py -> aggregate -> preprocess_ebqa_real_h200.py -> MedStruct-S-master/scorer.py)
+# - Task2: EBQA pipeline (convert_ebqa.py -> train_ebqa.py -> predict_ebqa.py -> aggregate -> preprocess_ebqa_real_h200.py -> official MedStruct-S scorer)
 
 DAPT_ROOT="${DAPT_ROOT:-/data/ocean/DAPT}"
 OUT_ROOT="${OUT_ROOT:-/data/ocean/DAPT/ablation/tokenizer}"
@@ -19,7 +19,7 @@ GPU_LIST="${GPU_LIST:-0,1,4,5}"
 RESUME="${RESUME:-1}"
 
 NOISE_BINS="${NOISE_BINS:-${DAPT_ROOT}/workspace/noise_bins.json}"
-QUERY_SET="${QUERY_SET:-${DAPT_ROOT}/dapt_eval_package/MedStruct-S-Benchmark-feature-configurable-metrics/keys_merged_1027_cleaned.json}"
+QUERY_SET="${QUERY_SET:-${DAPT_ROOT}/dapt_eval_package/MedStruct-S-master/keys_merged_1027_cleaned.json}"
 
 REAL_TRAIN_JSON="${REAL_TRAIN_JSON:-${DAPT_ROOT}/biaozhu_with_ocr_noise_prepared/real_train_with_ocr.json}"
 REAL_TEST_JSON="${REAL_TEST_JSON:-${DAPT_ROOT}/biaozhu_with_ocr_noise_prepared/real_test_with_ocr.json}"
@@ -174,10 +174,10 @@ PY
   if [[ "$RESUME" == "1" && -s "$REPORT_T1" ]]; then
     echo "[${v}] [SKIP] Task1 score (found: $REPORT_T1)"
   else
-    python "${DAPT_ROOT}/dapt_eval_package/MedStruct-S-Benchmark-feature-configurable-metrics/scorer.py" \
+    python "${DAPT_ROOT}/scripts/run_medstruct_scorer.py" \
       --pred_file "$ALIGNED_PREDS" \
       --gt_file "$ALIGNED_GT" \
-      --schema_file "$QUERY_SET" \
+      --query_set "$QUERY_SET" \
       --task_type task1 \
       --overlap_threshold -1 \
       --output_file "$REPORT_T1" \
@@ -187,10 +187,10 @@ PY
   if [[ "$RESUME" == "1" && -s "$REPORT_T3" ]]; then
     echo "[${v}] [SKIP] Task3 score (found: $REPORT_T3)"
   else
-    python "${DAPT_ROOT}/dapt_eval_package/MedStruct-S-Benchmark-feature-configurable-metrics/scorer.py" \
+    python "${DAPT_ROOT}/scripts/run_medstruct_scorer.py" \
       --pred_file "$ALIGNED_PREDS" \
       --gt_file "$ALIGNED_GT" \
-      --schema_file "$QUERY_SET" \
+      --query_set "$QUERY_SET" \
       --task_type task3 \
       --overlap_threshold -1 \
       --output_file "$REPORT_T3" \
@@ -280,7 +280,7 @@ PY
   if [[ "$RESUME" == "1" && -s "${EBQA_ALIGNED_DIR}/gt_ebqa_aligned.jsonl" ]]; then
     echo "[${v}] [SKIP] EBQA align (found: ${EBQA_ALIGNED_DIR}/gt_ebqa_aligned.jsonl)"
   else
-    python "${DAPT_ROOT}/dapt_eval_package/MedStruct-S-Benchmark-feature-configurable-metrics/preprocess_ebqa_real_h200.py" \
+    python "${DAPT_ROOT}/dapt_eval_package/MedStruct-S-master/utils/preprocess_ebqa_real_h200.py" \
       --gt_file "$REAL_TEST_JSON" \
       --pred_file "$EBQA_PREDS_DOC" \
       --output_dir "$EBQA_ALIGNED_DIR" \
@@ -298,15 +298,13 @@ PY
   if [[ "$RESUME" == "1" && -s "$REPORT_T2" ]]; then
     echo "[${v}] [SKIP] Task2 score (found: $REPORT_T2)"
   else
-    pushd "${DAPT_ROOT}/dapt_eval_package/MedStruct-S-master" >/dev/null
-    python scorer.py \
+    python "${DAPT_ROOT}/scripts/run_medstruct_scorer.py" \
       --pred_file "$ALIGNED_PRED_T2" \
       --gt_file "$ALIGNED_GT_T2" \
       --query_set "$QUERY_SET" \
       --task_type task2 \
       --output_file "$REPORT_T2" \
       2>&1 | tee "${LOG_DIR}/${v}_task2_score.gpu${gpu}.log"
-    popd >/dev/null
   fi
 
   echo "============================================================"

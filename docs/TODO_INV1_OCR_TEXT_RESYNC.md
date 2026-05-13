@@ -93,4 +93,4 @@ python3 scripts/ci_check_ocr_alignment.py \
 
 - `docs/OCR_TEXT_AND_NOISE_ALIGNMENT.md`（根因与已有修复说明）
 - `scripts/ci_check_ocr_alignment.py`（5 条对齐不变量检查，支持 `--inv1_only`）
-- `fetch_and_merge_baidu_ocr.md`（ocr_text 同步流程详细说明）
+- `docs/guides/fetch_and_merge_baidu_ocr.md`（ocr_text 同步流程详细说明）

@@ -17,7 +17,7 @@ require_file "$REAL_TRAIN_JSON"
 require_file "${DAPT_ROOT}/dapt_eval_package/pre_struct/kv_ner/train_with_noise.py"
 require_file "${DAPT_ROOT}/dapt_eval_package/pre_struct/kv_ner/compare_models.py"
 require_file "${DAPT_ROOT}/scripts/align_for_scorer_span.py"
-require_file "${DAPT_ROOT}/dapt_eval_package/MedStruct-S-Benchmark-feature-configurable-metrics/scorer.py"
+require_file "${DAPT_ROOT}/scripts/run_medstruct_scorer.py"
 
 check_pred_nonempty() {
   local variant="$1"
@@ -232,10 +232,10 @@ run_variant_kvner() {
     echo "[${variant}] [SKIP] Task1 score (found: $report_t1)"
   else
     run_logged "$variant" "task1-score" "${LOG_DIR}/${variant}_task1_score.gpu${gpu}.log" \
-      "$PYTHON_BIN" "${DAPT_ROOT}/dapt_eval_package/MedStruct-S-Benchmark-feature-configurable-metrics/scorer.py" \
+      "$PYTHON_BIN" "${DAPT_ROOT}/scripts/run_medstruct_scorer.py" \
       --pred_file "$aligned_pred" \
       --gt_file "$aligned_gt" \
-      --schema_file "$QUERY_SET" \
+      --query_set "$QUERY_SET" \
       --task_type task1 \
       --overlap_threshold -1 \
       --output_file "$report_t1"
@@ -246,10 +246,10 @@ run_variant_kvner() {
     echo "[${variant}] [SKIP] Task3 score (found: $report_t3)"
   else
     run_logged "$variant" "task3-score" "${LOG_DIR}/${variant}_task3_score.gpu${gpu}.log" \
-      "$PYTHON_BIN" "${DAPT_ROOT}/dapt_eval_package/MedStruct-S-Benchmark-feature-configurable-metrics/scorer.py" \
+      "$PYTHON_BIN" "${DAPT_ROOT}/scripts/run_medstruct_scorer.py" \
       --pred_file "$aligned_pred" \
       --gt_file "$aligned_gt" \
-      --schema_file "$QUERY_SET" \
+      --query_set "$QUERY_SET" \
       --task_type task3 \
       --overlap_threshold -1 \
       --output_file "$report_t3"

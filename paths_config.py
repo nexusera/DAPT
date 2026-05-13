@@ -36,6 +36,10 @@ DATASET_PATH = os.environ.get(
     "DAPT_DATASET",
     os.path.join(WORKSPACE_DIR, "processed_dataset"),
 )
+TRAIN_CHUNKED_PATH = os.environ.get(
+    "DAPT_TRAIN_CHUNKED",
+    os.path.join(WORKSPACE_DIR, "train_chunked.txt"),
+)
 NOISE_BINS_JSON = os.environ.get(
     "DAPT_NOISE_BINS",
     os.path.join(WORKSPACE_DIR, "noise_bins.json"),
@@ -43,6 +47,14 @@ NOISE_BINS_JSON = os.environ.get(
 NSP_DATA_PATH = os.environ.get(
     "DAPT_NSP_DATA",
     os.path.join(DAPT_ROOT, "data/pseudo_kv_labels_filtered.json"),
+)
+KEYS_FILE = os.environ.get(
+    "DAPT_KEYS_FILE",
+    os.path.join(DAPT_ROOT, "biaozhu_keys_only_min5.txt"),
+)
+JIEBA_VOCAB_PATH = os.environ.get(
+    "DAPT_JIEBA_VOCAB",
+    os.path.join(DAPT_ROOT, "vocab_for_jieba.txt"),
 )
 
 # ── 输出目录（各脚本可通过 --output_dir 覆盖） ────────────────────────────────

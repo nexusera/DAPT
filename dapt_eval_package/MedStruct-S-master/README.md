@@ -167,6 +167,54 @@ The output JSON contains a `summary` (metadata) section and a `tasks` (task-spec
 - **Task 3: KV Pairing**
   Evaluates how accurately the model pairs keys with their correct values. Output splits into Exact-Exact, Exact-Approx, and Approx-Approx matches.
 
+## 💡 Prompt Templates
+
+### Task 1: Key Discovery
+```python
+TASK1_INSTRUCTION_EN = """Goal:Extract all structured Keys (键名) from the medical text.
+Output Format. Output the keys directly, one key per line.NO bullet points, NO numbering, NO extra symbols.Just the raw key text.
+Constraints:1. Extraction Only: Only extract keys, do not include values. 2. Exact Match: Keep the original OCR text, do not normalize it. 3. Null Handling: If no keys are found, output "NULL".
+Few-Shot Examples
+Input:<text> 姓名：张伟  性别：男 科室：心内科  床号：12 </text>
+Output:姓名 性别 科室 床号
+Input: <text> 患者今日感觉良好。</text>
+Output:NULL  """
+TASK1_INPUT_FORMAT_EN = """### Current Task
+Input:<text>{text}</text>
+Output: """
+```
+
+### Task 2: Key-Conditioned Question Answering (QA)
+```python
+TASK2_INSTRUCTION_EN = """### Goal: Extract the exact answer to the medical question based ONLY on the provided OCR text.
+### Output Format:Output the answer content directly. Strictly NO full sentences. Just the entity or value.
+### Constraints:1. Evidence Based: Answer solely based on <text>. Do not hallucinate. 2. Exact Match: Extract the text exactly as it appears. 3. Null Handling: If not found, output "NULL".
+### Examples
+Input: <text>查体：体温36.5℃，血压130/85mmHg。双肺呼吸音清，未闻及干湿啰音。</text>
+<question>患者的血压是多少？</question>
+Output: 130/85mmHg
+Input: <text> 患者自述无既往过敏史。 </text>
+<question> 患者的血糖水平是多少？ </question>
+Output: NULL """
+TASK2_INPUT_FORMAT_EN = """### Current Task
+Input:<text>{text}</text>
+<question>{question}</question>
+Output:"""
+```
+
+### Task 3: Key-Value Pair Extraction
+```python
+TASK3_INSTRUCTION_EN = """### Goal: Extract all Key-Value Pairs from the medical OCR text into a structured JSON List.
+### Output Format: Strictly NO Markdown. Just raw JSON. Output strictly a valid JSON List of Objects:[{"key": "KeyName", "value": "ValueContent"}, ...]
+### Constraints
+1. Exact Match: DO NOT normalize or rename keys. \n 2. Duplicate Keys: Output duplicates as separate objects.\n 3. Empty Values: Use "NULL". \n 4. Missing Fields: Do not output absent fields.
+### Examples Input: <text> 姓名：王强  年龄：30岁 科室： 诊断：急性肠胃炎 诊断：脱水</text>
+Output:[{"key": "姓名", "value": "王强"}, {"key": "年龄", "value": "30岁"}, {"key": "科室", "value": "NULL"}, {"key": "诊断", "value": "急性肠胃炎"}, {"key": "诊断", "value": "脱水"}]
+Input:<text>患者今日精神可，无不适。</text>
+Output:[] """
+TASK3_INPUT_FORMAT_EN = """### Current Task. Input: <text> {text} </text> Output: """
+```
+
 ## 📄 Citation
 
 If you find this benchmark or code useful in your research, please cite the following (to be updated):

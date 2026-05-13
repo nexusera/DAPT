@@ -85,12 +85,20 @@ def get_fingerprint(text, length=100):
     clean = re.sub(r'[^\w\u4e00-\u9fa5]', '', text)
     return clean[:length]
 
+def normalize_question_text(text):
+    if not text:
+        return ""
+    return re.sub(r'[\s\W_]+', '', str(text))
+
 def extract_key_from_question(question, title, query_set, q_to_key_map):
     q_str = question.strip()
+    normalized_q = normalize_question_text(q_str)
     
     # 1. Exact map
     if q_str in q_to_key_map:
         return q_to_key_map[q_str]
+    if normalized_q in q_to_key_map:
+        return q_to_key_map[normalized_q]
         
     # 2. Query-Set-based containment
     if title and query_set:
@@ -105,7 +113,18 @@ def extract_key_from_question(question, title, query_set, q_to_key_map):
         candidates.sort(key=len, reverse=True)
         
         for k in candidates:
-            if k in q_str:
+            if k in q_str or normalize_question_text(k) in normalized_q:
+                return k
+
+    # 2.5 Fallback: search all titles if the title-specific lookup failed
+    if query_set:
+        global_candidates = []
+        for fields in query_set.values():
+            if isinstance(fields, dict):
+                global_candidates.extend(fields.keys())
+        global_candidates = sorted(set(global_candidates), key=len, reverse=True)
+        for k in global_candidates:
+            if k in q_str or normalize_question_text(k) in normalized_q:
                 return k
 
     # 3. Heuristic fallback (Matches specific Chinese patterns in questions)
@@ -136,6 +155,44 @@ def clean_cot(text):
     # Remove prefixes (Matches "Answer:" in Chinese)
     text = text.replace("答案：", "").replace("### 答案：", "").strip()
     return text
+
+def normalize_gold_value(value):
+    """Normalize GT payloads from native Python objects into a string form."""
+    if value is None:
+        return ""
+    if isinstance(value, str):
+        return value.strip()
+    if isinstance(value, (dict, list)):
+        return json.dumps(value, ensure_ascii=False)
+    return str(value).strip()
+
+def normalize_pair_value(value):
+    if value is None:
+        return ""
+    if isinstance(value, str):
+        return value
+    if isinstance(value, (dict, list)):
+        return json.dumps(value, ensure_ascii=False)
+    return str(value)
+
+def append_pairs_from_payload(payload, out_pairs):
+    """Append standardized {key, value} pairs from parsed JSON payloads."""
+    if isinstance(payload, list):
+        for item in payload:
+            append_pairs_from_payload(item, out_pairs)
+    elif isinstance(payload, dict):
+        explicit_key = payload.get('key') if 'key' in payload else payload.get('k')
+        has_explicit_value = 'value' in payload or 'v' in payload
+        explicit_value = payload.get('value') if 'value' in payload else payload.get('v')
+        if explicit_key is not None and has_explicit_value:
+            out_pairs.append({"key": str(explicit_key), "value": normalize_pair_value(explicit_value)})
+            return
+        if len(payload) == 1:
+            for k, v in payload.items():
+                out_pairs.append({"key": str(k), "value": normalize_pair_value(v)})
+            return
+        for k, v in payload.items():
+            out_pairs.append({"key": str(k), "value": normalize_pair_value(v)})
 
 def main():
     parser = argparse.ArgumentParser(description="Convert LLM Outputs and recover Titles for Scoring")
@@ -177,13 +234,16 @@ def main():
 
     # 2. Load Query Set for Task 3 Key discovery
     query_set = {}
+    q_to_key = {}
     if args.query_set_file and os.path.exists(args.query_set_file):
         print(f"Loading Query Set from {args.query_set_file}...")
         query_set = load_query_set(args.query_set_file)
         for title, key_map in query_set.items():
             for key, info in key_map.items():
                 q = info.get("Q", "").strip()
-                if q: q_to_key[q] = key
+                if q:
+                    q_to_key[q] = key
+                    q_to_key[normalize_question_text(q)] = key
 
     # Pre-compute GT tokens for fuzzy matching to avoid O(N*M) re-tokenization
     print("Pre-computing GT tokens for fuzzy matching...")
@@ -219,10 +279,10 @@ def main():
             except: continue
             
             full_input = item.get('input', "")
-            raw_pred = item.get('prediction', "")
+            raw_pred = normalize_gold_value(item.get('prediction', ""))
             
             # Extract "clean" report text for matching
-            if args.task_type == 'task3' and "问题：" in full_input:
+            if args.task_type == 'task2' and "问题：" in full_input:
                 parts = full_input.split("问题：")
                 report_part = parts[0].replace("文档内容：", "").strip()
                 q_part = parts[1].strip().split('\n')[0].strip()
@@ -306,36 +366,42 @@ def main():
                     match_rec = candidates[0]
 
             title = "Unknown"
-            # Priority 1: Use existing report_title from LLM output if available
             existing_title = item.get('report_title')
-            if existing_title and existing_title not in ["Unknown", "", None]:
-                 title = existing_title
-            elif match_rec:
-                 title = match_rec['report_title']
+            matched_title = match_rec['report_title'] if match_rec else None
+            query_titles = set(query_set.keys()) if isinstance(query_set, dict) else set()
+            if matched_title:
+                # Prefer the title recovered from gt_master unless the existing one is already
+                # a valid query-set title. This keeps QA scoring aligned to scorer taxonomy.
+                if existing_title in query_titles:
+                    title = existing_title
+                else:
+                    title = matched_title
+            elif existing_title and existing_title not in ["Unknown", "", None]:
+                title = existing_title
             
             # --- Per Task Logic ---
-            if args.task_type == 'task3':
+            if args.task_type == 'task2':
                 raw_pred = clean_cot(raw_pred)
 
                 # Pass title and query_set to help with key extraction from SFT-style questions
-                key = extract_key_from_question(q_part, title, query_set if args.task_type == 'task3' else {}, q_to_key)
+                key = extract_key_from_question(q_part, title, query_set if args.task_type == 'task2' else {}, q_to_key)
                 
                 # Use FP as key for aggregation
                 task_key = fp if fp else str(idx) # Fallback to index if empty text
                 task3_buffer[task_key]['raw_text'] = report_part
                 task3_buffer[task_key]['title'] = title
                 task3_buffer[task_key]['pred_pairs'].append({"key": key, "value": raw_pred.strip()})
-                # For GT, Task 3 usually uses the 'gold' field provided in the file
-                task3_buffer[task_key]['gt_pairs'].append({"key": key, "value": item.get('gold', "").strip()})
+                # For QA-style tasks, gold is the answer text for the current question.
+                task3_buffer[task_key]['gt_pairs'].append({"key": key, "value": normalize_gold_value(item.get('gold', "")).strip()})
                 
             else:
-                # Task 1 & 2
+                # Task 1 & 3
                 pred_pairs = []
                 if args.task_type == 'task1':
                     raw_pred = clean_cot(raw_pred)
                     for k in raw_pred.split('\n'):
                         if k.strip(): pred_pairs.append({"key": k.strip(), "value": ""})
-                else: # Task 2
+                else: # Task 3
                     try:
                         # Handle potential CoT artifacts even if grep didn't find them (defensive)
                         if "</think>" in raw_pred:
@@ -343,23 +409,10 @@ def main():
                         
                         # Use Robust Parse
                         d = robust_parse_json_list(raw_pred)
-                        
-                        if isinstance(d, list):
-                            for p in d:
-                                if isinstance(p, dict):
-                                    # Support common variations: {"key":..., "value":...} or {"k":..., "v":...} or {k:v}
-                                    k = p.get('key') or p.get('k')
-                                    v = p.get('value') or p.get('v')
-                                    if k is not None:
-                                        pred_pairs.append({"key": k, "value": v if v is not None else ""})
-                                    elif len(p) == 1: # Single key-value dict like {"Gender": "Male"}
-                                        for k, v in p.items():
-                                            pred_pairs.append({"key": k, "value": v})
-                        elif isinstance(d, dict):
-                             for k, v in d.items(): pred_pairs.append({"key": k, "value": v})
+                        append_pairs_from_payload(d, pred_pairs)
 
                     except Exception as e:
-                        print(f"DEBUG: Task 2 Parse Error: {e} | Content: {raw_pred[:100]}...")
+                        print(f"DEBUG: Task 3 Parse Error: {e} | Content: {raw_pred[:100]}...")
                         pass
                 
                 if not pred_pairs and raw_pred and len(raw_pred) > 20:
@@ -368,11 +421,11 @@ def main():
                 final_preds.append({
                     "report_title": title,
                     "text": report_part,
-                    "pred_pairs": pred_pairs
+                    "pairs": pred_pairs  # scorer reads "pairs", not "pred_pairs"
                 })
                 
                 # GT from 'gold' field
-                gold_val = item.get('gold', "")
+                gold_val = normalize_gold_value(item.get('gold', ""))
                 gt_pairs = []
                 # ... (keep parsing logic for fallback) ...
                 if args.task_type == 'task1':
@@ -382,18 +435,7 @@ def main():
                     try:
                         clean_gold = gold_val.replace("```json", "").replace("```", "").strip()
                         d = robust_parse_json_list(clean_gold)
-                        if isinstance(d, list):
-                            for p in d:
-                                if isinstance(p, dict):
-                                    k = p.get('key') or p.get('k')
-                                    v = p.get('value') or p.get('v')
-                                    if k is not None:
-                                        gt_pairs.append({"key": k, "value": v if v is not None else ""})
-                                elif len(p) == 1:
-                                    for k, v in p.items():
-                                        gt_pairs.append({"key": k, "value": v})
-                        elif isinstance(d, dict):
-                            for k, v in d.items(): gt_pairs.append({"key": k, "value": v})
+                        append_pairs_from_payload(d, gt_pairs)
                     except Exception as e:
                         pass
 
@@ -402,7 +444,12 @@ def main():
                 final_spans = {}
                 used_master_spans = False
                 
-                if match_rec and 'full_gt' in match_rec and '_kv_spans' in match_rec['full_gt']:
+                if (
+                    match_rec
+                    and 'full_gt' in match_rec
+                    and '_kv_spans' in match_rec['full_gt']
+                    and match_rec['full_gt']['_kv_spans']
+                ):
                      # Map keys from _kv_spans
                      # Structure: Key -> {value, start, end}
                      # We need: Key -> {text, start, end}
@@ -419,24 +466,32 @@ def main():
                 if not used_master_spans:
                     final_spans = {p['key']: {"text": p['value'], "start": 0, "end": 0} for p in gt_pairs}
 
+                gt_pairs_out = [
+                    {"key": k, "value": v.get("text", ""),
+                     "key_span": [v["start"], v["end"]] if v.get("end", 0) > 0 else None}
+                    for k, v in final_spans.items()
+                ]
                 final_gts.append({
                     "report_title": title,
                     "text": report_part,
-                    "spans": final_spans
+                    "pairs": gt_pairs_out
                 })
 
-    # Finalize Task 3
-    if args.task_type == 'task3':
+    # Finalize QA task aggregation
+    if args.task_type == 'task2':
         for key_fp, data in task3_buffer.items():
             final_preds.append({
                 "report_title": data['title'],
                 "text": data['raw_text'],
-                "pred_pairs": data['pred_pairs']
+                "pairs": data['pred_pairs']  # scorer reads "pairs", not "pred_pairs"
             })
             final_gts.append({
                 "report_title": data['title'],
                 "text": data['raw_text'],
-                "spans": {p['key']: {"text": p['value'], "start": 0, "end": 0} for p in data['gt_pairs']}
+                "pairs": [
+                    {"key": p['key'], "value": p['value'], "key_span": None}
+                    for p in data['gt_pairs']
+                ]
             })
 
     # Save

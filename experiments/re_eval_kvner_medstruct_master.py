@@ -107,7 +107,7 @@ def build_specs(dapt_root: Path) -> list[ModelEvalSpec]:
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Batch re-evaluate KV-NER Task1/3 results with MedStruct-S-master scorer."
+        description="Batch re-evaluate KV-NER Task1/3 results with the official MedStruct-S scorer."
     )
     parser.add_argument("--dapt_root", type=Path, default=default_dapt_root())
     parser.add_argument(
@@ -120,7 +120,7 @@ def parse_args() -> argparse.Namespace:
         "--query_set",
         type=Path,
         default=None,
-        help="Query set JSON for MedStruct-S-master scorer",
+        help="Query set JSON for the official MedStruct-S scorer",
     )
     parser.add_argument(
         "--output_dir",
@@ -141,7 +141,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--overlap_threshold",
         type=float,
-        default=0.0,
+        default=-1.0,
         help="Passed to MedStruct-S-master scorer",
     )
     parser.add_argument(
@@ -288,7 +288,7 @@ def write_summary_files(
                 or (
                     args.dapt_root
                     / "dapt_eval_package"
-                    / "MedStruct-S-Benchmark-feature-configurable-metrics"
+                    / "MedStruct-S-master"
                     / "keys_merged_1027_cleaned.json"
                 )
             ),
@@ -305,7 +305,7 @@ def write_summary_files(
     )
 
     lines = [
-        "# MedStruct-S-master KV-NER Re-eval Summary",
+        "# Official MedStruct-S KV-NER Re-eval Summary",
         "",
         f"- Generated at: {summary_json['summary']['generated_at']}",
         f"- DAPT root: `{summary_json['summary']['dapt_root']}`",
@@ -352,7 +352,7 @@ def main() -> int:
         else (
             args.dapt_root
             / "dapt_eval_package"
-            / "MedStruct-S-Benchmark-feature-configurable-metrics"
+            / "MedStruct-S-master"
             / "keys_merged_1027_cleaned.json"
         ).resolve()
     )

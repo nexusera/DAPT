@@ -16,7 +16,7 @@
 - 数据构建是“两阶段”（消融更干净）：
 	- Stage A：用共享 Jieba 词典对语料分词，产出 `words` 数据集（一次性）
 	- Stage B：对同一份 `words`，分别用不同 tokenizer 生成各自的 `input_ids/word_ids`
-- 数据集构建：按 `pipeline_new.md` 的规则分两路构建再合并
+- 数据集构建：按 `docs/pipelines/pipeline_new.md` 的规则分两路构建再合并
 	- 非 OCR 路：可 `shuffle_split`
 	- OCR 路：必须 `--no_shuffle_split`，并在构建后调用 `add_noise_features.py` 写入 `noise_values`，再用 `verify_noise_alignment.py` 抽检
 	- 最终用 `merge_datasets.py` 合并为训练用的 merged dataset
@@ -92,7 +92,7 @@ bash 20_make_jieba_dicts.sh 2>&1 | tee -a "$(pwd)/jieba_build.log"
 
 ### 4) 为每个 tokenizer 重建数据集（non-OCR + OCR(with noise) -> merged）
 
-该步骤会严格遵守 `pipeline_new.md` 的数据规则：
+该步骤会严格遵守 `docs/pipelines/pipeline_new.md` 的数据规则：
 
 - non-OCR 路：允许 shuffle
 - OCR 路：强制不 shuffle，构建后写入 `noise_values`，并运行 `verify_noise_alignment.py` 抽检
@@ -285,4 +285,3 @@ python /data/ocean/DAPT/train_dapt_macbert_staged.py \
 ## 我到底应该看哪个文件？
 
 - 只看这一份即可：`/data/ocean/DAPT/experiments/tokenizer_ablation/README.md`
-

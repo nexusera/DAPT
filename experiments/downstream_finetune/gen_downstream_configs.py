@@ -39,7 +39,7 @@ def main() -> None:
     p.add_argument(
         "--query_set",
         type=str,
-        default="/data/ocean/DAPT/dapt_eval_package/MedStruct-S-Benchmark-feature-configurable-metrics/keys_merged_1027_cleaned.json",
+        default="/data/ocean/DAPT/dapt_eval_package/MedStruct-S-master/keys_merged_1027_cleaned.json",
         help="Query set / schema JSON used by downstream evaluation",
     )
     p.add_argument(

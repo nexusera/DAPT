@@ -9,6 +9,14 @@ KV 预训练合集（KV-MLM & KV-NSP）
 - 数据检查与重分词辅助脚本
 - 原 pipeline 核心数据处理脚本已整体迁移自 `stage_1/`。
 
+文档索引
+--------
+- 文档总入口：`docs/README.md`
+- 流程说明：`docs/pipelines/`
+- 指南汇总：`docs/guides/`
+- 实验计划：`docs/plans/`
+- 评审与备忘：`docs/reviews/`、`docs/notes/`
+
 目录结构
 --------
 - `train_dapt_kvmlm.py`：KV-aware MLM 训练（保留 `word_ids`，不扩词表）。
@@ -16,8 +24,8 @@ KV 预训练合集（KV-MLM & KV-NSP）
 - `train_dapt_base_mlm_resize.py`：仅扩展 position embeddings，再做通用 MLM。
 - `apply_added_vocab.py`：向基座模型注入新增词并 `resize_token_embeddings`。
 - `check_processed_dataset.py`：检查 `processed_dataset` 中是否含 `input_ids` / `word_ids`。
-- `retokenize_processed_dataset_with_wordids.py`：用当前 tokenizer 重新分词，生成带 `word_ids` 的数据。
-- `extract_and_dedup_json_v2.py`：源数据清洗与去重，生成 `train.txt` 和按源拆分文件。
+- `scripts/data/retokenize_processed_dataset_with_wordids.py`：用当前 tokenizer 重新分词，生成带 `word_ids` 的数据。
+- `scripts/data/extract_and_dedup_json_v2.py`：源数据清洗与去重，生成 `train.txt` 和按源拆分文件。
 - `train_ocr_clean.py`：OCR 词表挖掘（WordPiece）与噪声清洗，生成 `medical_vocab_ocr_only/vocab.txt`。
 - `final_merge_v9_regex_split_slim.py`：精简版 tokenizer 合并（去掉外部词典），产出 `my-medical-tokenizer/`。
 - `generate_jieba_vocab.py`：从 OCR 词表生成 `vocab_for_jieba.txt` 供 Jieba 使用。
@@ -38,7 +46,7 @@ KV 预训练合集（KV-MLM & KV-NSP）
 0) 源数据清洗与去重（生成 `train.txt` + 按源拆分）
 ```bash
 cd /data/ocean/BERT_DAPT
-python kv_pretrain/extract_and_dedup_json_v2.py
+python scripts/data/extract_and_dedup_json_v2.py
 ```
 
 1) OCR 词表挖掘与清洗（`medical_vocab_ocr_only/vocab.txt`）
@@ -99,7 +107,7 @@ python kv_pretrain/check_processed_dataset.py /data/ocean/bpe_workspace/processe
 ```
 确认 `input_ids` 与 `word_ids` 均存在。若 `word_ids` 不匹配当前 tokenizer：
 ```bash
-python kv_pretrain/retokenize_processed_dataset_with_wordids.py
+python scripts/data/retokenize_processed_dataset_with_wordids.py
 ```
 
 2) （可选）扩展词表并保存 checkpoint  
@@ -140,4 +148,3 @@ FAQ 快记
 - 训练爆显存：降低 `per_device_train_batch_size` 或开启梯度累积；KV-MLM 可适当减小 `MAX_SEQ_LEN`（脚本内常量）。
 - bfloat16 不可用：在对应脚本中改用 `fp16` 或关闭混合精度。
 - 评估下游：KV-NSP 直接用 Trainer evaluate；KV-MLM 完成后请按各自下游微调配置（见 `pre_struct/kv_ner/*.json`）进行评估。
-

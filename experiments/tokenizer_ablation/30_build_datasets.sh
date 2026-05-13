@@ -31,7 +31,7 @@ ensure_ocr_text () {
   fi
   echo "[ocr] OCR_TEXT_FILE 不存在，尝试从 OCR_JSON 导出：$OCR_TEXT_FILE"
   mkdir -p "$(dirname "$OCR_TEXT_FILE")"
-  "${py[@]}" "$root/export_ocr_texts.py" \
+  "${py[@]}" "$root/scripts/data/export_ocr_texts.py" \
     --ocr_json "$OCR_JSON" \
     --output "$OCR_TEXT_FILE"
 }
