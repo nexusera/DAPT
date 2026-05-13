@@ -1,7 +1,11 @@
 # KV-LLM Decoder-Only Route
 
-This folder implements the Qwen3-0.6B experimental path for migrating KV-BERT
+This folder implements the Qwen3 experimental path for migrating KV-BERT
 ideas to decoder-only LLMs.
+
+**Use the `-Base` suffix.** Qwen3 small repos without the `-Base` suffix
+(`Qwen/Qwen3-0.6B`, `Qwen/Qwen3-1.7B`) are the instruction-tuned variants
+— not valid CPT starting points per plan §10 SC3.
 
 Non-MLM logic is intentionally aligned with the BERT route:
 
@@ -30,7 +34,7 @@ Non-MLM logic is intentionally aligned with the BERT route:
 
 ```bash
 python -m kv_llm.train_cpt \
-  --model_name_or_path Qwen/Qwen3-0.6B \
+  --model_name_or_path Qwen/Qwen3-0.6B-Base \
   --nsp_data /data/ocean/DAPT/data/pseudo_kv_labels_filtered.json \
   --noise_bins_json /data/ocean/DAPT/workspace/noise_bins.json \
   --output_dir /data/ocean/DAPT/workspace/kv_llm_full \

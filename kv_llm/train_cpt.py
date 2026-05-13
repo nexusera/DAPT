@@ -1,9 +1,14 @@
 #!/usr/bin/env python3
-"""KV-LLM continued pretraining entrypoint for Qwen3-0.6B.
+"""KV-LLM continued pretraining entrypoint for Qwen3 base models.
+
+IMPORTANT: pass --model_name_or_path Qwen/Qwen3-0.6B-Base (or
+Qwen/Qwen3-1.7B-Base). Qwen3 small repos without the "-Base" suffix
+are instruction-tuned variants and are NOT valid CPT starting points
+(see plan §10 SC3-A).
 
 Examples:
     python -m kv_llm.train_cpt \
-      --model_name_or_path Qwen/Qwen3-0.6B \
+      --model_name_or_path Qwen/Qwen3-0.6B-Base \
       --span_data /data/ocean/DAPT/workspace/train_chunked.txt \
       --entity_dict /data/ocean/DAPT/vocab_for_jieba.txt \
       --nsp_data /data/ocean/DAPT/data/pseudo_kv_labels_filtered.json \
@@ -32,7 +37,7 @@ import paths_config as PC
 
 
 def parse_args() -> argparse.Namespace:
-    p = argparse.ArgumentParser(description="KV-LLM continued pretraining for Qwen3-0.6B")
+    p = argparse.ArgumentParser(description="KV-LLM continued pretraining for Qwen3-{0.6B,1.7B}-Base")
     p.add_argument("--model_name_or_path", default=DEFAULT_MODEL_NAME)
     p.add_argument("--output_dir", required=True)
     p.add_argument("--span_data", default=PC.TRAIN_CHUNKED_PATH, help="TXT/JSON/JSONL text data for span corruption or plain CLM")

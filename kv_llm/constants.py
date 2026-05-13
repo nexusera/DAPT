@@ -1,6 +1,10 @@
 """Shared constants for KV-LLM experiments."""
 
-DEFAULT_MODEL_NAME = "Qwen/Qwen3-0.6B"
+# IMPORTANT: Qwen3 small models have a "-Base" suffix for the pure pretrained
+# checkpoint. "Qwen/Qwen3-0.6B" (no suffix) is the instruction-tuned variant
+# that already carries chat_template + thinking mode and is NOT a valid CPT
+# starting point. Plan §10 SC3-A requires "base + KV-NSP CPT".
+DEFAULT_MODEL_NAME = "Qwen/Qwen3-0.6B-Base"
 
 FEATURES = [
     "conf_avg",

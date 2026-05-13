@@ -60,15 +60,15 @@ BENCHMARKS = ["medstruct", "cmeie", "cblue"]
 
 CATALOGUE: list[RunSpec] = [
     # ============================== CPT (Day 1) ==============================
-    RunSpec("kv_llm_qwen3_0.6b_full",        "0.6B full (main)",            "4",   "Qwen3-0.6B",  "full",        "CPT", "D1.5/D1.10"),
-    RunSpec("kv_llm_qwen3_0.6b_no_kvnsp",    "0.6B w/o KVNSP",              "5",   "Qwen3-0.6B",  "span",        "CPT", "D1.12"),
-    RunSpec("kv_llm_qwen3_0.6b_no_noise",    "0.6B w/o NoiseEmb",           "0",   "Qwen3-0.6B",  "full+noise=none","CPT","D1.13"),
-    RunSpec("kv_llm_qwen3_0.6b_plain_clm",   "0.6B Plain CLM",              "1",   "Qwen3-0.6B",  "plain_clm",   "CPT", "D1.6/D1.14"),
-    RunSpec("kv_llm_qwen3_0.6b_no_span",     "0.6B w/o SpanCorr",           "3",   "Qwen3-0.6B",  "nsp",         "CPT", "D1.11"),
-    RunSpec("kv_llm_qwen3_1.7b_full",        "1.7B full (DDP)",             "6,7", "Qwen3-1.7B",  "full",        "CPT", "D1.15"),
-    RunSpec("kv_llm_qwen3_1.7b_plain_clm",   "1.7B Plain CLM",              "2",   "Qwen3-1.7B",  "plain_clm",   "CPT", "D2.2"),
-    RunSpec("kv_llm_qwen3_1.7b_no_noise",    "1.7B w/o NoiseEmb",           "?",   "Qwen3-1.7B",  "full+noise=none","CPT","D2.1"),
-    RunSpec("kv_llm_qwen3_0.6b_random_mask", "0.6B random-mask CPT",        "?",   "Qwen3-0.6B",  "random-mask", "CPT", "D1.4 (SC2-A)"),
+    RunSpec("kv_llm_qwen3_0.6b_full",        "0.6B full (main)",            "4",   "Qwen3-0.6B-Base",  "full",        "CPT", "D1.5/D1.10"),
+    RunSpec("kv_llm_qwen3_0.6b_no_kvnsp",    "0.6B w/o KVNSP",              "5",   "Qwen3-0.6B-Base",  "span",        "CPT", "D1.12"),
+    RunSpec("kv_llm_qwen3_0.6b_no_noise",    "0.6B w/o NoiseEmb",           "0",   "Qwen3-0.6B-Base",  "full+noise=none","CPT","D1.13"),
+    RunSpec("kv_llm_qwen3_0.6b_plain_clm",   "0.6B Plain CLM",              "1",   "Qwen3-0.6B-Base",  "plain_clm",   "CPT", "D1.6/D1.14"),
+    RunSpec("kv_llm_qwen3_0.6b_no_span",     "0.6B w/o SpanCorr",           "3",   "Qwen3-0.6B-Base",  "nsp",         "CPT", "D1.11"),
+    RunSpec("kv_llm_qwen3_1.7b_full",        "1.7B full (DDP)",             "6,7", "Qwen3-1.7B-Base",  "full",        "CPT", "D1.15"),
+    RunSpec("kv_llm_qwen3_1.7b_plain_clm",   "1.7B Plain CLM",              "2",   "Qwen3-1.7B-Base",  "plain_clm",   "CPT", "D2.2"),
+    RunSpec("kv_llm_qwen3_1.7b_no_noise",    "1.7B w/o NoiseEmb",           "?",   "Qwen3-1.7B-Base",  "full+noise=none","CPT","D2.1"),
+    RunSpec("kv_llm_qwen3_0.6b_random_mask", "0.6B random-mask CPT",        "?",   "Qwen3-0.6B-Base",  "random-mask", "CPT", "D1.4 (SC2-A)"),
 
     # ============================== Sanity Check =============================
     RunSpec("sc0_macbert_m0",                "SC0-M0 MC-BERT entity mask",  "?",   "MacBERT 0.11B","MLM",        "Sanity", "D1.2"),
@@ -80,18 +80,18 @@ CATALOGUE: list[RunSpec] = [
 
     # ============================== Fine-tune ================================
     # 0.6B variants × 3 benchmarks (D2.3 + D2.4)
-    *[RunSpec(f"ft_kv_llm_06b_full_{b}",       f"FT 0.6B full / {b}",          "?", "Qwen3-0.6B", "FT (CPT-init)", "FT", "D2.3") for b in BENCHMARKS],
-    *[RunSpec(f"ft_kv_llm_06b_no_kvnsp_{b}",   f"FT 0.6B w/o KVNSP / {b}",     "?", "Qwen3-0.6B", "FT (CPT-init)", "FT", "D2.3") for b in BENCHMARKS],
-    *[RunSpec(f"ft_kv_llm_06b_no_noise_{b}",   f"FT 0.6B w/o NoiseEmb / {b}",  "?", "Qwen3-0.6B", "FT (CPT-init)", "FT", "D2.3") for b in BENCHMARKS],
-    *[RunSpec(f"ft_kv_llm_06b_no_span_{b}",    f"FT 0.6B w/o SpanCorr / {b}",  "?", "Qwen3-0.6B", "FT (CPT-init)", "FT", "D2.3") for b in BENCHMARKS],
-    *[RunSpec(f"ft_kv_llm_06b_plain_clm_{b}",  f"FT 0.6B Plain CLM / {b}",     "?", "Qwen3-0.6B", "FT (CPT-init)", "FT", "D2.4") for b in BENCHMARKS],
+    *[RunSpec(f"ft_kv_llm_06b_full_{b}",       f"FT 0.6B full / {b}",          "?", "Qwen3-0.6B-Base", "FT (CPT-init)", "FT", "D2.3") for b in BENCHMARKS],
+    *[RunSpec(f"ft_kv_llm_06b_no_kvnsp_{b}",   f"FT 0.6B w/o KVNSP / {b}",     "?", "Qwen3-0.6B-Base", "FT (CPT-init)", "FT", "D2.3") for b in BENCHMARKS],
+    *[RunSpec(f"ft_kv_llm_06b_no_noise_{b}",   f"FT 0.6B w/o NoiseEmb / {b}",  "?", "Qwen3-0.6B-Base", "FT (CPT-init)", "FT", "D2.3") for b in BENCHMARKS],
+    *[RunSpec(f"ft_kv_llm_06b_no_span_{b}",    f"FT 0.6B w/o SpanCorr / {b}",  "?", "Qwen3-0.6B-Base", "FT (CPT-init)", "FT", "D2.3") for b in BENCHMARKS],
+    *[RunSpec(f"ft_kv_llm_06b_plain_clm_{b}",  f"FT 0.6B Plain CLM / {b}",     "?", "Qwen3-0.6B-Base", "FT (CPT-init)", "FT", "D2.4") for b in BENCHMARKS],
     # 1.7B variants × 3 benchmarks (D2.5 + D3.1 + D3.2)
-    *[RunSpec(f"ft_kv_llm_17b_full_{b}",       f"FT 1.7B full / {b}",          "?", "Qwen3-1.7B", "FT (CPT-init)", "FT", "D2.5") for b in BENCHMARKS],
-    *[RunSpec(f"ft_kv_llm_17b_no_noise_{b}",   f"FT 1.7B w/o NoiseEmb / {b}",  "?", "Qwen3-1.7B", "FT (CPT-init)", "FT", "D3.1") for b in BENCHMARKS],
-    *[RunSpec(f"ft_kv_llm_17b_plain_clm_{b}",  f"FT 1.7B Plain CLM / {b}",     "?", "Qwen3-1.7B", "FT (CPT-init)", "FT", "D3.2") for b in BENCHMARKS],
+    *[RunSpec(f"ft_kv_llm_17b_full_{b}",       f"FT 1.7B full / {b}",          "?", "Qwen3-1.7B-Base", "FT (CPT-init)", "FT", "D2.5") for b in BENCHMARKS],
+    *[RunSpec(f"ft_kv_llm_17b_no_noise_{b}",   f"FT 1.7B w/o NoiseEmb / {b}",  "?", "Qwen3-1.7B-Base", "FT (CPT-init)", "FT", "D3.1") for b in BENCHMARKS],
+    *[RunSpec(f"ft_kv_llm_17b_plain_clm_{b}",  f"FT 1.7B Plain CLM / {b}",     "?", "Qwen3-1.7B-Base", "FT (CPT-init)", "FT", "D3.2") for b in BENCHMARKS],
     # Qwen3 base + LoRA × 3 benchmarks (D2.6) — only for 0.6B/1.7B
-    *[RunSpec(f"ft_qwen3_06b_base_lora_{b}",   f"FT Qwen3-0.6B base+LoRA / {b}","?","Qwen3-0.6B-base","LoRA",      "FT", "D2.6") for b in BENCHMARKS],
-    *[RunSpec(f"ft_qwen3_17b_base_lora_{b}",   f"FT Qwen3-1.7B base+LoRA / {b}","?","Qwen3-1.7B-base","LoRA",      "FT", "D2.6") for b in BENCHMARKS],
+    *[RunSpec(f"ft_qwen3_06b_base_lora_{b}",   f"FT Qwen3-0.6B-Base+LoRA / {b}","?","Qwen3-0.6B-Base","LoRA",      "FT", "D2.6") for b in BENCHMARKS],
+    *[RunSpec(f"ft_qwen3_17b_base_lora_{b}",   f"FT Qwen3-1.7B-Base+LoRA / {b}","?","Qwen3-1.7B-Base","LoRA",      "FT", "D2.6") for b in BENCHMARKS],
     # KV-BERT + 2 public benchmarks (D2.10)
     *[RunSpec(f"ft_kv_bert_{b}",               f"FT KV-BERT / {b}",            "?", "MacBERT 0.11B","seq-labeling","FT", "D2.10") for b in BENCHMARKS],
     # Encoder baselines × 2 public benchmarks (D2.11)
@@ -124,8 +124,8 @@ CATALOGUE: list[RunSpec] = [
     # ============================== Mechanism ================================
     RunSpec("probing_layerwise",               "Probing classifier × 3 tasks × 双架构 × 各层","?","双架构","probing","Mechanism","D3.7"),
     RunSpec("cka_similarity",                  "CKA representation similarity","?","双架构","analysis","Mechanism","D3.8"),
-    RunSpec("kv_llm_attention",                "KV-LLM Attention 分析",         "?","Qwen3-0.6B","analysis","Mechanism","D3.9"),
-    RunSpec("kv_llm_ig",                       "KV-LLM Integrated Gradients",  "?","Qwen3-0.6B","analysis","Mechanism","D3.10"),
+    RunSpec("kv_llm_attention",                "KV-LLM Attention 分析",         "?","Qwen3-0.6B-Base","analysis","Mechanism","D3.9"),
+    RunSpec("kv_llm_ig",                       "KV-LLM Integrated Gradients",  "?","Qwen3-0.6B-Base","analysis","Mechanism","D3.10"),
 
     # ============================== Efficiency / Error analysis ==============
     RunSpec("efficiency_benchmark",            "Efficiency: latency / throughput / VRAM / FLOPs","?","all models","benchmark","Efficiency","D3.15"),
