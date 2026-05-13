@@ -1,4 +1,6 @@
 med_data/
+biaozhu_data/
+data_full/
 
 # Python cache / bytecode
 __pycache__/
