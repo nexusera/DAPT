@@ -43,6 +43,41 @@ def _fallback_spans(text: str, *, max_spans: int, rng: random.Random) -> list[tu
     return sorted(chunks[:max_spans])
 
 
+def select_random_spans(
+    text: str,
+    *,
+    mask_prob: float,
+    max_spans: int,
+    rng: random.Random,
+    span_len_range: tuple[int, int] = (2, 12),
+) -> list[tuple[int, int]]:
+    """SC2-A random-token / random-span mask: ignore entity dictionary,
+    sample non-overlapping spans of length in [lo, hi] uniformly. Used to
+    isolate the contribution of 'entity-aware' vs 'just any span' masking
+    (plan \u00a710 SC2 setting A)."""
+    lo, hi = span_len_range
+    n = len(text)
+    if n < lo:
+        return []
+    n_target = max(1, int(round((n * mask_prob) / ((lo + hi) / 2))))
+    n_target = min(n_target, max_spans)
+    occupied: list[tuple[int, int]] = []
+    selected: list[tuple[int, int]] = []
+    for _ in range(n_target * 5):  # bounded retry
+        if len(selected) >= n_target:
+            break
+        span_len = rng.randint(lo, hi)
+        if span_len > n:
+            continue
+        start = rng.randint(0, n - span_len)
+        end = start + span_len
+        if any(start < b and end > a for a, b in occupied):
+            continue
+        selected.append((start, end))
+        occupied.append((start, end))
+    return sorted(selected) or _fallback_spans(text, max_spans=max_spans, rng=rng)
+
+
 def select_entity_spans(
     text: str,
     entities: Sequence[str],
@@ -107,6 +142,7 @@ class SpanCorruptionCollator:
     seed: int = 42
     instruction: str = "Recover the masked medical spans."
     plain_clm: bool = False
+    random_mask: bool = False  # SC2-A: random span mask instead of entity-aware
     noise_mode: str = "bucket"
     noise_processor: NoiseFeatureProcessor | None = None
 
@@ -117,13 +153,21 @@ class SpanCorruptionCollator:
     def _build_example(self, text: str) -> tuple[str, str]:
         if self.plain_clm:
             return text, ""
-        spans = select_entity_spans(
-            text,
-            self.entity_terms,
-            mask_prob=self.mask_prob,
-            max_spans=self.max_spans,
-            rng=self.rng,
-        )
+        if self.random_mask:
+            spans = select_random_spans(
+                text,
+                mask_prob=self.mask_prob,
+                max_spans=self.max_spans,
+                rng=self.rng,
+            )
+        else:
+            spans = select_entity_spans(
+                text,
+                self.entity_terms,
+                mask_prob=self.mask_prob,
+                max_spans=self.max_spans,
+                rng=self.rng,
+            )
         source, target = build_span_corruption_text(text, spans, sentinels=self.sentinels)
         prompt = f"{self.instruction}\n\nInput:\n{source}\n\nAnswer:\n"
         return prompt, target

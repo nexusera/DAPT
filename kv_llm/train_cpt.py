@@ -46,7 +46,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--vocab_for_jieba", default=PC.JIEBA_VOCAB_PATH, help="WordPiece mined vocabulary, aligned with BERT route")
     p.add_argument("--nsp_data", default=PC.NSP_DATA_PATH, help="Label Studio JSON/JSONL or directory for KV-NSP")
     p.add_argument("--noise_bins_json", default=PC.NOISE_BINS_JSON)
-    p.add_argument("--schedule", choices=["full", "span", "nsp", "plain_clm"], default="full")
+    p.add_argument("--schedule", choices=["full", "span", "nsp", "plain_clm", "random_mask"], default="full")
     p.add_argument("--noise_mode", choices=["bucket", "linear", "mlp", "concat_linear", "none"], default="bucket")
     p.add_argument("--noise_alpha", type=float, default=1.0)
     p.add_argument("--max_length", type=int, default=512)
@@ -160,25 +160,28 @@ def resolve_entity_dicts(args: argparse.Namespace) -> list[str]:
     return seen
 
 
-def run_span_phase(args, model, tokenizer, noise_processor, *, plain_clm: bool = False, round_idx: int | None = None) -> None:
+def run_span_phase(args, model, tokenizer, noise_processor, *, plain_clm: bool = False, random_mask: bool = False, round_idx: int | None = None) -> None:
     if not args.span_data:
         raise ValueError("--span_data is required for span/plain_clm training")
     ds = TextFileDataset(args.span_data, max_samples=args.max_samples)
     entity_dicts = resolve_entity_dicts(args)
-    if not plain_clm:
+    if not plain_clm and not random_mask:
         print(f"[KV-LLM] span dictionaries: {entity_dicts}")
+    elif random_mask:
+        print("[KV-LLM] random-mask mode (SC2-A): ignoring entity dictionary")
     collator = SpanCorruptionCollator(
         tokenizer=tokenizer,
-        entity_terms=load_entity_dictionary(entity_dicts),
+        entity_terms=load_entity_dictionary(entity_dicts) if not random_mask else [],
         max_length=args.max_length,
         mask_prob=args.mask_prob,
         max_spans=args.max_spans,
         seed=args.seed,
         plain_clm=plain_clm,
+        random_mask=random_mask,
         noise_mode=args.noise_mode,
         noise_processor=noise_processor,
     )
-    phase_name = "plain_clm" if plain_clm else "span"
+    phase_name = "random_mask" if random_mask else ("plain_clm" if plain_clm else "span")
     out = Path(args.output_dir) / (f"round_{round_idx}_{phase_name}" if round_idx is not None else phase_name)
     trainer = Trainer(
         model=model,
@@ -239,6 +242,9 @@ def main() -> None:
 
     if args.schedule == "plain_clm":
         run_span_phase(args, model, tokenizer, noise_processor, plain_clm=True)
+    elif args.schedule == "random_mask":
+        # SC2-A: random-token mask + span corruption (15%), data-only control
+        run_span_phase(args, model, tokenizer, noise_processor, random_mask=True)
     elif args.schedule == "span":
         run_span_phase(args, model, tokenizer, noise_processor)
     elif args.schedule == "nsp":
