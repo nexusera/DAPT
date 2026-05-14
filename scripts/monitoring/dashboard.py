@@ -136,10 +136,19 @@ CATALOGUE: list[RunSpec] = [
     RunSpec("component_noise_cross_cut",       "Component × Noise level cross-cut (48 eval pts)","?","双架构 × 4 ablation × 6 noise","eval","Robustness","D3.20"),
 
     # ============================== Mechanism ================================
-    # KV-LLM Attention (D3.9) + IG (D3.10) DEMOTED to P2 in plan 2026-05-14;
-    # KV-BERT already has those results, extension is not a new finding. Cut.
+    # KV-BERT attention + IG ALREADY in main.tex §4.6/4.7 — reused. D3.9 / D3.10
+    # (full KV-LLM mirror) demoted to P2.
+    # NEW D3.21 (plan 2026-05-14 second revision): decoder-native focused
+    # interpretability — three sub-analyses, P1, ~4-6h total on 1 GPU.
+    # §6.3 organizes mechanism into three layers:
+    #   Layer A representation = probing + CKA (双架构 symmetric)
+    #   Layer B attribution    = KV-BERT (existing) + KV-LLM D3.21 (3 new analyses)
+    #   Layer C cross-arch comparison (writing-only, §9.5)
     RunSpec("probing_layerwise",               "Probing classifier × 3 tasks × 双架构 × 各层","?","双架构","probing","Mechanism","D3.7"),
     RunSpec("cka_similarity",                  "CKA representation similarity","?","双架构","analysis","Mechanism","D3.8"),
+    RunSpec("d3_21a_span_mask_attn",           "D3.21(a) Span Corruption mask attention pattern","?","KV-LLM 0.6B/1.7B","analysis","Mechanism","D3.21a"),
+    RunSpec("d3_21b_kvnsp_lasttoken_attn",     "D3.21(b) KV-NSP last-token [K]/[SEP]/[V] attention","?","KV-LLM 0.6B/1.7B","analysis","Mechanism","D3.21b"),
+    RunSpec("d3_21c_noise_dim_perturbation",   "D3.21(c) Noise embed 7-dim causal ablation","?","KV-LLM 0.6B/1.7B","causal-ablation","Mechanism","D3.21c"),
 
     # ============================== Efficiency / Error analysis ==============
     RunSpec("efficiency_benchmark",            "Efficiency: latency / throughput / VRAM / FLOPs","?","all models","benchmark","Efficiency","D3.15"),
