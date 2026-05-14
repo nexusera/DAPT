@@ -292,51 +292,35 @@ QUEUE: list[QueueEntry] = [
     ),
 
     # ====================================================================
-    # ===== GPU 4 long chain (fires after current FT predict batch done) =
+    # ===== GPU 2 chain (after D3.21c finishes): small mechanism evals ====
     # ====================================================================
-    # Quick mechanism evals first (10min–1h each), then KV-BERT R1 seeds.
+    # d3_21a already done manually (commit 43b21f3 launched then completed).
+    # d3_21b + D3.7 + D3.8 are <2h total; pin to GPU 2 after D3.21c so
+    # they don't fight ongoing SC3-* / D3.21c chain on the same card.
 
-    # D3.21(a) span-mask attention pattern (~10 min)
-    QueueEntry(
-        name="d3_21a_span_mask_attn",
-        required_gpus=[4],
-        tmux_window="d3_21a_span_attn",
-        cmd=(
-            f"clear; {ENV_PREFIX} && export CUDA_VISIBLE_DEVICES=4 && "
-            f"python {REPO}/scripts/analysis/attention_extract.py --mode span_mask "
-            f"--cpt-dir {REPO}/model/kv_llm_qwen3_0.6b_full/final_model "
-            f"--test-data /data/ocean/DAPT/biaozhu_with_ocr_noise_prepared/real_test_with_ocr.json "
-            f"--num-samples 20 --bf16 "
-            f"--output {REPO}/results/eval/d3_21a_span_attn.jsonl "
-            f"2>&1 | tee {REPO}/logs/d3_21a_span_mask_attn.log"
-        ),
-        depends_on=["ft_kv_llm_06b_plain_clm_medstruct"],  # last FT on GPU 4
-        require_path=f"{REPO}/model/kv_llm_qwen3_0.6b_full/final_model",
-        notes="D3.21(a) — span mask attn viz",
-    ),
     # D3.21(b) KV-NSP last-token attention (~10 min)
     QueueEntry(
         name="d3_21b_kvnsp_lasttoken_attn",
-        required_gpus=[4],
+        required_gpus=[2],
         tmux_window="d3_21b_kvnsp_attn",
         cmd=(
-            f"clear; {ENV_PREFIX} && export CUDA_VISIBLE_DEVICES=4 && "
+            f"clear; {ENV_PREFIX} && export CUDA_VISIBLE_DEVICES=2 && "
             f"python {REPO}/scripts/analysis/attention_extract.py --mode kvnsp_lasttoken "
             f"--cpt-dir {REPO}/model/kv_llm_qwen3_0.6b_full/final_model "
             f"--kv-pairs {NSP} --num-samples 50 --bf16 "
             f"--output {REPO}/results/eval/d3_21b_kvnsp_attn.jsonl "
             f"2>&1 | tee {REPO}/logs/d3_21b_kvnsp_lasttoken_attn.log"
         ),
-        depends_on=["d3_21a_span_mask_attn"],
+        depends_on=["d3_21c_noise_dim_perturbation"],
         notes="D3.21(b) — KV-NSP last-token segment attn",
     ),
     # D3.7 probing classifier (~1h)
     QueueEntry(
         name="probing_layerwise",
-        required_gpus=[4],
+        required_gpus=[2],
         tmux_window="d3_7_probing",
         cmd=(
-            f"clear; {ENV_PREFIX} && export CUDA_VISIBLE_DEVICES=4 && "
+            f"clear; {ENV_PREFIX} && export CUDA_VISIBLE_DEVICES=2 && "
             f"python {REPO}/scripts/analysis/probing_classifier.py "
             f"--model-dir {REPO}/model/kv_llm_qwen3_0.6b_full/final_model "
             f"--base-model /data/ocean/model/Qwen/Qwen3-0.6B-Base "
@@ -351,10 +335,10 @@ QUEUE: list[QueueEntry] = [
     # D3.8 CKA similarity (~30 min)
     QueueEntry(
         name="cka_similarity",
-        required_gpus=[4],
+        required_gpus=[2],
         tmux_window="d3_8_cka",
         cmd=(
-            f"clear; {ENV_PREFIX} && export CUDA_VISIBLE_DEVICES=4 && "
+            f"clear; {ENV_PREFIX} && export CUDA_VISIBLE_DEVICES=2 && "
             f"python {REPO}/scripts/analysis/cka_similarity.py "
             f"--model-a {REPO}/model/kv_llm_qwen3_0.6b_full/final_model "
             f"--model-b /data/ocean/model/Qwen/Qwen3-0.6B-Base "
@@ -416,40 +400,40 @@ QUEUE: list[QueueEntry] = [
     ),
 
     # ====================================================================
-    # ===== KV-BERT 重跑包 R1-R5 (split across GPU 4 + GPU 5) ===========
+    # ===== KV-BERT 重跑包 (per user 2026-05-14: use 2/3/5/6/7 only) ====
     # ====================================================================
-    # GPU 4 chain (after CKA): R1×3 + R5 attention.
+    # GPU 3 chain after SC2-A: R1×3 seed + R5(a) attention re-gen.
     QueueEntry(
         name="rerun_kv_bert_full_seed1",
-        required_gpus=[4],
+        required_gpus=[3],
         tmux_window="rerun_kvbert_s1",
-        cmd=f"bash {REPO}/experiments/rerun_kvbert/run_rerun.sh rerun_kv_bert_full_seed1 4",
-        depends_on=["cka_similarity"],
-        notes="R1 — KV-BERT full CPT seed=1",
+        cmd=f"bash {REPO}/experiments/rerun_kvbert/run_rerun.sh rerun_kv_bert_full_seed1 3",
+        depends_on=["kv_llm_qwen3_0.6b_random_mask"],  # serial after SC2-A on GPU 3
+        notes="R1 — KV-BERT full CPT seed=1 (GPU 3)",
     ),
     QueueEntry(
         name="rerun_kv_bert_full_seed2",
-        required_gpus=[4],
+        required_gpus=[3],
         tmux_window="rerun_kvbert_s2",
-        cmd=f"bash {REPO}/experiments/rerun_kvbert/run_rerun.sh rerun_kv_bert_full_seed2 4",
+        cmd=f"bash {REPO}/experiments/rerun_kvbert/run_rerun.sh rerun_kv_bert_full_seed2 3",
         depends_on=["rerun_kv_bert_full_seed1"],
-        notes="R1 — KV-BERT full CPT seed=2",
+        notes="R1 — KV-BERT full CPT seed=2 (GPU 3)",
     ),
     QueueEntry(
         name="rerun_kv_bert_full_seed3",
-        required_gpus=[4],
+        required_gpus=[3],
         tmux_window="rerun_kvbert_s3",
-        cmd=f"bash {REPO}/experiments/rerun_kvbert/run_rerun.sh rerun_kv_bert_full_seed3 4",
+        cmd=f"bash {REPO}/experiments/rerun_kvbert/run_rerun.sh rerun_kv_bert_full_seed3 3",
         depends_on=["rerun_kv_bert_full_seed2"],
-        notes="R1 — KV-BERT full CPT seed=3",
+        notes="R1 — KV-BERT full CPT seed=3 (GPU 3)",
     ),
     QueueEntry(
         name="rerun_kv_bert_attention",
-        required_gpus=[4],
+        required_gpus=[3],
         tmux_window="rerun_kvbert_attn",
-        cmd=f"bash {REPO}/experiments/rerun_kvbert/run_rerun.sh rerun_kv_bert_attention 4",
+        cmd=f"bash {REPO}/experiments/rerun_kvbert/run_rerun.sh rerun_kv_bert_attention 3",
         depends_on=["rerun_kv_bert_full_seed3"],
-        notes="R5(a) — Attention re-gen on R1 seed=1 checkpoint",
+        notes="R5(a) — Attention re-gen (GPU 3, follows R1)",
     ),
 
     # GPU 5 chain (after Component×Noise): R2×3 + R3×2 + R5 IG.
@@ -500,6 +484,39 @@ QUEUE: list[QueueEntry] = [
         cmd=f"bash {REPO}/experiments/rerun_kvbert/run_rerun.sh rerun_kv_bert_ig 5",
         depends_on=["rerun_kv_bert_noise_mlp"],
         notes="R5(b) — IG re-gen on R1 seed=1 checkpoint",
+    ),
+    # GPU 5 tail: R4 encoder baselines × MedStruct-S FT (each ~1-2h)
+    QueueEntry(
+        name="rerun_ft_macbert_medstruct",
+        required_gpus=[5],
+        tmux_window="rerun_ft_macbert",
+        cmd=f"bash {REPO}/experiments/rerun_kvbert/run_rerun.sh rerun_ft_macbert_medstruct 5",
+        depends_on=["rerun_kv_bert_ig"],
+        notes="R4 — MacBERT × MedStruct-S FT",
+    ),
+    QueueEntry(
+        name="rerun_ft_roberta_wwm_medstruct",
+        required_gpus=[5],
+        tmux_window="rerun_ft_roberta",
+        cmd=f"bash {REPO}/experiments/rerun_kvbert/run_rerun.sh rerun_ft_roberta_wwm_medstruct 5",
+        depends_on=["rerun_ft_macbert_medstruct"],
+        notes="R4 — RoBERTa-wwm × MedStruct-S FT",
+    ),
+    QueueEntry(
+        name="rerun_ft_bert_base_chinese_medstruct",
+        required_gpus=[5],
+        tmux_window="rerun_ft_bert_base",
+        cmd=f"bash {REPO}/experiments/rerun_kvbert/run_rerun.sh rerun_ft_bert_base_chinese_medstruct 5",
+        depends_on=["rerun_ft_roberta_wwm_medstruct"],
+        notes="R4 — BERT-Base-Chinese × MedStruct-S FT",
+    ),
+    QueueEntry(
+        name="rerun_ft_mbert_medstruct",
+        required_gpus=[5],
+        tmux_window="rerun_ft_mbert",
+        cmd=f"bash {REPO}/experiments/rerun_kvbert/run_rerun.sh rerun_ft_mbert_medstruct 5",
+        depends_on=["rerun_ft_bert_base_chinese_medstruct"],
+        notes="R4 — MBERT × MedStruct-S FT",
     ),
 
     # P0 — D2.3 KV-LLM 0.6B variants × MedStruct-S FT.
