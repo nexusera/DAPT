@@ -314,19 +314,16 @@ def parse_run(name: str, logs_dir: Path, stale_after_s: float) -> RunStatus:
     #      plain_clm never print [OK] but do print train_runtime once the
     #      phase ends, after which the process exits cleanly).
     completed_by_ok = bool(FULL_OK_RE.search(text)) or bool(FT_OK_RE.search(text))
-    quiet = st.last_modified_ago_s > stale_after_s
-    completed_single_phase = bool(train_done_matches) and quiet
-    # If nvidia-smi still has the process on a GPU, override 'quiet': the
-    # run is definitively still executing (e.g., 1.7B FT predict phase can
-    # be silent for >5min between '[predict] N done' lines).
+    # IMPORTANT: compute live_running FIRST so 'quiet' reflects it. nvidia-smi
+    # is the authoritative signal — if the process still owns a GPU, the run
+    # is definitively still running (e.g., 1.7B FT predict can be silent for
+    # >5min between '[predict] N done' lines, mtime alone is unreliable).
     live_running = bool(get_live_gpu(name))
-    if live_running:
-        quiet = False
-    # Special case: FT chain is "FT train && predict". FT_OK marker fires
-    # when train ends; predict phase keeps writing for ~hours. Don't count
-    # FT-chain runs as completed while their process is still on a GPU OR
-    # the log has not yet gone quiet.
-    if FT_OK_RE.search(text) and (not quiet or live_running):
+    raw_quiet = st.last_modified_ago_s > stale_after_s
+    quiet = raw_quiet and not live_running
+    completed_single_phase = bool(train_done_matches) and quiet
+    # FT chain ('train && predict'): block 'completed' while predict still running
+    if FT_OK_RE.search(text) and live_running:
         completed_by_ok = False
     if completed_by_ok or completed_single_phase:
         st.state = "completed"
