@@ -461,6 +461,50 @@ QUEUE: list[QueueEntry] = [
         depends_on=["rerun_kv_bert_no_kvnsp"],
         notes="R2 — w/o NoiseEmb (GPU 4)",
     ),
+
+    # ====================================================================
+    # ===== NCAG pilot (plan §A5, RQ6) — GPU 4 chain tail ================
+    # ====================================================================
+    # Plan §A5 line 728 quantitative judgment: Spearman ρ(gate, conf_avg) > 0.3,
+    # p<0.05 → green-light N3/N4 full CPT; failure → fall back to additive-only.
+    # 50k chunks × 1 epoch on Qwen3-0.6B-Base; single H200 ~2-4h.
+    QueueEntry(
+        name="ncag_pilot_06b",
+        required_gpus=[4],
+        tmux_window="ncag_pilot",
+        cmd=(
+            f"clear; {ENV_PREFIX} && export CUDA_VISIBLE_DEVICES=4 && "
+            f"python -m scripts.analysis.ncag_pilot "
+            f"--model_name_or_path {BASE_06B} "
+            f"--output_dir {REPO}/model/ncag_pilot_06b "
+            f"--span_data /data/ocean/DAPT/workspace/train_chunked.txt "
+            f"--noise_bins_json /data/ocean/DAPT/workspace/noise_bins.json "
+            f"--max_samples 50000 --num_epochs 1.0 "
+            f"--noise_mode ncag --seed 42 "
+            f"--eval_samples 1024 "
+            f"2>&1 | tee {REPO}/logs/ncag_pilot_06b.log"
+        ),
+        depends_on=["rerun_kv_bert_no_noise"],
+        notes="NCAG pilot (plan §A5 line 728) — Spearman ρ>0.3 go/no-go decision",
+    ),
+    # N12 mechanism analysis — runs after pilot training is done. CPU-only,
+    # ~1 min. Keeps the GPU 4 slot free for the next chain item.
+    QueueEntry(
+        name="ncag_gate_correlation_n12",
+        required_gpus=[],  # CPU-only; required_gpus=[] means scheduler treats as free
+        tmux_window="ncag_n12",
+        cmd=(
+            f"clear; {ENV_PREFIX} && "
+            f"python -m scripts.analysis.ncag_gate_correlation "
+            f"--gate_ckpt {REPO}/model/ncag_pilot_06b/span/final_model/kv_llm_ncag_gate.pt "
+            f"--output_dir {REPO}/results/d3_n12_ncag_gate_correlation "
+            f"--n_samples 5000 "
+            f"2>&1 | tee {REPO}/logs/ncag_gate_correlation_n12.log"
+        ),
+        depends_on=["ncag_pilot_06b"],
+        notes="N12 — gate vs noise Spearman analysis (CPU, ~1min)",
+    ),
+
     QueueEntry(
         name="rerun_kv_bert_noise_linear",
         required_gpus=[5],
