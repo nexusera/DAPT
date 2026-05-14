@@ -47,8 +47,30 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--nsp_data", default=PC.NSP_DATA_PATH, help="Label Studio JSON/JSONL or directory for KV-NSP")
     p.add_argument("--noise_bins_json", default=PC.NOISE_BINS_JSON)
     p.add_argument("--schedule", choices=["full", "span", "nsp", "plain_clm", "random_mask"], default="full")
-    p.add_argument("--noise_mode", choices=["bucket", "linear", "mlp", "concat_linear", "none"], default="bucket")
+    p.add_argument(
+        "--noise_mode",
+        choices=["bucket", "linear", "mlp", "concat_linear", "none", "ncag", "ncag_additive"],
+        default="bucket",
+        help=(
+            "Noise injection: bucket=additive ConfBERT (default); "
+            "ncag=Noise-Conditioned Attention Gating only (N3); "
+            "ncag_additive=both gating and input-side additive (N4); "
+            "none=no_noise (D1.13)."
+        ),
+    )
     p.add_argument("--noise_alpha", type=float, default=1.0)
+    p.add_argument(
+        "--ncag_hidden_dim",
+        type=int,
+        default=0,
+        help="If >0 use a 2-layer MLP gate (Linear→tanh→Linear) with this hidden width; else single Linear.",
+    )
+    p.add_argument(
+        "--ncag_gate_side",
+        choices=["key", "query", "both"],
+        default="key",
+        help="N7 ablation knob: which attention side gets gated (default key).",
+    )
     p.add_argument("--max_length", type=int, default=512)
     p.add_argument("--nsp_max_length", type=int, default=256)
     p.add_argument("--mask_prob", type=float, default=0.15)
@@ -100,6 +122,8 @@ def build_model(args: argparse.Namespace, tokenizer) -> KvLlmForCausalPreTrainin
         torch_dtype=dtype,
         noise_mode=args.noise_mode,
         noise_alpha=args.noise_alpha,
+        ncag_hidden_dim=args.ncag_hidden_dim if args.ncag_hidden_dim > 0 else None,
+        ncag_gate_side=args.ncag_gate_side,
     )
     model.base_model.resize_token_embeddings(len(tokenizer))
     model.base_model.config.pad_token_id = tokenizer.pad_token_id

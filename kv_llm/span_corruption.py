@@ -186,13 +186,17 @@ class SpanCorruptionCollator:
                 vec = list(PERFECT_VALUES)
             rows.append([vec] * seq_len)
         mode = str(self.noise_mode or "bucket").lower()
-        if needs_bucket_ids(mode):
+        out: dict[str, torch.Tensor] = {}
+        # NCAG (any variant) consumes continuous noise_values; the
+        # additive variant also keeps the bucket-id path.
+        ncag_active = mode in {"ncag", "ncag_additive"}
+        if ncag_active or uses_continuous_noise(mode):
+            out["noise_values"] = torch.tensor(rows, dtype=torch.float32)
+        if needs_bucket_ids(mode) or mode == "ncag_additive":
             processor = self.noise_processor or NoiseFeatureProcessor()
             ids = [processor.map_batch(x) for x in rows]
-            return {"noise_ids": torch.tensor(ids, dtype=torch.long)}
-        if uses_continuous_noise(mode):
-            return {"noise_values": torch.tensor(rows, dtype=torch.float32)}
-        return {}
+            out["noise_ids"] = torch.tensor(ids, dtype=torch.long)
+        return out
 
     def __call__(self, features: list[dict[str, Any]]) -> dict[str, torch.Tensor]:
         prompts: list[str] = []

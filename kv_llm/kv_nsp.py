@@ -154,9 +154,10 @@ class LlmKvnspCollator:
         batch["task_type"] = "nsp"
         rows = [[PERFECT_VALUES] * batch["input_ids"].shape[1]] * batch["input_ids"].shape[0]
         mode = str(self.noise_mode or "bucket").lower()
-        if needs_bucket_ids(mode):
+        ncag_active = mode in {"ncag", "ncag_additive"}
+        if ncag_active or uses_continuous_noise(mode):
+            batch["noise_values"] = torch.tensor(rows, dtype=torch.float32)
+        if needs_bucket_ids(mode) or mode == "ncag_additive":
             processor = self.noise_processor or NoiseFeatureProcessor()
             batch["noise_ids"] = torch.tensor([processor.map_batch(x) for x in rows], dtype=torch.long)
-        elif uses_continuous_noise(mode):
-            batch["noise_values"] = torch.tensor(rows, dtype=torch.float32)
         return batch
