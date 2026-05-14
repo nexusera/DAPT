@@ -215,6 +215,82 @@ QUEUE: list[QueueEntry] = [
         notes="D3.19 — seed=3 main result (1.7B)",
     ),
 
+    # === SC2-A random-mask CPT (plan D1.4) ===
+    # Same data, same model, only mask strategy differs. Tests whether
+    # entity-aware masking provides any gain over random masking in CPT.
+    QueueEntry(
+        name="kv_llm_qwen3_0.6b_random_mask",
+        required_gpus=[3],
+        tmux_window="sc2a_random_mask",
+        cmd=make_cpt_cmd(
+            name="kv_llm_qwen3_0.6b_random_mask",
+            model=BASE_06B, gpus=[3],
+            schedule="random_mask", noise_mode="bucket",
+            per_device=64, ga=2, ddp=False,
+        ),
+        depends_on=["kv_llm_qwen3_0.6b_full_seed3"],  # serial after seed3 on GPU 3
+        notes="D1.4 SC2-A — random span mask, same data, same arch",
+    ),
+
+    # === SC3-B Qwen3-Instruct + KV-NSP SFT (plan D1.8) ===
+    QueueEntry(
+        name="sc3b_qwen3_0.6b_instruct_kvnsp_sft",
+        required_gpus=[2],
+        tmux_window="sc3b_kvnsp_sft",
+        cmd=(
+            f"clear; {ENV_PREFIX} && export CUDA_VISIBLE_DEVICES=2 && "
+            f"python -m kv_llm.sft_kvnsp "
+            f"--model_name_or_path /data/ocean/model/Qwen/Qwen3-0.6B "
+            f"--nsp_data {NSP} "
+            f"--output_dir {REPO}/model/sc3b_qwen3_0.6b_instruct_kvnsp_sft "
+            f"--use_lora --lora_rank 8 --bf16 "
+            f"--num_train_epochs 3.0 --per_device_train_batch_size 8 "
+            f"--gradient_accumulation_steps 4 "
+            f"2>&1 | tee {REPO}/logs/sc3b_qwen3_0.6b_instruct_kvnsp_sft.log"
+        ),
+        depends_on=["kv_llm_qwen3_1.7b_plain_clm"],  # wait for GPU 2 to free
+        notes="D1.8 SC3-B — Instruct + KV-NSP SFT LoRA on GPU 2",
+    ),
+
+    # === SC3-C Qwen3-Instruct zero-shot baseline (plan D1.9) ===
+    # Eval only, very fast (~10 min); piggyback on any single GPU.
+    QueueEntry(
+        name="sc3c_qwen3_0.6b_instruct_base",
+        required_gpus=[2],
+        tmux_window="sc3c_zero_shot",
+        cmd=(
+            f"clear; {ENV_PREFIX} && export CUDA_VISIBLE_DEVICES=2 && "
+            f"python {REPO}/scripts/eval/zero_shot_kv_extract.py "
+            f"--model /data/ocean/model/Qwen/Qwen3-0.6B "
+            f"--test {REPO}/data_full/medstruct_test_pairs.jsonl "
+            f"--output {REPO}/results/eval/sc3c_zero_shot.csv "
+            f"--bf16 --use-chat-template "
+            f"2>&1 | tee {REPO}/logs/sc3c_qwen3_0.6b_instruct_base.log"
+        ),
+        depends_on=["sc3b_qwen3_0.6b_instruct_kvnsp_sft"],  # serial on GPU 2
+        notes="D1.9 SC3-C — Qwen3-Instruct zero-shot eval",
+    ),
+
+    # === D3.21(c) Noise-dim causal ablation (plan §10) ===
+    # Tiny eval (~15 min) — only needs the CPT 0.6B full model (done) +
+    # medstruct test set. Can run on any free GPU.
+    QueueEntry(
+        name="d3_21c_noise_dim_perturbation",
+        required_gpus=[2],
+        tmux_window="d3_21c_noise_pert",
+        cmd=(
+            f"clear; {ENV_PREFIX} && export CUDA_VISIBLE_DEVICES=2 && "
+            f"python {REPO}/scripts/analysis/noise_dim_perturbation.py "
+            f"--cpt-dir {REPO}/model/kv_llm_qwen3_0.6b_full/final_model "
+            f"--test {REPO}/data_full/medstruct_test_pairs.jsonl "
+            f"--output {REPO}/results/eval/d3_21c_noise_dim_06b_full.csv "
+            f"--bf16 "
+            f"2>&1 | tee {REPO}/logs/d3_21c_noise_dim_perturbation.log"
+        ),
+        depends_on=["sc3c_qwen3_0.6b_instruct_base"],
+        notes="D3.21(c) — zero each of 7 noise dims, score on MedStruct-S",
+    ),
+
     # P0 — D2.3 KV-LLM 0.6B variants × MedStruct-S FT.
     # Five variants, each LoRA r=8, GPUs 4-7 only per user. Launch on whichever
     # of 4/5 frees first; the watcher reads CPT artifact path to know if ready.
