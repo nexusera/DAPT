@@ -169,6 +169,11 @@ GPU_RE = re.compile(r"CUDA_VISIBLE_DEVICES=(\d+(?:,\d+)*)")  # fallback for if/w
 # Match --output_dir (CPT + FT train phase) OR --model_dir (kv_llm.predict phase
 # after FT finishes). Run name == basename(path) in either case.
 OUTPUT_DIR_RE = re.compile(r"--(?:output_dir|model_dir)(?:=|\s+)(\S+)")
+# kv_llm.predict appends "[predict] N done" lines to the log every N records;
+# track that as a second-phase progress indicator.
+PREDICT_RE = re.compile(r"\[predict\]\s*(\d+)\s*done")
+# FT trainer epilogue marker (mirrors CPT's '[OK] KV-LLM full CPT saved')
+FT_OK_RE = re.compile(r"\[OK\] KV-LLM SFT saved")
 
 
 def _live_run_to_gpus() -> dict[str, str]:
@@ -308,9 +313,15 @@ def parse_run(name: str, logs_dir: Path, stale_after_s: float) -> RunStatus:
     #      for > stale_after_s (single-phase schedules like span / nsp /
     #      plain_clm never print [OK] but do print train_runtime once the
     #      phase ends, after which the process exits cleanly).
-    completed_by_ok = bool(FULL_OK_RE.search(text))
+    completed_by_ok = bool(FULL_OK_RE.search(text)) or bool(FT_OK_RE.search(text))
     quiet = st.last_modified_ago_s > stale_after_s
     completed_single_phase = bool(train_done_matches) and quiet
+    # Special case: FT chain is "FT train && predict". FT_OK marker fires
+    # when train ends; predict phase keeps writing for ~hours. So only count
+    # FT-chain runs as completed when the log has ALSO gone quiet (predict
+    # phase exited).
+    if FT_OK_RE.search(text) and not quiet:
+        completed_by_ok = False
     if completed_by_ok or completed_single_phase:
         st.state = "completed"
     elif ERROR_RE.search(text.split("[OK] KV-LLM full CPT saved")[-1]):
@@ -370,6 +381,23 @@ def parse_run(name: str, logs_dir: Path, stale_after_s: float) -> RunStatus:
     live = get_live_gpu(name)
     if live:
         st.actual_gpus = live
+
+    # FT chain ('train && predict'): if FT trainer epilogue appeared AND predict
+    # is now emitting "[predict] N done" lines, override the tqdm-derived step
+    # progress with the predict phase progress (so the dashboard isn't stuck
+    # at 1173/1173 "100%" while predict is actually doing the work).
+    if FT_OK_RE.search(text):
+        predicts = list(PREDICT_RE.finditer(text))
+        if predicts:
+            st.phase = "predict"
+            done = int(predicts[-1].group(1))
+            st.step = done
+            # heuristic: assume the test set is the medstruct test set (~358 records).
+            # parse_pairs / test data size isn't known statically — best-effort.
+            st.total = max(done, 358)
+            st.pct = 100.0 * done / max(st.total, 1)
+            st.speed = ""  # tqdm bar is from the trainer, no longer reliable
+            st.eta = ""
 
     return st
 
