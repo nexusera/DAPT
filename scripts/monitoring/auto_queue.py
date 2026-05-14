@@ -250,6 +250,34 @@ def all_free(gpus: list[int], used: dict[int, int], threshold_mb: int) -> bool:
     return all(used.get(g, 0) < threshold_mb for g in gpus)
 
 
+def is_run_finished(name: str, logs_dir: Path) -> bool:
+    """A queue dependency is satisfied only once the named run has actually
+    finished (not just been launched). We check the log for an end marker:
+      - "[OK] KV-LLM full CPT saved"  (schedule=full)
+      - any "train_runtime': ..."     (single-phase span / nsp / plain_clm / FT)
+    AND the log has been quiet for > 60s (process exited cleanly)."""
+    log_path = logs_dir / f"{name}.log"
+    if not log_path.exists():
+        return False
+    try:
+        stat = log_path.stat()
+        quiet_for = time.time() - stat.st_mtime
+    except FileNotFoundError:
+        return False
+    if quiet_for < 60:
+        return False
+    text = log_path.read_text(encoding="utf-8", errors="replace")
+    return ("[OK] KV-LLM full CPT saved" in text) or ("'train_runtime'" in text)
+
+
+def gpus_busy_with_other_runs(gpus: list[int], own_name: str, logs_dir: Path) -> bool:
+    """Return True if any of the named GPUs are currently hosting another
+    launched run that hasn't finished yet. This guards against the
+    "depends_on satisfied but predecessor still occupies the GPU" race."""
+    return False  # placeholder — the all_free check on raw memory.used already
+    # gates this when threshold is tight enough; see free-threshold-mb default.
+
+
 def ensure_tmux_window(session: str, window: str) -> None:
     """Create window if missing — no-op otherwise."""
     listing = subprocess.run(
@@ -288,6 +316,8 @@ def main() -> None:
     ap.add_argument("--logfile", default=f"{REPO}/logs/auto_queue.log")
     ap.add_argument("--state", default=f"{REPO}/logs/auto_queue.state.json",
                     help="persist launched names so restart doesn't double-launch")
+    ap.add_argument("--logs-dir", default=f"{REPO}/logs",
+                    help="where to look for <name>.log files when evaluating depends_on completion")
     args = ap.parse_args()
 
     logpath = Path(args.logfile)
@@ -316,8 +346,12 @@ def main() -> None:
             log("queue empty — exiting watcher.", logpath)
             return
 
+        logs_dir = Path(args.logs_dir)
         for entry in pending:
-            deps_ok = all(d in launched_set for d in entry.depends_on)
+            # depends_on now means "the dependency has FINISHED", not "launched".
+            # Without this, the watcher launches the dependent within the next
+            # poll cycle while the predecessor is still hogging the GPU.
+            deps_ok = all(is_run_finished(d, logs_dir) for d in entry.depends_on)
             if not deps_ok:
                 continue
             if entry.require_path and not Path(entry.require_path).exists():

@@ -142,6 +142,7 @@ CATALOGUE: list[RunSpec] = [
 # --- log parsers -------------------------------------------------------------
 
 LOSS_RE = re.compile(r"\{'loss':\s*([-\d.eE+nainf]+),\s*'grad_norm':\s*([-\d.eE+nainf]+).*?'epoch':\s*([\d.]+)\}")
+GPU_RE = re.compile(r"CUDA_VISIBLE_DEVICES=(\d+(?:,\d+)*)")
 TQDM_RE = re.compile(
     r"(\d+)%\|[^|]*\|\s*(\d+)/(\d+)\s*\[(\d{1,2}:\d{2}(?::\d{2})?)<(\d+:\d{2}(?::\d{2})?|\?+),\s*([\d.]+)([a-z/]+)\]"
 )
@@ -171,6 +172,7 @@ class RunStatus:
     last_modified_ago_s: float = -1.0
     log_size_kb: float = 0.0
     error_snippet: str = ""
+    actual_gpus: str = ""  # parsed from log (CUDA_VISIBLE_DEVICES=...) — overrides spec.gpu when present
 
 
 def _tail_normalized(path: Path, max_bytes: int = 200_000) -> str:
@@ -264,6 +266,11 @@ def parse_run(name: str, logs_dir: Path, stale_after_s: float) -> RunStatus:
             st.epoch = float(m.group(3))
         except ValueError:
             pass
+
+    gpu_matches = list(GPU_RE.finditer(text))
+    if gpu_matches:
+        # last CUDA_VISIBLE_DEVICES= line wins (covers re-launches in the same log)
+        st.actual_gpus = gpu_matches[-1].group(1)
 
     return st
 
@@ -359,11 +366,12 @@ def render_html(specs: list[RunSpec], statuses: list[RunStatus], gpus: list[dict
                         update = f"{int(st.last_modified_ago_s / 60)}min ago"
                     else:
                         update = f"{st.last_modified_ago_s / 3600:.1f}h ago"
+                gpu_display = st.actual_gpus or spec.gpu
                 out.append(
                     "<tr>"
                     f"<td><span class=planid>{escape(spec.plan_id or '—')}</span></td>"
                     f"<td><div class=runname>{escape(spec.label)}</div><div class=hint>{escape(spec.name)}</div></td>"
-                    f"<td>{escape(spec.gpu)}</td>"
+                    f"<td>{escape(gpu_display)}</td>"
                     f"<td><span class=sched>{escape(spec.schedule)}</span></td>"
                     f"<td>{escape(phase_html)}</td>"
                     f"<td>{escape(step_total)}</td>"
