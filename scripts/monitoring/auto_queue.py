@@ -592,12 +592,49 @@ def all_free(gpus: list[int], used: dict[int, int], threshold_mb: int) -> bool:
     return all(used.get(g, 0) < threshold_mb for g in gpus)
 
 
+def _live_processes_for_run(name: str) -> bool:
+    """Return True iff a python/torchrun process whose --output_dir or
+    --model_dir basename matches `name` is currently on the GPU. Mirrors
+    dashboard.py _live_run_to_gpus() so the queue and the dashboard agree
+    on 'is this run still alive'."""
+    try:
+        out = subprocess.check_output(
+            ["nvidia-smi", "--query-compute-apps=pid", "--format=csv,noheader,nounits"],
+            text=True, timeout=5,
+        )
+    except Exception:
+        return False
+    pat = __import__("re").compile(r"--(?:output_dir|model_dir)(?:=|\s+)(\S+)")
+    for line in out.strip().splitlines():
+        try:
+            pid = int(line.strip())
+        except ValueError:
+            continue
+        try:
+            cmdline = Path(f"/proc/{pid}/cmdline").read_bytes().decode("utf-8", errors="replace").replace("\0", " ")
+        except Exception:
+            continue
+        m = pat.search(cmdline)
+        if not m:
+            continue
+        if Path(m.group(1).rstrip("/")).name == name:
+            return True
+    return False
+
+
 def is_run_finished(name: str, logs_dir: Path) -> bool:
     """A queue dependency is satisfied only once the named run has actually
-    finished (not just been launched). We check the log for an end marker:
-      - "[OK] KV-LLM full CPT saved"  (schedule=full)
-      - any "train_runtime': ..."     (single-phase span / nsp / plain_clm / FT)
-    AND the log has been quiet for > 60s (process exited cleanly)."""
+    finished. Decision logic (in order):
+      1. If nvidia-smi still has the run's process on a GPU → NOT finished.
+         (Handles 1.7B FT predict that's silent for >5min between
+          '[predict] N done' lines — would falsely look quiet otherwise.)
+      2. log file must exist
+      3. log must have been quiet for > 60s (process exited cleanly)
+      4. log must contain either '[OK] KV-LLM full CPT saved' (CPT epilogue)
+         or '[OK] KV-LLM SFT saved' (FT epilogue) or any 'train_runtime'
+         (single-phase span/nsp/plain_clm)."""
+    if _live_processes_for_run(name):
+        return False
     log_path = logs_dir / f"{name}.log"
     if not log_path.exists():
         return False
@@ -609,7 +646,11 @@ def is_run_finished(name: str, logs_dir: Path) -> bool:
     if quiet_for < 60:
         return False
     text = log_path.read_text(encoding="utf-8", errors="replace")
-    return ("[OK] KV-LLM full CPT saved" in text) or ("'train_runtime'" in text)
+    return (
+        "[OK] KV-LLM full CPT saved" in text
+        or "[OK] KV-LLM SFT saved" in text
+        or "'train_runtime'" in text
+    )
 
 
 def gpus_busy_with_other_runs(gpus: list[int], own_name: str, logs_dir: Path) -> bool:
