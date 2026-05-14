@@ -143,10 +143,8 @@ CATALOGUE: list[RunSpec] = [
 
 LOSS_RE = re.compile(r"\{'loss':\s*([-\d.eE+nainf]+),\s*'grad_norm':\s*([-\d.eE+nainf]+).*?'epoch':\s*([\d.]+)\}")
 GPU_RE = re.compile(r"CUDA_VISIBLE_DEVICES=(\d+(?:,\d+)*)")  # fallback for if/when launchers echo it
-# Match --output_dir flag value's leaf dir (run name). Handles both
-# .../<run_name>            (CPT case)
-# .../<run_name>/...        (e.g. ft/<run_name>)
-RUN_NAME_FROM_CMD_RE = re.compile(r"--output_dir(?:=|\s+)\S*?/([^/\s]+?)(?:/[^/\s]+)*?(?=\s|$)")
+# Match the --output_dir flag value (whole path). Run name == basename(path).
+OUTPUT_DIR_RE = re.compile(r"--output_dir(?:=|\s+)(\S+)")
 
 
 def _live_run_to_gpus() -> dict[str, str]:
@@ -194,10 +192,13 @@ def _live_run_to_gpus() -> dict[str, str]:
             cmdline = Path(f"/proc/{pid}/cmdline").read_bytes().decode("utf-8", errors="replace").replace("\0", " ")
         except Exception:
             continue
-        m = RUN_NAME_FROM_CMD_RE.search(cmdline)
+        m = OUTPUT_DIR_RE.search(cmdline)
         if not m:
             continue
-        run = m.group(1)
+        # basename of the --output_dir path is the run_name our catalogue uses
+        run = Path(m.group(1).rstrip("/")).name
+        if not run:
+            continue
         name_to_gpus.setdefault(run, set()).update(gpus)
     return {n: ",".join(sorted(g, key=lambda x: int(x))) for n, g in name_to_gpus.items()}
 
