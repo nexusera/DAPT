@@ -142,13 +142,24 @@ def main() -> None:
             remove_unused_columns=False,
             report_to="none",
             save_total_limit=2,
+            # Qwen3 ties lm_head with embed_tokens; safetensors refuses to
+            # serialize shared storages so we fall back to torch.save.
+            save_safetensors=False,
+            # FT logs are loud enough to drown a Trainer that touches DDP
+            # heads on rank>0; enable in case user launches with torchrun.
+            ddp_find_unused_parameters=True,
+            gradient_checkpointing=True,
+            gradient_checkpointing_kwargs={"use_reentrant": False},
+            logging_steps=20,
         ),
         train_dataset=ds,
         data_collator=SftCollator(tokenizer),
     )
     trainer.train()
-    trainer.save_model(args.output_dir)
-    tokenizer.save_pretrained(args.output_dir)
+    if trainer.is_world_process_zero():
+        trainer.save_model(args.output_dir)
+        tokenizer.save_pretrained(args.output_dir)
+        print(f"[OK] KV-LLM SFT saved to {args.output_dir}")
 
 
 if __name__ == "__main__":

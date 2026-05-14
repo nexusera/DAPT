@@ -49,6 +49,7 @@ class QueueEntry:
     tmux_window: str
     cmd: str
     depends_on: list[str] = field(default_factory=list)
+    require_path: Optional[str] = None  # only launch if this filesystem path exists
     launched_at: Optional[float] = None
     notes: str = ""
 
@@ -89,11 +90,63 @@ def make_cpt_cmd(
     )
 
 
+# ============================ FT helper ======================================
+
+# Map of CPT-variant key -> (CPT artifact path on disk, FT label, plan_id)
+# When new CPT variants finish, add them here.
+CPT_OUTPUTS = {
+    "06b_full":      (f"{REPO}/model/kv_llm_qwen3_0.6b_full/final_model",                  "0.6B full",        "D2.3"),
+    "06b_no_noise":  (f"{REPO}/model/kv_llm_qwen3_0.6b_no_noise/final_model",              "0.6B no_noise",    "D2.3"),
+    "06b_no_kvnsp":  (f"{REPO}/model/kv_llm_qwen3_0.6b_no_kvnsp/span/final_model",         "0.6B no_kvnsp",    "D2.3"),
+    "06b_plain_clm": (f"{REPO}/model/kv_llm_qwen3_0.6b_plain_clm/plain_clm/final_model",   "0.6B plain_clm",   "D2.4"),
+    "06b_no_span":   (f"{REPO}/model/kv_llm_qwen3_0.6b_no_span/kv_nsp/final_model",        "0.6B no_span",     "D2.3"),
+    "17b_full":      (f"{REPO}/model/kv_llm_qwen3_1.7b_full/final_model",                  "1.7B full",        "D2.5"),
+    "17b_no_noise":  (f"{REPO}/model/kv_llm_qwen3_1.7b_no_noise/final_model",              "1.7B no_noise",    "D3.1"),
+    "17b_plain_clm": (f"{REPO}/model/kv_llm_qwen3_1.7b_plain_clm/plain_clm/final_model",   "1.7B plain_clm",   "D3.2"),
+}
+
+FT_TRAIN_DATA = f"{REPO}/data_full/medstruct_train_pairs.jsonl"
+FT_TEST_DATA  = f"{REPO}/data_full/medstruct_test_pairs.jsonl"
+
+
+def make_ft_cmd(*, name: str, cpt_dir: str, gpus: list[int], use_lora: bool = True,
+                lora_rank: int = 8, epochs: float = 3.0,
+                per_device: int = 1, ga: int = 8) -> str:
+    gpu_csv = ",".join(str(g) for g in gpus)
+    out_dir = f"{REPO}/model/ft/{name}"
+    log = f"{REPO}/logs/{name}.log"
+    pred_out = f"{REPO}/results/preds/{name}.jsonl"
+    lora_flag = "--use_lora" if use_lora else ""
+    ft_cmd = (
+        f"python -m kv_llm.fine_tune_sft "
+        f"--model_name_or_path {cpt_dir} "
+        f"--train_data {FT_TRAIN_DATA} "
+        f"--output_dir {out_dir} "
+        f"{lora_flag} --lora_rank {lora_rank} "
+        f"--num_train_epochs {epochs} "
+        f"--per_device_train_batch_size {per_device} "
+        f"--gradient_accumulation_steps {ga} "
+        f"--bf16"
+    )
+    base_flag = f"--base_model {cpt_dir}" if use_lora else ""
+    predict_cmd = (
+        f"python -m kv_llm.predict "
+        f"--model_dir {out_dir} {base_flag} "
+        f"--test_data {FT_TEST_DATA} "
+        f"--output {pred_out} "
+        f"--bf16 --max_new_tokens 1024"
+    )
+    return (
+        f"clear; {ENV_PREFIX} && export CUDA_VISIBLE_DEVICES={gpu_csv} && "
+        f"{ft_cmd} 2>&1 | tee {log} && {predict_cmd} 2>&1 | tee -a {log}"
+    )
+
+
 # ============================ Queue (priority order) =========================
 
 QUEUE: list[QueueEntry] = [
     # P0 — 1.7B w/o NoiseEmb (Day 2 D2.1) — needs 2 GPUs DDP, target 6+7 after
-    # the current 1.7B full DDP finishes
+    # the current 1.7B full DDP finishes (auto-fires after that completes).
     QueueEntry(
         name="kv_llm_qwen3_1.7b_no_noise",
         required_gpus=[6, 7],
@@ -105,6 +158,68 @@ QUEUE: list[QueueEntry] = [
             per_device=32, ga=2, ddp=True,
         ),
         notes="D2.1 — same shape as 1.7B full but noise_mode=none",
+    ),
+
+    # P0 — D2.3 KV-LLM 0.6B variants × MedStruct-S FT.
+    # Five variants, each LoRA r=8, GPUs 4-7 only per user. Launch on whichever
+    # of 4/5 frees first; the watcher reads CPT artifact path to know if ready.
+    QueueEntry(
+        name="ft_kv_llm_06b_full_medstruct",
+        required_gpus=[4],
+        tmux_window="ft_06b_full",
+        cmd=make_ft_cmd(name="ft_kv_llm_06b_full_medstruct",
+                        cpt_dir=CPT_OUTPUTS["06b_full"][0], gpus=[4]),
+        require_path=CPT_OUTPUTS["06b_full"][0],
+        notes="D2.3 — main result FT",
+    ),
+    QueueEntry(
+        name="ft_kv_llm_06b_no_noise_medstruct",
+        required_gpus=[5],
+        tmux_window="ft_06b_no_noise",
+        cmd=make_ft_cmd(name="ft_kv_llm_06b_no_noise_medstruct",
+                        cpt_dir=CPT_OUTPUTS["06b_no_noise"][0], gpus=[5]),
+        require_path=CPT_OUTPUTS["06b_no_noise"][0],
+        notes="D2.3 — noise embedding ablation FT",
+    ),
+    QueueEntry(
+        name="ft_kv_llm_06b_no_kvnsp_medstruct",
+        required_gpus=[4],
+        tmux_window="ft_06b_no_kvnsp",
+        cmd=make_ft_cmd(name="ft_kv_llm_06b_no_kvnsp_medstruct",
+                        cpt_dir=CPT_OUTPUTS["06b_no_kvnsp"][0], gpus=[4]),
+        depends_on=["ft_kv_llm_06b_full_medstruct"],
+        require_path=CPT_OUTPUTS["06b_no_kvnsp"][0],
+        notes="D2.3 — KV-NSP ablation FT (wait for GPU 4)",
+    ),
+    QueueEntry(
+        name="ft_kv_llm_06b_no_span_medstruct",
+        required_gpus=[5],
+        tmux_window="ft_06b_no_span",
+        cmd=make_ft_cmd(name="ft_kv_llm_06b_no_span_medstruct",
+                        cpt_dir=CPT_OUTPUTS["06b_no_span"][0], gpus=[5]),
+        depends_on=["ft_kv_llm_06b_no_noise_medstruct"],
+        require_path=CPT_OUTPUTS["06b_no_span"][0],
+        notes="D2.3 — span ablation FT (wait for GPU 5)",
+    ),
+    QueueEntry(
+        name="ft_kv_llm_06b_plain_clm_medstruct",
+        required_gpus=[4],
+        tmux_window="ft_06b_plain_clm",
+        cmd=make_ft_cmd(name="ft_kv_llm_06b_plain_clm_medstruct",
+                        cpt_dir=CPT_OUTPUTS["06b_plain_clm"][0], gpus=[4]),
+        depends_on=["ft_kv_llm_06b_no_kvnsp_medstruct"],
+        require_path=CPT_OUTPUTS["06b_plain_clm"][0],
+        notes="D2.4 — Plain CLM FT (wait for GPU 4)",
+    ),
+    QueueEntry(
+        name="ft_kv_llm_17b_full_medstruct",
+        required_gpus=[5],
+        tmux_window="ft_17b_full",
+        cmd=make_ft_cmd(name="ft_kv_llm_17b_full_medstruct",
+                        cpt_dir=CPT_OUTPUTS["17b_full"][0], gpus=[5]),
+        depends_on=["ft_kv_llm_06b_no_span_medstruct"],
+        require_path=CPT_OUTPUTS["17b_full"][0],
+        notes="D2.5 — 1.7B full FT (wait for GPU 5)",
     ),
 ]
 
@@ -204,6 +319,8 @@ def main() -> None:
         for entry in pending:
             deps_ok = all(d in launched_set for d in entry.depends_on)
             if not deps_ok:
+                continue
+            if entry.require_path and not Path(entry.require_path).exists():
                 continue
             if all_free(entry.required_gpus, used, args.free_threshold_mb):
                 log(f"launching {entry.name} on GPUs {entry.required_gpus} (window {entry.tmux_window})", logpath)
