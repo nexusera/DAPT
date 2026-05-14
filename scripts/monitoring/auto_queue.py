@@ -162,31 +162,31 @@ QUEUE: list[QueueEntry] = [
     # P0 — D3.19 3 seed main results (plan 2026-05-14). seed=42 = seed1 already done.
     # Add seed=2 and seed=3 for KV-LLM 0.6B full + 1.7B full. KV-BERT seed=2/3 is a
     # separate codebase, not queued here.
+    # seed=2 was manually launched on GPU 3 at 10:54 (queue state pre-populated).
     QueueEntry(
         name="kv_llm_qwen3_0.6b_full_seed2",
-        required_gpus=[2],  # any single GPU in 2-7
+        required_gpus=[3],
         tmux_window="kv06b_full_s2",
         cmd=make_cpt_cmd(
             name="kv_llm_qwen3_0.6b_full_seed2",
-            model=BASE_06B, gpus=[2],
+            model=BASE_06B, gpus=[3],
             schedule="full", noise_mode="bucket",
             per_device=64, ga=2, ddp=False,
         ).replace("--save_steps 1000", "--save_steps 1000 --seed 2"),
-        depends_on=["kv_llm_qwen3_1.7b_plain_clm"],  # don't compete with GPU-2 1.7B PCLM
-        notes="D3.19 — seed=2 main result for variance",
+        notes="D3.19 — seed=2 main result (launched manually 10:54 on GPU 3)",
     ),
     QueueEntry(
         name="kv_llm_qwen3_0.6b_full_seed3",
-        required_gpus=[2],
+        required_gpus=[3],  # same GPU as seed2; depends_on chains them serially
         tmux_window="kv06b_full_s3",
         cmd=make_cpt_cmd(
             name="kv_llm_qwen3_0.6b_full_seed3",
-            model=BASE_06B, gpus=[2],
+            model=BASE_06B, gpus=[3],
             schedule="full", noise_mode="bucket",
             per_device=64, ga=2, ddp=False,
         ).replace("--save_steps 1000", "--save_steps 1000 --seed 3"),
         depends_on=["kv_llm_qwen3_0.6b_full_seed2"],
-        notes="D3.19 — seed=3 main result",
+        notes="D3.19 — seed=3 main result, follows seed2 on GPU 3",
     ),
     QueueEntry(
         name="kv_llm_qwen3_1.7b_full_seed2",
