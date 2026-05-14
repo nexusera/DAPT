@@ -291,6 +291,217 @@ QUEUE: list[QueueEntry] = [
         notes="D3.21(c) — zero each of 7 noise dims, score on MedStruct-S",
     ),
 
+    # ====================================================================
+    # ===== GPU 4 long chain (fires after current FT predict batch done) =
+    # ====================================================================
+    # Quick mechanism evals first (10min–1h each), then KV-BERT R1 seeds.
+
+    # D3.21(a) span-mask attention pattern (~10 min)
+    QueueEntry(
+        name="d3_21a_span_mask_attn",
+        required_gpus=[4],
+        tmux_window="d3_21a_span_attn",
+        cmd=(
+            f"clear; {ENV_PREFIX} && export CUDA_VISIBLE_DEVICES=4 && "
+            f"python {REPO}/scripts/analysis/attention_extract.py --mode span_mask "
+            f"--cpt-dir {REPO}/model/kv_llm_qwen3_0.6b_full/final_model "
+            f"--test-data /data/ocean/DAPT/biaozhu_with_ocr_noise_prepared/real_test_with_ocr.json "
+            f"--num-samples 20 --bf16 "
+            f"--output {REPO}/results/eval/d3_21a_span_attn.jsonl "
+            f"2>&1 | tee {REPO}/logs/d3_21a_span_mask_attn.log"
+        ),
+        depends_on=["ft_kv_llm_06b_plain_clm_medstruct"],  # last FT on GPU 4
+        require_path=f"{REPO}/model/kv_llm_qwen3_0.6b_full/final_model",
+        notes="D3.21(a) — span mask attn viz",
+    ),
+    # D3.21(b) KV-NSP last-token attention (~10 min)
+    QueueEntry(
+        name="d3_21b_kvnsp_lasttoken_attn",
+        required_gpus=[4],
+        tmux_window="d3_21b_kvnsp_attn",
+        cmd=(
+            f"clear; {ENV_PREFIX} && export CUDA_VISIBLE_DEVICES=4 && "
+            f"python {REPO}/scripts/analysis/attention_extract.py --mode kvnsp_lasttoken "
+            f"--cpt-dir {REPO}/model/kv_llm_qwen3_0.6b_full/final_model "
+            f"--kv-pairs {NSP} --num-samples 50 --bf16 "
+            f"--output {REPO}/results/eval/d3_21b_kvnsp_attn.jsonl "
+            f"2>&1 | tee {REPO}/logs/d3_21b_kvnsp_lasttoken_attn.log"
+        ),
+        depends_on=["d3_21a_span_mask_attn"],
+        notes="D3.21(b) — KV-NSP last-token segment attn",
+    ),
+    # D3.7 probing classifier (~1h)
+    QueueEntry(
+        name="probing_layerwise",
+        required_gpus=[4],
+        tmux_window="d3_7_probing",
+        cmd=(
+            f"clear; {ENV_PREFIX} && export CUDA_VISIBLE_DEVICES=4 && "
+            f"python {REPO}/scripts/analysis/probing_classifier.py "
+            f"--model-dir {REPO}/model/kv_llm_qwen3_0.6b_full/final_model "
+            f"--base-model /data/ocean/model/Qwen/Qwen3-0.6B-Base "
+            f"--probe-data {REPO}/data_full/medstruct_test_pairs.jsonl "
+            f"--output {REPO}/results/eval/d3_7_probing_06b.csv "
+            f"--bf16 --max-samples 200 "
+            f"2>&1 | tee {REPO}/logs/probing_layerwise.log"
+        ),
+        depends_on=["d3_21b_kvnsp_lasttoken_attn"],
+        notes="D3.7 — layer-wise probing (3 tasks × CPT-vs-base)",
+    ),
+    # D3.8 CKA similarity (~30 min)
+    QueueEntry(
+        name="cka_similarity",
+        required_gpus=[4],
+        tmux_window="d3_8_cka",
+        cmd=(
+            f"clear; {ENV_PREFIX} && export CUDA_VISIBLE_DEVICES=4 && "
+            f"python {REPO}/scripts/analysis/cka_similarity.py "
+            f"--model-a {REPO}/model/kv_llm_qwen3_0.6b_full/final_model "
+            f"--model-b /data/ocean/model/Qwen/Qwen3-0.6B-Base "
+            f"--probe-data {REPO}/data_full/medstruct_test_pairs.jsonl "
+            f"--output {REPO}/results/eval/d3_8_cka_06b_vs_base.csv "
+            f"--bf16 --max-samples 200 "
+            f"2>&1 | tee {REPO}/logs/cka_similarity.log"
+        ),
+        depends_on=["probing_layerwise"],
+        notes="D3.8 — CKA between CPT'd 0.6B and base",
+    ),
+
+    # ====================================================================
+    # ===== GPU 5 long chain (fires after current FT predict batch done) =
+    # ====================================================================
+    # D3.6 + D3.20 noise evals, then KV-BERT R2/R3 rerun chain.
+
+    # D3.6 synthetic noise eval on 0.6B full FT
+    QueueEntry(
+        name="synthetic_noise_graceful_degradation",
+        required_gpus=[5],
+        tmux_window="d3_6_noise_eval",
+        cmd=(
+            f"clear; {ENV_PREFIX} && export CUDA_VISIBLE_DEVICES=5 && "
+            f"python {REPO}/scripts/eval/eval_noise_matrix.py "
+            f"--model kv_llm_06b_full {REPO}/model/ft/ft_kv_llm_06b_full_medstruct "
+            f"--base {REPO}/model/kv_llm_qwen3_0.6b_full/final_model "
+            f"--bench {REPO}/data_full/synthetic_noise_benchmark.jsonl "
+            f"--output {REPO}/results/eval/d3_6_noise_06b_full.csv "
+            f"--bf16 --limit-per-level 100 "
+            f"2>&1 | tee {REPO}/logs/synthetic_noise_graceful_degradation.log"
+        ),
+        depends_on=["ft_kv_llm_17b_full_medstruct"],  # last FT on GPU 5
+        notes="D3.6 — graceful degradation curve, 6 noise levels",
+    ),
+    # D3.20 component × noise cross-cut (4 models × 6 levels)
+    QueueEntry(
+        name="component_noise_cross_cut",
+        required_gpus=[5],
+        tmux_window="d3_20_component_noise",
+        cmd=(
+            f"clear; {ENV_PREFIX} && export CUDA_VISIBLE_DEVICES=5 && "
+            f"python {REPO}/scripts/eval/eval_noise_matrix.py "
+            f"--model full      {REPO}/model/ft/ft_kv_llm_06b_full_medstruct "
+            f"--model no_kvnsp  {REPO}/model/ft/ft_kv_llm_06b_no_kvnsp_medstruct "
+            f"--model no_noise  {REPO}/model/ft/ft_kv_llm_06b_no_noise_medstruct "
+            f"--model no_span   {REPO}/model/ft/ft_kv_llm_06b_no_span_medstruct "
+            f"--base {REPO}/model/kv_llm_qwen3_0.6b_full/final_model "
+            f"--base {REPO}/model/kv_llm_qwen3_0.6b_no_kvnsp/span/final_model "
+            f"--base {REPO}/model/kv_llm_qwen3_0.6b_no_noise/final_model "
+            f"--base {REPO}/model/kv_llm_qwen3_0.6b_no_span/kv_nsp/final_model "
+            f"--bench {REPO}/data_full/synthetic_noise_benchmark.jsonl "
+            f"--output {REPO}/results/eval/d3_20_component_noise.csv "
+            f"--bf16 --limit-per-level 100 "
+            f"2>&1 | tee {REPO}/logs/component_noise_cross_cut.log"
+        ),
+        depends_on=["synthetic_noise_graceful_degradation"],
+        notes="D3.20 — 4 ablation × 6 noise = 24 cells (strong RQ4)",
+    ),
+
+    # ====================================================================
+    # ===== KV-BERT 重跑包 R1-R5 (split across GPU 4 + GPU 5) ===========
+    # ====================================================================
+    # GPU 4 chain (after CKA): R1×3 + R5 attention.
+    QueueEntry(
+        name="rerun_kv_bert_full_seed1",
+        required_gpus=[4],
+        tmux_window="rerun_kvbert_s1",
+        cmd=f"bash {REPO}/experiments/rerun_kvbert/run_rerun.sh rerun_kv_bert_full_seed1 4",
+        depends_on=["cka_similarity"],
+        notes="R1 — KV-BERT full CPT seed=1",
+    ),
+    QueueEntry(
+        name="rerun_kv_bert_full_seed2",
+        required_gpus=[4],
+        tmux_window="rerun_kvbert_s2",
+        cmd=f"bash {REPO}/experiments/rerun_kvbert/run_rerun.sh rerun_kv_bert_full_seed2 4",
+        depends_on=["rerun_kv_bert_full_seed1"],
+        notes="R1 — KV-BERT full CPT seed=2",
+    ),
+    QueueEntry(
+        name="rerun_kv_bert_full_seed3",
+        required_gpus=[4],
+        tmux_window="rerun_kvbert_s3",
+        cmd=f"bash {REPO}/experiments/rerun_kvbert/run_rerun.sh rerun_kv_bert_full_seed3 4",
+        depends_on=["rerun_kv_bert_full_seed2"],
+        notes="R1 — KV-BERT full CPT seed=3",
+    ),
+    QueueEntry(
+        name="rerun_kv_bert_attention",
+        required_gpus=[4],
+        tmux_window="rerun_kvbert_attn",
+        cmd=f"bash {REPO}/experiments/rerun_kvbert/run_rerun.sh rerun_kv_bert_attention 4",
+        depends_on=["rerun_kv_bert_full_seed3"],
+        notes="R5(a) — Attention re-gen on R1 seed=1 checkpoint",
+    ),
+
+    # GPU 5 chain (after Component×Noise): R2×3 + R3×2 + R5 IG.
+    QueueEntry(
+        name="rerun_kv_bert_no_kvmlm",
+        required_gpus=[5],
+        tmux_window="rerun_kvbert_no_kvmlm",
+        cmd=f"bash {REPO}/experiments/rerun_kvbert/run_rerun.sh rerun_kv_bert_no_kvmlm 5",
+        depends_on=["component_noise_cross_cut"],
+        notes="R2 — w/o KV-MLM",
+    ),
+    QueueEntry(
+        name="rerun_kv_bert_no_kvnsp",
+        required_gpus=[5],
+        tmux_window="rerun_kvbert_no_kvnsp",
+        cmd=f"bash {REPO}/experiments/rerun_kvbert/run_rerun.sh rerun_kv_bert_no_kvnsp 5",
+        depends_on=["rerun_kv_bert_no_kvmlm"],
+        notes="R2 — w/o KV-NSP",
+    ),
+    QueueEntry(
+        name="rerun_kv_bert_no_noise",
+        required_gpus=[5],
+        tmux_window="rerun_kvbert_no_noise",
+        cmd=f"bash {REPO}/experiments/rerun_kvbert/run_rerun.sh rerun_kv_bert_no_noise 5",
+        depends_on=["rerun_kv_bert_no_kvnsp"],
+        notes="R2 — w/o NoiseEmb",
+    ),
+    QueueEntry(
+        name="rerun_kv_bert_noise_linear",
+        required_gpus=[5],
+        tmux_window="rerun_kvbert_lin",
+        cmd=f"bash {REPO}/experiments/rerun_kvbert/run_rerun.sh rerun_kv_bert_noise_linear 5",
+        depends_on=["rerun_kv_bert_no_noise"],
+        notes="R3 — noise_mode=linear",
+    ),
+    QueueEntry(
+        name="rerun_kv_bert_noise_mlp",
+        required_gpus=[5],
+        tmux_window="rerun_kvbert_mlp",
+        cmd=f"bash {REPO}/experiments/rerun_kvbert/run_rerun.sh rerun_kv_bert_noise_mlp 5",
+        depends_on=["rerun_kv_bert_noise_linear"],
+        notes="R3 — noise_mode=mlp",
+    ),
+    QueueEntry(
+        name="rerun_kv_bert_ig",
+        required_gpus=[5],
+        tmux_window="rerun_kvbert_ig",
+        cmd=f"bash {REPO}/experiments/rerun_kvbert/run_rerun.sh rerun_kv_bert_ig 5",
+        depends_on=["rerun_kv_bert_noise_mlp"],
+        notes="R5(b) — IG re-gen on R1 seed=1 checkpoint",
+    ),
+
     # P0 — D2.3 KV-LLM 0.6B variants × MedStruct-S FT.
     # Five variants, each LoRA r=8, GPUs 4-7 only per user. Launch on whichever
     # of 4/5 frees first; the watcher reads CPT artifact path to know if ready.
