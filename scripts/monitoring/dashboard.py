@@ -142,7 +142,77 @@ CATALOGUE: list[RunSpec] = [
 # --- log parsers -------------------------------------------------------------
 
 LOSS_RE = re.compile(r"\{'loss':\s*([-\d.eE+nainf]+),\s*'grad_norm':\s*([-\d.eE+nainf]+).*?'epoch':\s*([\d.]+)\}")
-GPU_RE = re.compile(r"CUDA_VISIBLE_DEVICES=(\d+(?:,\d+)*)")
+GPU_RE = re.compile(r"CUDA_VISIBLE_DEVICES=(\d+(?:,\d+)*)")  # fallback for if/when launchers echo it
+# Match --output_dir flag value's leaf dir (run name). Handles both
+# .../<run_name>            (CPT case)
+# .../<run_name>/...        (e.g. ft/<run_name>)
+RUN_NAME_FROM_CMD_RE = re.compile(r"--output_dir(?:=|\s+)\S*?/([^/\s]+?)(?:/[^/\s]+)*?(?=\s|$)")
+
+
+def _live_run_to_gpus() -> dict[str, str]:
+    """Map run_name -> comma-separated GPU indices for currently running
+    training processes. We pair nvidia-smi compute-apps (PID -> GPU index)
+    with /proc/<pid>/cmdline (PID -> --output_dir leaf == run_name)."""
+    try:
+        out = subprocess.check_output(
+            ["nvidia-smi", "--query-compute-apps=gpu_uuid,pid",
+             "--format=csv,noheader,nounits"],
+            text=True, timeout=5,
+        )
+    except Exception:
+        return {}
+    # Map gpu_uuid -> gpu_index
+    try:
+        idx_out = subprocess.check_output(
+            ["nvidia-smi", "--query-gpu=index,gpu_uuid",
+             "--format=csv,noheader,nounits"],
+            text=True, timeout=5,
+        )
+    except Exception:
+        return {}
+    uuid_to_idx: dict[str, str] = {}
+    for line in idx_out.strip().splitlines():
+        parts = [x.strip() for x in line.split(",")]
+        if len(parts) == 2:
+            uuid_to_idx[parts[1]] = parts[0]
+    pid_to_gpus: dict[int, set[str]] = {}
+    for line in out.strip().splitlines():
+        parts = [x.strip() for x in line.split(",")]
+        if len(parts) != 2:
+            continue
+        try:
+            pid = int(parts[1])
+        except ValueError:
+            continue
+        gpu_idx = uuid_to_idx.get(parts[0])
+        if gpu_idx is None:
+            continue
+        pid_to_gpus.setdefault(pid, set()).add(gpu_idx)
+    name_to_gpus: dict[str, set[str]] = {}
+    for pid, gpus in pid_to_gpus.items():
+        try:
+            cmdline = Path(f"/proc/{pid}/cmdline").read_bytes().decode("utf-8", errors="replace").replace("\0", " ")
+        except Exception:
+            continue
+        m = RUN_NAME_FROM_CMD_RE.search(cmdline)
+        if not m:
+            continue
+        run = m.group(1)
+        name_to_gpus.setdefault(run, set()).update(gpus)
+    return {n: ",".join(sorted(g, key=lambda x: int(x))) for n, g in name_to_gpus.items()}
+
+
+# Cache the live map for one render pass so we don't fork nvidia-smi per row
+_LIVE_GPU_CACHE: dict[str, str] = {}
+_LIVE_GPU_CACHE_TS: float = 0.0
+
+
+def get_live_gpu(run_name: str) -> str:
+    global _LIVE_GPU_CACHE, _LIVE_GPU_CACHE_TS
+    if time.time() - _LIVE_GPU_CACHE_TS > 2.0:
+        _LIVE_GPU_CACHE = _live_run_to_gpus()
+        _LIVE_GPU_CACHE_TS = time.time()
+    return _LIVE_GPU_CACHE.get(run_name, "")
 TQDM_RE = re.compile(
     r"(\d+)%\|[^|]*\|\s*(\d+)/(\d+)\s*\[(\d{1,2}:\d{2}(?::\d{2})?)<(\d+:\d{2}(?::\d{2})?|\?+),\s*([\d.]+)([a-z/]+)\]"
 )
@@ -271,6 +341,10 @@ def parse_run(name: str, logs_dir: Path, stale_after_s: float) -> RunStatus:
     if gpu_matches:
         # last CUDA_VISIBLE_DEVICES= line wins (covers re-launches in the same log)
         st.actual_gpus = gpu_matches[-1].group(1)
+    # If process is currently running, prefer the live nvidia-smi → PID → cmdline → run_name map
+    live = get_live_gpu(name)
+    if live:
+        st.actual_gpus = live
 
     return st
 
