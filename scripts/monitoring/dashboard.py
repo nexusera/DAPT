@@ -127,6 +127,28 @@ CATALOGUE: list[RunSpec] = [
     # Strata replication (D3.12) CUT — LLM-TKIE already represents the LLM-KIE route.
     *[RunSpec(f"eval_llm_tkie_{b}",            f"LLM-TKIE replication / {b}",  "?", "Qwen3-Instruct","JSON-prompt","Eval","D3.11") for b in BENCHMARKS],
 
+    # ============================== KV-BERT 重跑包 R1-R6 ====================
+    # Plan §11 Day 2 night / Day 3 early — re-run KV-BERT under SAME protocol
+    # as KV-LLM (same seed convention, same H200, same eval pipeline) so the
+    # cross-architecture comparison is clean. P2 priority; scripts already
+    # exist in repo root (train_dapt_*.py + experiments/interpretability/).
+    *[RunSpec(f"rerun_kv_bert_full_seed{s}", f"R1 KV-BERT full CPT · seed {s}",
+              "?", "MacBERT 0.11B", "KV-MLM+NSP+Noise", "Rerun-KVBERT", "R1")
+      for s in [1, 2, 3]],
+    RunSpec("rerun_kv_bert_no_kvmlm",        "R2 KV-BERT w/o KV-MLM",    "?", "MacBERT 0.11B", "ablation", "Rerun-KVBERT", "R2"),
+    RunSpec("rerun_kv_bert_no_kvnsp",        "R2 KV-BERT w/o KV-NSP",    "?", "MacBERT 0.11B", "ablation", "Rerun-KVBERT", "R2"),
+    RunSpec("rerun_kv_bert_no_noise",        "R2 KV-BERT w/o NoiseEmb",  "?", "MacBERT 0.11B", "ablation", "Rerun-KVBERT", "R2"),
+    RunSpec("rerun_kv_bert_noise_linear",    "R3 Noise-Emb form: linear","?", "MacBERT 0.11B", "ablation", "Rerun-KVBERT", "R3"),
+    RunSpec("rerun_kv_bert_noise_mlp",       "R3 Noise-Emb form: MLP",   "?", "MacBERT 0.11B", "ablation", "Rerun-KVBERT", "R3"),
+    *[RunSpec(f"rerun_ft_{enc}_medstruct",   f"R4 FT {enc} · MedStruct-S",
+              "?", enc, "seq-labeling FT", "Rerun-KVBERT", "R4")
+      for enc in ["macbert", "roberta_wwm", "bert_base_chinese", "mbert"]],
+    RunSpec("rerun_kv_bert_attention",       "R5 KV-BERT Attention re-gen","?","MacBERT 0.11B","analysis","Rerun-KVBERT","R5"),
+    RunSpec("rerun_kv_bert_ig",              "R5 KV-BERT IG re-gen",       "?","MacBERT 0.11B","analysis","Rerun-KVBERT","R5"),
+    *[RunSpec(f"rerun_kv_bert_ft_{b}",       f"R6 KV-BERT × {b}",
+              "?", "MacBERT 0.11B", "seq-labeling FT", "Rerun-KVBERT", "R6")
+      for b in ["cmeie", "cblue"]],  # blocked on data agreement
+
     # ============================== Robustness ===============================
     # Cross-OCR + Surya CUT from plan 2026-05-14 (gold standard anchored to Baidu →
     # methodologically unfair; deferred to future work). Strata replication also cut.
@@ -460,7 +482,7 @@ def render_html(specs: list[RunSpec], statuses: list[RunStatus], gpus: list[dict
         by_state[st.state].append((spec, st))
 
     # category ordering — show CPT first since it's the heaviest, infra last
-    CATEGORY_ORDER = ["CPT", "Sanity", "FT", "Eval", "Robustness", "Mechanism", "Efficiency", "Analysis", "Infra"]
+    CATEGORY_ORDER = ["CPT", "Sanity", "FT", "Eval", "Rerun-KVBERT", "Robustness", "Mechanism", "Efficiency", "Analysis", "Infra"]
 
     def table_for(state: str) -> str:
         rows = by_state.get(state, [])
