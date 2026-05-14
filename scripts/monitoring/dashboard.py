@@ -117,9 +117,16 @@ CATALOGUE: list[RunSpec] = [
     RunSpec("ft_strata_lora_qwen3_8b",         "Strata-style LoRA-Qwen3-8B / MedStruct-S","?","Qwen3-8B","LoRA-FT","FT","D3.12"),
 
     # ============================== Robustness ===============================
-    # Cross-OCR transfer (D3.3/3.4/3.5) — DEFERRED pending OCR-source decision;
-    # re-add to catalogue once we commit to which OCR engines to compare.
-    RunSpec("synthetic_noise_graceful_degradation","Synthetic Noise Graceful Degradation","?","双架构+baseline","eval","Robustness","D3.6"),
+    # Cross-OCR transfer (D3.3/3.4/3.5) — plan §6.5 uses **2 local engines: Baidu + Surya**
+    # (transformer non-cognate). Evaluation via med_eval/metrics.py value-based NED,
+    # IoU=None, no re-annotation needed (ground-truth string-aligned, not pos-aligned).
+    RunSpec("surya_batch_ocr_358pages",        "Surya OCR 重 OCR 358 测试页 (D1.1.2)",     "?", "Surya",      "data prep", "Robustness", "D1.1.2"),
+    RunSpec("surya_to_noise_features",         "Surya → 7-dim noise feature 提取 (D1.1.3)","?", "Surya",      "data prep", "Robustness", "D1.1.3"),
+    RunSpec("surya_baidu_schema_sanity",       "Surya/Baidu 7-dim 特征分布一致性 sanity (D1.1.4)","?","-","check","Robustness","D1.1.4"),
+    RunSpec("xocr_setting1_no_recal",          "Cross-OCR Setting 1 (no recal) Baidu→Surya","?","双架构","eval","Robustness","D3.3"),
+    RunSpec("xocr_setting2_bin_recal",         "Cross-OCR Setting 2 (re-bin Surya)","?","双架构","eval","Robustness","D3.4"),
+    RunSpec("xocr_setting3_noise_ft",          "Cross-OCR Setting 3 (FT noise embed @ 50 Surya pages)","?","双架构","FT","Robustness","D3.5"),
+    RunSpec("synthetic_noise_graceful_degradation","Synthetic Noise Graceful Degradation (2,148 samples)","?","双架构+baseline","eval","Robustness","D3.6"),
 
     # ============================== Mechanism ================================
     RunSpec("probing_layerwise",               "Probing classifier × 3 tasks × 双架构 × 各层","?","双架构","probing","Mechanism","D3.7"),
