@@ -204,15 +204,24 @@ def parse_run(name: str, logs_dir: Path, stale_after_s: float) -> RunStatus:
         return st
 
     # detect error / completion BEFORE classifying as running
-    if FULL_OK_RE.search(text):
+    train_done_matches = list(TRAIN_DONE_RE.finditer(text))
+    # A run is "completed" if either:
+    #   1. it printed "[OK] KV-LLM full CPT saved" (schedule=full) OR
+    #   2. it printed at least one train_runtime AND the log has been quiet
+    #      for > stale_after_s (single-phase schedules like span / nsp /
+    #      plain_clm never print [OK] but do print train_runtime once the
+    #      phase ends, after which the process exits cleanly).
+    completed_by_ok = bool(FULL_OK_RE.search(text))
+    quiet = st.last_modified_ago_s > stale_after_s
+    completed_single_phase = bool(train_done_matches) and quiet
+    if completed_by_ok or completed_single_phase:
         st.state = "completed"
     elif ERROR_RE.search(text.split("[OK] KV-LLM full CPT saved")[-1]):
-        # any error AFTER (or in absence of) the OK marker means failed
         m = ERROR_RE.search(text)
         snippet_lines = text.split("\n")[-30:]
         st.error_snippet = "\n".join(l for l in snippet_lines if l.strip())[-2000:]
         st.state = "failed"
-    elif st.last_modified_ago_s > stale_after_s:
+    elif quiet:
         st.state = "stale"
     else:
         st.state = "running"
