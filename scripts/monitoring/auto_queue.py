@@ -437,37 +437,37 @@ QUEUE: list[QueueEntry] = [
     ),
 
     # GPU 5 chain (after Component×Noise): R2×3 + R3×2 + R5 IG.
+    # === R2 chain moved to GPU 4 (user 14:30: re-enable GPU 4) ===
     QueueEntry(
         name="rerun_kv_bert_no_kvmlm",
-        required_gpus=[5],
+        required_gpus=[4],
         tmux_window="rerun_kvbert_no_kvmlm",
-        cmd=f"bash {REPO}/experiments/rerun_kvbert/run_rerun.sh rerun_kv_bert_no_kvmlm 5",
-        depends_on=["component_noise_cross_cut"],
-        notes="R2 — w/o KV-MLM",
+        cmd=f"bash {REPO}/experiments/rerun_kvbert/run_rerun.sh rerun_kv_bert_no_kvmlm 4",
+        notes="R2 — w/o KV-MLM (GPU 4, runs in parallel with GPU 5 chain)",
     ),
     QueueEntry(
         name="rerun_kv_bert_no_kvnsp",
-        required_gpus=[5],
+        required_gpus=[4],
         tmux_window="rerun_kvbert_no_kvnsp",
-        cmd=f"bash {REPO}/experiments/rerun_kvbert/run_rerun.sh rerun_kv_bert_no_kvnsp 5",
+        cmd=f"bash {REPO}/experiments/rerun_kvbert/run_rerun.sh rerun_kv_bert_no_kvnsp 4",
         depends_on=["rerun_kv_bert_no_kvmlm"],
-        notes="R2 — w/o KV-NSP",
+        notes="R2 — w/o KV-NSP (GPU 4)",
     ),
     QueueEntry(
         name="rerun_kv_bert_no_noise",
-        required_gpus=[5],
+        required_gpus=[4],
         tmux_window="rerun_kvbert_no_noise",
-        cmd=f"bash {REPO}/experiments/rerun_kvbert/run_rerun.sh rerun_kv_bert_no_noise 5",
+        cmd=f"bash {REPO}/experiments/rerun_kvbert/run_rerun.sh rerun_kv_bert_no_noise 4",
         depends_on=["rerun_kv_bert_no_kvnsp"],
-        notes="R2 — w/o NoiseEmb",
+        notes="R2 — w/o NoiseEmb (GPU 4)",
     ),
     QueueEntry(
         name="rerun_kv_bert_noise_linear",
         required_gpus=[5],
         tmux_window="rerun_kvbert_lin",
         cmd=f"bash {REPO}/experiments/rerun_kvbert/run_rerun.sh rerun_kv_bert_noise_linear 5",
-        depends_on=["rerun_kv_bert_no_noise"],
-        notes="R3 — noise_mode=linear",
+        depends_on=["component_noise_cross_cut"],  # GPU 5 chain: depends on prev GPU 5 entry, not R2 (now on GPU 4)
+        notes="R3 — noise_mode=linear (GPU 5)",
     ),
     QueueEntry(
         name="rerun_kv_bert_noise_mlp",
