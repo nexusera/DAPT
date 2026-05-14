@@ -1,17 +1,16 @@
 #!/usr/bin/env python3
 """Auto-launch the next pending CPT / SC task whenever target GPUs free up.
 
-Constraint (per user instruction 2026-05-13): NEW runs must land on GPUs
-4-7 only. GPUs 0/1/3/2 currently host the first wave of 0.6B / 1.7B runs
-that started on those cards and stay there until they finish — when they
-finish those cards stay idle (don't repurpose them for new runs without
-explicit user OK).
+Constraint (updated 2026-05-14): NEW runs can land on GPUs 2-7.
+GPU 0/1 are user's other-project workloads, off limits. GPU 2 was
+previously off-limits because of another user's vLLM, but they freed it,
+so 2-7 are all available for our queue.
 
 Queue is a hard-coded list below, in priority order. Each entry says
 which GPUs it needs and the tmux window + command to launch it in. The
 watcher loops every poll_secs and:
 
-  1. checks `nvidia-smi` memory used for GPUs {4,5,6,7}
+  1. checks `nvidia-smi` memory used for GPUs {2,3,4,5,6,7}
   2. for each pending entry, sees if its required GPU subset is "free"
      (all listed GPUs have memory.used < free_threshold_mb)
   3. if free, launches via `tmux send-keys` and marks entry as launched
@@ -158,6 +157,62 @@ QUEUE: list[QueueEntry] = [
             per_device=32, ga=2, ddp=True,
         ),
         notes="D2.1 — same shape as 1.7B full but noise_mode=none",
+    ),
+
+    # P0 — D3.19 3 seed main results (plan 2026-05-14). seed=42 = seed1 already done.
+    # Add seed=2 and seed=3 for KV-LLM 0.6B full + 1.7B full. KV-BERT seed=2/3 is a
+    # separate codebase, not queued here.
+    QueueEntry(
+        name="kv_llm_qwen3_0.6b_full_seed2",
+        required_gpus=[2],  # any single GPU in 2-7
+        tmux_window="kv06b_full_s2",
+        cmd=make_cpt_cmd(
+            name="kv_llm_qwen3_0.6b_full_seed2",
+            model=BASE_06B, gpus=[2],
+            schedule="full", noise_mode="bucket",
+            per_device=64, ga=2, ddp=False,
+        ).replace("--save_steps 1000", "--save_steps 1000 --seed 2"),
+        depends_on=["kv_llm_qwen3_1.7b_plain_clm"],  # don't compete with GPU-2 1.7B PCLM
+        notes="D3.19 — seed=2 main result for variance",
+    ),
+    QueueEntry(
+        name="kv_llm_qwen3_0.6b_full_seed3",
+        required_gpus=[2],
+        tmux_window="kv06b_full_s3",
+        cmd=make_cpt_cmd(
+            name="kv_llm_qwen3_0.6b_full_seed3",
+            model=BASE_06B, gpus=[2],
+            schedule="full", noise_mode="bucket",
+            per_device=64, ga=2, ddp=False,
+        ).replace("--save_steps 1000", "--save_steps 1000 --seed 3"),
+        depends_on=["kv_llm_qwen3_0.6b_full_seed2"],
+        notes="D3.19 — seed=3 main result",
+    ),
+    QueueEntry(
+        name="kv_llm_qwen3_1.7b_full_seed2",
+        required_gpus=[6, 7],
+        tmux_window="kv17b_full_s2",
+        cmd=make_cpt_cmd(
+            name="kv_llm_qwen3_1.7b_full_seed2",
+            model=BASE_17B, gpus=[6, 7],
+            schedule="full", noise_mode="bucket",
+            per_device=32, ga=2, ddp=True,
+        ).replace("--save_steps 1000", "--save_steps 1000 --seed 2"),
+        depends_on=["kv_llm_qwen3_1.7b_no_noise"],  # 6+7 occupied by D2.1 until it finishes
+        notes="D3.19 — seed=2 main result for variance (1.7B)",
+    ),
+    QueueEntry(
+        name="kv_llm_qwen3_1.7b_full_seed3",
+        required_gpus=[6, 7],
+        tmux_window="kv17b_full_s3",
+        cmd=make_cpt_cmd(
+            name="kv_llm_qwen3_1.7b_full_seed3",
+            model=BASE_17B, gpus=[6, 7],
+            schedule="full", noise_mode="bucket",
+            per_device=32, ga=2, ddp=True,
+        ).replace("--save_steps 1000", "--save_steps 1000 --seed 3"),
+        depends_on=["kv_llm_qwen3_1.7b_full_seed2"],
+        notes="D3.19 — seed=3 main result (1.7B)",
     ),
 
     # P0 — D2.3 KV-LLM 0.6B variants × MedStruct-S FT.

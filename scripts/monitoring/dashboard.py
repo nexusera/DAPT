@@ -71,12 +71,23 @@ CATALOGUE: list[RunSpec] = [
     RunSpec("kv_llm_qwen3_0.6b_random_mask", "0.6B random-mask CPT",        "?",   "Qwen3-0.6B-Base",  "random-mask", "CPT", "D1.4 (SC2-A)"),
 
     # ============================== Sanity Check =============================
+    # SC4 added in plan 2026-05-14 — MacBERT + plain MLM on same data (data-only CPT control)
+    # → 解耦 data-only CPT 贡献 vs structured priors. Critical for causal attribution (RQ2).
     RunSpec("sc0_macbert_m0",                "SC0-M0 MC-BERT entity mask",  "?",   "MacBERT 0.11B","MLM",        "Sanity", "D1.2"),
     RunSpec("sc0_macbert_m1",                "SC0-M1 KV-MLM (k-v boundary)","?",   "MacBERT 0.11B","MLM",        "Sanity", "D1.2"),
     RunSpec("sc0_macbert_m2",                "SC0-M2 KV-MLM + OCR sampling","?",   "MacBERT 0.11B","MLM",        "Sanity", "D1.2"),
     RunSpec("sc1_macbert_prefix_lm",         "SC1 MacBERT prefix-LM",       "?",   "MacBERT 0.11B","prefix-LM",  "Sanity", "D1.3"),
     RunSpec("sc3b_qwen3_0.6b_instruct_kvnsp_sft","SC3-B Qwen3-Instruct+KVNSP SFT","?","Qwen3-0.6B-Instruct","SFT","Sanity","D1.8"),
     RunSpec("sc3c_qwen3_0.6b_instruct_base", "SC3-C Qwen3-Instruct base eval","?", "Qwen3-0.6B-Instruct","eval","Sanity","D1.9"),
+    RunSpec("sc4_macbert_plain_mlm",         "SC4 MacBERT + plain MLM (data-only control)","?","MacBERT 0.11B","MLM","Sanity","D1.18"),
+
+    # ============================== 3-seed main results (D3.19) ===============
+    # Plan §11 Day 3 D3.19: mean ± std on 3 seeds for main numbers.
+    # seed=42 already run = seed1; add seed2 and seed3.
+    RunSpec("kv_llm_qwen3_0.6b_full_seed2",  "0.6B full · seed 2",          "?",   "Qwen3-0.6B-Base","full","CPT","D3.19"),
+    RunSpec("kv_llm_qwen3_0.6b_full_seed3",  "0.6B full · seed 3",          "?",   "Qwen3-0.6B-Base","full","CPT","D3.19"),
+    RunSpec("kv_llm_qwen3_1.7b_full_seed2",  "1.7B full · seed 2",          "?",   "Qwen3-1.7B-Base","full","CPT","D3.19"),
+    RunSpec("kv_llm_qwen3_1.7b_full_seed3",  "1.7B full · seed 3",          "?",   "Qwen3-1.7B-Base","full","CPT","D3.19"),
 
     # ============================== Fine-tune ================================
     # 0.6B variants × 3 benchmarks (D2.3 + D2.4)
@@ -113,26 +124,22 @@ CATALOGUE: list[RunSpec] = [
     *[RunSpec(f"eval_disc_medllm_13b_fewshot_{b}", f"few-shot DISC-MedLLM-13B / {b}", "?", "DISC-MedLLM-13B","few-shot","Eval","D2.9") for b in BENCHMARKS],
 
     # ============================== Already-published baselines ==============
+    # Strata replication (D3.12) CUT — LLM-TKIE already represents the LLM-KIE route.
     *[RunSpec(f"eval_llm_tkie_{b}",            f"LLM-TKIE replication / {b}",  "?", "Qwen3-Instruct","JSON-prompt","Eval","D3.11") for b in BENCHMARKS],
-    RunSpec("ft_strata_lora_qwen3_8b",         "Strata-style LoRA-Qwen3-8B / MedStruct-S","?","Qwen3-8B","LoRA-FT","FT","D3.12"),
 
     # ============================== Robustness ===============================
-    # Cross-OCR transfer (D3.3/3.4/3.5) — plan §6.5 uses **2 local engines: Baidu + Surya**
-    # (transformer non-cognate). Evaluation via med_eval/metrics.py value-based NED,
-    # IoU=None, no re-annotation needed (ground-truth string-aligned, not pos-aligned).
-    RunSpec("surya_batch_ocr_358pages",        "Surya OCR 重 OCR 358 测试页 (D1.1.2)",     "?", "Surya",      "data prep", "Robustness", "D1.1.2"),
-    RunSpec("surya_to_noise_features",         "Surya → 7-dim noise feature 提取 (D1.1.3)","?", "Surya",      "data prep", "Robustness", "D1.1.3"),
-    RunSpec("surya_baidu_schema_sanity",       "Surya/Baidu 7-dim 特征分布一致性 sanity (D1.1.4)","?","-","check","Robustness","D1.1.4"),
-    RunSpec("xocr_setting1_no_recal",          "Cross-OCR Setting 1 (no recal) Baidu→Surya","?","双架构","eval","Robustness","D3.3"),
-    RunSpec("xocr_setting2_bin_recal",         "Cross-OCR Setting 2 (re-bin Surya)","?","双架构","eval","Robustness","D3.4"),
-    RunSpec("xocr_setting3_noise_ft",          "Cross-OCR Setting 3 (FT noise embed @ 50 Surya pages)","?","双架构","FT","Robustness","D3.5"),
+    # Cross-OCR + Surya CUT from plan 2026-05-14 (gold standard anchored to Baidu →
+    # methodologically unfair; deferred to future work). Strata replication also cut.
+    # Surya scripts (surya_smoke_test.py / surya_tuning_grid.py) stay in repo as
+    # future-work artifacts but are no longer catalogue tasks.
     RunSpec("synthetic_noise_graceful_degradation","Synthetic Noise Graceful Degradation (2,148 samples)","?","双架构+baseline","eval","Robustness","D3.6"),
+    RunSpec("component_noise_cross_cut",       "Component × Noise level cross-cut (48 eval pts)","?","双架构 × 4 ablation × 6 noise","eval","Robustness","D3.20"),
 
     # ============================== Mechanism ================================
+    # KV-LLM Attention (D3.9) + IG (D3.10) DEMOTED to P2 in plan 2026-05-14;
+    # KV-BERT already has those results, extension is not a new finding. Cut.
     RunSpec("probing_layerwise",               "Probing classifier × 3 tasks × 双架构 × 各层","?","双架构","probing","Mechanism","D3.7"),
     RunSpec("cka_similarity",                  "CKA representation similarity","?","双架构","analysis","Mechanism","D3.8"),
-    RunSpec("kv_llm_attention",                "KV-LLM Attention 分析",         "?","Qwen3-0.6B-Base","analysis","Mechanism","D3.9"),
-    RunSpec("kv_llm_ig",                       "KV-LLM Integrated Gradients",  "?","Qwen3-0.6B-Base","analysis","Mechanism","D3.10"),
 
     # ============================== Efficiency / Error analysis ==============
     RunSpec("efficiency_benchmark",            "Efficiency: latency / throughput / VRAM / FLOPs","?","all models","benchmark","Efficiency","D3.15"),
@@ -150,8 +157,9 @@ CATALOGUE: list[RunSpec] = [
 
 LOSS_RE = re.compile(r"\{'loss':\s*([-\d.eE+nainf]+),\s*'grad_norm':\s*([-\d.eE+nainf]+).*?'epoch':\s*([\d.]+)\}")
 GPU_RE = re.compile(r"CUDA_VISIBLE_DEVICES=(\d+(?:,\d+)*)")  # fallback for if/when launchers echo it
-# Match the --output_dir flag value (whole path). Run name == basename(path).
-OUTPUT_DIR_RE = re.compile(r"--output_dir(?:=|\s+)(\S+)")
+# Match --output_dir (CPT + FT train phase) OR --model_dir (kv_llm.predict phase
+# after FT finishes). Run name == basename(path) in either case.
+OUTPUT_DIR_RE = re.compile(r"--(?:output_dir|model_dir)(?:=|\s+)(\S+)")
 
 
 def _live_run_to_gpus() -> dict[str, str]:
